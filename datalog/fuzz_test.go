@@ -107,7 +107,7 @@ func FuzzEval(f *testing.F) {
 		_, diff, err := agree(q, b)
 		keepsPrefix(t, "agree", text, err)
 		if diff != "" && spelledApart(q, b) {
-			t.Skipf("known disagreement #148 (a number spelled two ways): %q", text)
+			t.Skipf("known disagreement #164 (two facts spelling one number differently): %q", text)
 		}
 		if diff != "" {
 			t.Fatalf("%q: %s", text, diff)
@@ -120,7 +120,8 @@ func FuzzEval(f *testing.F) {
 
 // spelledApart reports whether every evaluator answers q with the same rows once each number is written
 // canonically, so a difference between them is only which spelling of a number reached the answer:
-// #148, counted rather than failed until it is fixed.
+// #164, counted rather than failed until it is fixed. A spelling the query wrote gives way to data's
+// (#148), so what this still counts is data spelling one number two ways.
 func spelledApart(q Query, b *Base) bool {
 	var want []string
 	for i, ev := range []Evaluator{Naive{}, SemiNaive{WrittenOrder: true}, SemiNaive{}} {
@@ -156,16 +157,17 @@ func canonicalRow(r Row) string {
 	return strings.Join(keys, ",")
 }
 
-// #148, pinned: a number the goal spells 01 answers as 01 under the planned SemiNaive, which binds it
-// from the goal's demand, and as 1 under Naive, which reads it from the fact. FuzzEval counts this
-// case rather than failing on it, so once #148 is fixed this test fails, and it goes, with the skip.
-func TestANumberSpelledTwoWaysIsAKnownDisagreement(t *testing.T) {
+// #164, pinned: the head spells zero 0 and 00, and the goal reads both into ?0. Naive solves the goal
+// as written and answers 0; the planned SemiNaive runs the second literal first and answers 00.
+// FuzzEval counts this case rather than failing on it, so once #164 is fixed this test fails, and it
+// goes, with the skip.
+func TestTwoFactsSpellingOneNumberAreAKnownDisagreement(t *testing.T) {
 	v := fuzzVocabulary(t)
-	q := mustParse(t, `r0(0, ?x7, ?x7) :- edge(?01, ?00), weight(?0, ?x7); r0(0, 01, ?0)`)
+	q := mustParse(t, `r0(0, 0, 00) :- weight(?00, ?0); r0(0, ?0, 0), r0("0", 0, ?0)`)
 	b := baseFor(v)
 	_, diff, err := agree(q, b)
 	if err != nil || diff == "" {
-		t.Fatalf("#148 no longer disagrees (%v): drop this test and the skip in FuzzEval", err)
+		t.Fatalf("#164 no longer disagrees (%v): drop this test and the skip in FuzzEval", err)
 	}
 	if !spelledApart(q, b) {
 		t.Errorf("the repro disagrees in more than spelling:\n%s", diff)

@@ -653,3 +653,48 @@ func TestDemandIsSkippedWhenARelationNeedsTwoAdornments(t *testing.T) {
 		t.Errorf("control: a closure demanded one way should keep its rewrite")
 	}
 }
+
+// volts holds numbers the way agni does (#148): with display text that isn't the number's canonical
+// spelling, "3.3V" for 3.3. spare holds one more, so that the relation reading both has two rules and
+// is not inlined away from the demand rewrite.
+func volts() *ns.MemSource {
+	src := ns.NewMemSource().Declare("volt", "net", "v").Declare("spare", "net", "v")
+	for n, v := range map[string]float64{"VDD": 3.3, "VBUS": 5} {
+		f := v
+		src.Add("volt", ns.Tuple{Vals: []ns.Value{ns.S(n), {S: ftoa(v) + "V", Num: &f, BaseUnit: "V"}}})
+	}
+	f := 1.8
+	src.Add("spare", ns.Tuple{Vals: []ns.Value{ns.S("VIO"), {S: "1.8V", Num: &f, BaseUnit: "V"}}})
+	return src
+}
+
+// A number the goal spells one way and the data another answers in the data's spelling under every
+// evaluator. The planned SemiNaive copies the goal's constant into the relations the demand rewrite
+// adds, so before #148 it answered 3.30 where Naive, reading the fact, answered 3.3V. In the first
+// query the constant meets volt in the rule the goal calls (factor.go's from relation); in the second
+// it passes through a variable into the demand for e, so it meets volt one rule further down.
+func TestAnswerKeepsTheDatasSpellingOfANumberTheGoalBinds(t *testing.T) {
+	for _, c := range []struct{ text, control string }{
+		{`same(?n, ?v, ?v) :- volt(?n, ?v); same(?n, ?v, ?v) :- spare(?n, ?v); same(?n, 3.30, ?out) => ?n, ?out`, "same:from1"},
+		{`e(?n, ?v) :- volt(?n, ?v); e(?n, ?v) :- spare(?n, ?v);
+		  same(?n, ?v, ?v) :- e(?n, ?v); same(?n, ?v, ?v) :- spare(?n, ?v); same(?n, 3.30, ?out) => ?n, ?out`, "demand:e/fb(?v) :- same:from1(?v)"},
+	} {
+		rows := eval(t, volts(), c.text)
+		if len(rows) != 1 || rows[0].Bind["n"].S != "VDD" || rows[0].Bind["out"].S != "3.3V" {
+			t.Errorf("%s:\n rows = %v, want VDD with 3.3V as the data spells it", c.text, binds(rows))
+		}
+		var r Report
+		if _, err := (SemiNaive{}).Eval(bg, mustParse(t, c.text), baseFor(std(volts())), Explain(&r)); err != nil || !strings.Contains(r.String(), c.control) {
+			t.Errorf("control: the planned evaluator didn't run %q (%v), so the goal's constant took another path:\n%s", c.control, err, r.String())
+		}
+	}
+}
+
+// The fuzzer's repro (#148): ?x7 is seeded from the goal's 01 and then joined with weight's 1.
+func TestANumberSpelledTwoWaysAnswersAlike(t *testing.T) {
+	q := mustParse(t, `r0(0, ?x7, ?x7) :- edge(?01, ?00), weight(?0, ?x7); r0(0, 01, ?0)`)
+	rows, err := both(q, baseFor(fuzzVocabulary(t)))
+	if err != nil || len(rows) != 1 || rows[0].Bind["0"].S != "1" {
+		t.Errorf("rows = %v, %v, want ?0 = 1 as weight holds it", binds(rows), err)
+	}
+}

@@ -62,7 +62,7 @@ func extendBuiltin(bi ns.Builtin, atom *Atom, bnd *binding, b *Base, yield func(
 		}
 		next := bnd.clone()
 		for j, arg := range atom.Args {
-			if !bindArg(next, arg, vals[j]) {
+			if !bindArg(next, arg, vals[j], false) {
 				return nil
 			}
 		}
@@ -226,7 +226,7 @@ func (b *Base) extendIDB(atom *Atom, bnd *binding, yield func(*binding) error) e
 		out := bnd.clone()
 		ok := true
 		for j, arg := range atom.Args {
-			if !bindArg(out, arg, t.vals[j]) {
+			if !bindArg(out, arg, t.vals[j], j < 64 && t.weak&(1<<j) != 0) {
 				ok = false
 				break
 			}

@@ -143,9 +143,10 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   Naive answers within `fuzzBudget` all three evaluators must `agree`. Plain `go test` (so CI) runs the
   seeds and every input in `testdata/fuzz/`; `./selfcheck.sh` fuzzes each target for
   `JAALA_FUZZ_TIME` (30s). A failing input is written to `testdata/fuzz/<Target>/`: fix it, rename the
-  file for what it caught, and commit it. #148 (a number spelled two ways) is counted, not failed,
-  through `spelledApart`, with its repro pinned in `TestANumberSpelledTwoWaysIsAKnownDisagreement`.
-  Its first hour found a quadratic did-you-mean, a parser panic, `?_: T` not printing back,
+  file for what it caught, and commit it. #164 (two facts spelling one number differently) is
+  counted, not failed, through `spelledApart`, with its repro pinned in
+  `TestTwoFactsSpellingOneNumberAreAKnownDisagreement`; #162 (text and numbers comparing
+  non-transitively) isn't, and can fail a fuzz run. Its first hour found a quadratic did-you-mean, a parser panic, `?_: T` not printing back,
   comparison and head-`_` cases the evaluators answered differently, and a `-0` the index missed.
 - **A comparison is checked where its body binds it, not where it is written** (#89). Every solve
   runs `deferComparisons` first, which moves a comparison to just after the literal that binds its
@@ -181,6 +182,13 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   don't compose, so a local minimum depends on order. It turns off inlining and factoring (as
   Witnesses does) and supplementary relations, which merge derivations differing only in a `_`.
   Answer rows sort their bindings by `compareBindings` before `dedupSort` keeps the first.
+- **A value the demand rewrite copied from the query gives way to data's spelling** (#148). A goal
+  constant seeds the relations the rewrite adds (`isGuard`), so a planned SemiNaive could answer `3.3`
+  where Naive, reading the fact, answers agni's `3.3V`. `binding.weak` marks a variable bound from
+  such a value (and `idbTuple.weak`, a bit per position, carries it through a derived tuple); the first
+  numerically equal value read from data replaces it. Only a number is marked (equal text is the same
+  text), and clones share the map, so `markWeak` replaces it rather than writing to it: marking every
+  value and copying the map per clone cost a demand workload 6% more allocations.
 - **Magic tuples carry no citations.** `magic.go` adds relations recording what a query demanded;
   `SemiNaive`'s `derive` clears their citations, or an answer would cite the facts that worked out
   someone else's demand. Two relations the rewrite adds are not demand and keep theirs on purpose:

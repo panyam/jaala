@@ -623,6 +623,10 @@ type binding struct {
 	wit   []placed
 	last  *Witness
 	parts []placed // set instead of last by a supplementary tuple (see idbTuple.parts)
+	// weak marks the variables whose value is spelled as the query wrote it rather than as data holds
+	// it, read from a relation the demand rewrite seeded with the goal's constants (#148). nil until
+	// one is. Clones share it, so it is replaced rather than written to (see markWeak).
+	weak map[Var]bool
 }
 
 func newBinding() *binding { return &binding{vals: map[Var]ns.Value{}} }
@@ -632,7 +636,28 @@ func (b *binding) clone() *binding {
 	for k, v := range b.vals {
 		nv[k] = v
 	}
-	return &binding{vals: nv, cites: append([]string(nil), b.cites...), wit: append([]placed(nil), b.wit...)}
+	return &binding{vals: nv, cites: append([]string(nil), b.cites...), wit: append([]placed(nil), b.wit...), weak: b.weak}
+}
+
+// markWeak sets whether v is bound weakly, replacing the shared map rather than writing to it.
+func (b *binding) markWeak(v Var, weak bool) {
+	if b.weak[v] == weak {
+		return
+	}
+	if !weak && len(b.weak) == 1 {
+		b.weak = nil
+		return
+	}
+	next := make(map[Var]bool, len(b.weak)+1)
+	for k := range b.weak {
+		next[k] = true
+	}
+	if weak {
+		next[v] = true
+	} else {
+		delete(next, v)
+	}
+	b.weak = next
 }
 
 // solve recurses over the goal literals: a positive atom fans out through extendAtom (the one
@@ -763,7 +788,7 @@ func solveAt(lits []Literal, i int, bnd *binding, b *Base, emit func(*binding) e
 func unify(args []Term, t ns.Tuple, bnd *binding) (*binding, bool) {
 	out := bnd.clone()
 	for j, arg := range args {
-		if !bindArg(out, arg, t.Vals[j]) {
+		if !bindArg(out, arg, t.Vals[j], false) {
 			return nil, false
 		}
 	}
@@ -773,7 +798,13 @@ func unify(args []Term, t ns.Tuple, bnd *binding) (*binding, bool) {
 
 // bindArg unifies one argument term with a value: a constant must equal it, a variable binds it (or
 // must match its existing binding). "_" and the empty variable are wildcards.
-func bindArg(bnd *binding, arg Term, val ns.Value) bool {
+//
+// weak says val is spelled as the query wrote it (see binding.weak). A number spelled two ways is one
+// value, so either spelling matches, but the answer shows one: a variable bound weakly takes the
+// spelling of the first value from data it meets (#148). Without that, the planned SemiNaive answered
+// in the goal's spelling (`3.3`) where Naive, which never reads a rewritten relation, answered in the
+// fact's (`3.3V`).
+func bindArg(bnd *binding, arg Term, val ns.Value, weak bool) bool {
 	switch {
 	case arg.Const != nil:
 		return valueEq(val, *arg.Const)
@@ -781,9 +812,19 @@ func bindArg(bnd *binding, arg Term, val ns.Value) bool {
 		return true
 	default:
 		if bound, ok := bnd.vals[arg.Var]; ok {
-			return valueEq(val, bound)
+			if !valueEq(val, bound) {
+				return false
+			}
+			if !weak && bnd.weak[arg.Var] {
+				bnd.vals[arg.Var] = val
+				bnd.markWeak(arg.Var, false)
+			}
+			return true
 		}
 		bnd.vals[arg.Var] = val
+		if weak && val.Num != nil { // text equal to text is the same text, so only a number is spelled two ways
+			bnd.markWeak(arg.Var, true)
+		}
 		return true
 	}
 }

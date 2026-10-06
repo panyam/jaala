@@ -17,6 +17,9 @@ type idbTuple struct {
 	// parts are a supplementary tuple's witnesses instead (see magic): the nodes of the literals it
 	// stands for, at their written positions, which a body reading it takes as its own.
 	parts []placed
+	// weak marks, bit j for position j, the values spelled as the query wrote them (see binding.weak
+	// and weakPositions).
+	weak uint64
 }
 
 // materialize is Naive's fixpoint: it evaluates the query's user-defined rules into b.idb by stratified
@@ -271,7 +274,7 @@ func (b *Base) applyRule(r Rule) (bool, error) {
 			}
 			vals[j] = val
 		}
-		t := idbTuple{vals: vals, cites: dedupStrings(bnd.cites)}
+		t := idbTuple{vals: vals, cites: dedupStrings(bnd.cites), weak: weakPositions(r.Head, bnd)}
 		if b.witnessing() && isSupplementary(r.Head.Relation) {
 			t.parts = append([]placed(nil), bnd.wit...)
 		} else if b.witnessing() && !isMagic(r.Head.Relation) && !isBindSet(r.Head.Relation) {
@@ -292,6 +295,24 @@ func (b *Base) applyRule(r Rule) (bool, error) {
 		return nil
 	})
 	return added, err
+}
+
+// weakPositions is which of a head's values are spelled as the query wrote them: the constants of a
+// relation the demand rewrite adds (isGuard: magic, supplementary, factored), which the goal's
+// constants seed, and any variable the body bound only weakly. Zero for every tuple outside the demand
+// rewrite. Past the 64th position a value is never weak, so it keeps whichever spelling arrived first.
+func weakPositions(head Atom, bnd *binding) uint64 {
+	guard := isGuard(head.Relation)
+	if !guard && len(bnd.weak) == 0 {
+		return 0
+	}
+	var out uint64
+	for j, arg := range head.Args {
+		if j < 64 && ((arg.Const != nil && guard) || (arg.Var != "" && bnd.weak[arg.Var])) {
+			out |= 1 << j
+		}
+	}
+	return out
 }
 
 // applyAggregate derives an aggregating rule's tuples: it solves the body as applyRule does, then
