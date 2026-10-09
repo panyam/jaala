@@ -1,3 +1,3 @@
 fixture: "deps"
 query: "imports(?a, ?b) => ?a, count(?b) having count(?b) >= count(?a)"
-expect_error: "having"
+expect_error: 'query: having "count(?b) >= count(?a)": bare identifier "count(?a)" — a term must be a ?variable, a "string", or a number'

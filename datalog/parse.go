@@ -290,6 +290,17 @@ func parseHaving(s string) ([]Compare, error) {
 	return out, nil
 }
 
+type havingParseError struct {
+	piece string
+	cause error
+}
+
+func (e *havingParseError) Error() string {
+	return fmt.Sprintf("query: having %q: %s", e.piece, strings.TrimPrefix(e.cause.Error(), "query: "))
+}
+
+func (e *havingParseError) Unwrap() error { return e.cause }
+
 // parseHavingOne reads one group filter. The left side goes through parseSelItem (the projection's
 // term parser, which is the one that knows aggregates) rather than parseTerm, so an aggregate stays
 // spellable HERE and stays unspellable in the goal body, where it would have nothing to reduce.
@@ -301,14 +312,14 @@ func parseHavingOne(piece string) (Compare, error) {
 		}
 		left, err := parseSelItem(strings.TrimSpace(parts[0]))
 		if err != nil {
-			return Compare{}, fmt.Errorf("query: having %q: %w", piece, err)
+			return Compare{}, &havingParseError{piece: piece, cause: err}
 		}
 		if left.Agg == nil {
 			return Compare{}, fmt.Errorf("query: having %q filters ?%s, which is a group key rather than an aggregate — a comparison over plain variables belongs in the goal, before the %q", piece, left.Var, "=>")
 		}
 		right, err := parseTerm(parts[1])
 		if err != nil {
-			return Compare{}, fmt.Errorf("query: having %q: %w", piece, err)
+			return Compare{}, &havingParseError{piece: piece, cause: err}
 		}
 		return Compare{Left: left, Op: op, Right: right}, nil
 	}
