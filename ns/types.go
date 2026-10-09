@@ -91,9 +91,10 @@ type ArgSig struct {
 	Name string
 	ArgType
 	// Inferred is set on a derived relation's argument whose type no rule head declares, so a host
-	// can show a reader which types the author stated and which the engine worked out. A head
-	// aggregate whose function decides its type (count a number, list a string, sum, min and max a
-	// number over a typed number) counts as declared.
+	// can show a reader which types the author stated and which the engine worked out. A numeric
+	// constant in a number-typed head column counts as declared, as does a head aggregate whose
+	// function decides its type (count a number, list a string, sum, min and max a number over a typed
+	// number).
 	Inferred bool
 }
 

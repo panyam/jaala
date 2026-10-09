@@ -237,7 +237,7 @@ func (l *lowerer) aggregate(a BodyAggregate, elsewhere, bound map[Var]bool, dom 
 				{Pos: &Atom{Relation: domain, Args: keys}},
 				{Neg: with(red, Term{Var: "_"})},
 			}},
-			text: text, // the positive clause declares the type, which a constant can't (#84)
+			text: text,
 		})
 	}
 	return Literal{Pos: with(val, result)}, nil

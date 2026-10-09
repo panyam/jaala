@@ -24,6 +24,14 @@ type typer struct {
 	// ignoreDecl is a relation whose declared head types are set aside, so its declarations can be
 	// compared with what its rules alone produce.
 	ignoreDecl string
+	probe      *headProbe
+}
+
+// headProbe follows one head inference through aliases. Recursion keeps the previous conservative
+// inference when the walk also uses numeric head constants.
+type headProbe struct {
+	legacy                bool
+	sawNumeric, recursive bool
 }
 
 func newTyper(reg *ns.Vocabulary, rules []Rule) *typer {
@@ -129,6 +137,21 @@ func (t *typer) argTypes(rel string, seen map[string]bool) ([]string, []ns.ArgTy
 // labels. It is agni's headKind, generalized to carry a per-row kind and an owner when the head
 // holds the argument they point at.
 func (t *typer) ofHead(rel string, j int, seen map[string]bool) ns.ArgType {
+	if t.probe != nil {
+		return t.inferHead(rel, j, seen)
+	}
+	probe := headProbe{}
+	nested := *t
+	nested.probe = &probe
+	got := nested.inferHead(rel, j, seen)
+	if probe.sawNumeric && probe.recursive {
+		probe.legacy = true
+		got = nested.inferHead(rel, j, seen)
+	}
+	return got
+}
+
+func (t *typer) inferHead(rel string, j int, seen map[string]bool) ns.ArgType {
 	next := make(map[string]bool, len(seen)+1)
 	for k := range seen {
 		next[k] = true
@@ -150,32 +173,43 @@ func (t *typer) ofHead(rel string, j int, seen map[string]bool) ns.ArgType {
 			closed = false
 			continue // an aggregating relation has only this rule (see checkRules)
 		}
+		var at ns.ArgType
 		if hv.Const != nil {
 			domain = unionSorted(domain, []string{hv.Const.S})
-			untyped = true // a constant head argument names a value, not a kind
-			continue
-		}
-		if hv.Var == "" || hv.Var == "_" || bodyTouches(r.Body, next) {
-			closed = false
-			continue // recursive: no new information, so it abstains rather than vetoing
-		}
-		vt := t.ofVar(hv.Var, r.Body, next)
-		if len(vt.Domain) == 0 {
-			closed = false
-		} else {
-			domain = unionSorted(domain, vt.Domain)
-		}
-		at := ns.ArgType{Kind: vt.Kind, Type: vt.Type, Unit: vt.Unit}
-		if vt.kindVar != "" {
-			if m := headIndex(r.Head, vt.kindVar); m >= 0 {
-				at.KindFrom = labels[m]
+			if hv.Const.Num == nil || t.probe.legacy {
+				untyped = true // text, or a constant under recursive inference, does not fix a type
+				continue
 			}
-		}
-		if vt.owner != (Term{}) {
-			if m := headIndex(r.Head, vt.owner.Var); vt.owner.Var != "" && m >= 0 {
-				at.Owner = labels[m]
+			t.probe.sawNumeric = true
+			at = ns.ArgType{Type: ns.TypeNumber, Unit: hv.Const.BaseUnit}
+		} else {
+			if hv.Var == "" || hv.Var == "_" {
+				closed = false
+				continue
+			}
+			if bodyTouches(r.Body, next) {
+				t.probe.recursive = true
+				closed = false
+				continue // recursive: no new information, so it abstains rather than vetoing
+			}
+			vt := t.ofVar(hv.Var, r.Body, next)
+			if len(vt.Domain) == 0 {
+				closed = false
 			} else {
-				at = ns.ArgType{} // an entity the head cannot locate names nothing a reader can act on
+				domain = unionSorted(domain, vt.Domain)
+			}
+			at = ns.ArgType{Kind: vt.Kind, Type: vt.Type, Unit: vt.Unit}
+			if vt.kindVar != "" {
+				if m := headIndex(r.Head, vt.kindVar); m >= 0 {
+					at.KindFrom = labels[m]
+				}
+			}
+			if vt.owner != (Term{}) {
+				if m := headIndex(r.Head, vt.owner.Var); vt.owner.Var != "" && m >= 0 {
+					at.Owner = labels[m]
+				} else {
+					at = ns.ArgType{} // an entity the head cannot locate names nothing a reader can act on
+				}
 			}
 		}
 		if found && !sameShape(got, at) {
@@ -286,9 +320,24 @@ func (t *typer) signature(rel string) ([]ns.ArgSig, error) {
 			out[j] = ns.ArgSig{Name: name, ArgType: declared[j]}
 			continue
 		}
-		out[j] = ns.ArgSig{Name: name, ArgType: inferred, Inferred: !t.aggregateFixes(rel, j)}
+		fixed := t.aggregateFixes(rel, j) || t.numericConstantFixes(rel, j, inferred)
+		out[j] = ns.ArgSig{Name: name, ArgType: inferred, Inferred: !fixed}
 	}
 	return out, nil
+}
+
+// numericConstantFixes reports whether a numeric head constant fixes the column's agreed number
+// type. A column that stays untyped despite a numeric constant is still inferred.
+func (t *typer) numericConstantFixes(rel string, j int, inferred ns.ArgType) bool {
+	if inferred.Type != ns.TypeNumber {
+		return false
+	}
+	for _, r := range t.rules[rel] {
+		if j < len(r.Head.Args) && r.Head.Args[j].Const != nil && r.Head.Args[j].Const.Num != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // aggregateFixes reports whether a head aggregate at position j decides its column's type the way a
