@@ -386,7 +386,10 @@ func (f *Federation) Pushes(c Conjunction) bool {
 		return ok && ps.Pushes(c)
 	}
 	if c.Page != nil {
-		return f.single(c, func(src Source) bool { ps, ok := src.(PushSource); return ok && ps.Pushes(c) })
+		if f.single(c, func(src Source) bool { ps, ok := src.(PushSource); return ok && ps.Pushes(c) }) {
+			return true
+		}
+		return f.across(c, func(src Source) bool { ps, ok := src.(PushSource); return ok && ps.Pushes(c) })
 	}
 	if !f.partitioned || c.Partial {
 		return false
@@ -425,6 +428,9 @@ func (f *Federation) Push(ctx context.Context, c Conjunction) iter.Seq2[[]Tuple,
 				if f.holds(i, c.Atoms[0]) && !f.pushMember(ctx, i, c, nil, yield) {
 					return
 				}
+			}
+			if len(c.Atoms) > 1 {
+				f.spanning(ctx, c, func(row []Tuple) bool { return yield(row, nil) }, func(err error) { yield(nil, err) })
 			}
 			return
 		}
@@ -638,11 +644,17 @@ func (f *Federation) Summarizes(c Conjunction, s Summary) bool {
 	if len(f.members) == 1 {
 		return ok(f.members[0].Source)
 	}
-	return f.single(c, ok)
+	if f.single(c, ok) {
+		return true
+	}
+	// A match spanning members comes back as a row of its own, whose numbers the Federation can't read
+	// as their types to reduce, so a join's summary asks for values, not extremes.
+	return len(s.Extremes) == 0 && f.across(c, ok)
 }
 
-// Summarize implements SummarySource: each member whose Holds allows c's atom summarizes its own
-// facts, and its rows' citations name it.
+// Summarize implements SummarySource: each member whose Holds allows c's first atom summarizes its
+// own matches, and its rows' citations name it. A join of a partitioned Federation's members adds the
+// matches spanning members (see spanning), each a row of one match.
 func (f *Federation) Summarize(ctx context.Context, c Conjunction, s Summary) iter.Seq2[SummaryRow, error] {
 	return func(yield func(SummaryRow, error) bool) {
 		for _, i := range f.serving[c.Atoms[0].Relation] {
@@ -671,6 +683,9 @@ func (f *Federation) Summarize(ctx context.Context, c Conjunction, s Summary) it
 				}
 			}
 		}
+		if len(f.members) > 1 && len(c.Atoms) > 1 {
+			f.spanning(ctx, c, func(row []Tuple) bool { return yield(summaryRowOf(c, s, row), nil) }, func(err error) { yield(SummaryRow{}, err) })
+		}
 	}
 }
 
@@ -686,4 +701,96 @@ func (f *Federation) single(c Conjunction, ok func(Source) bool) bool {
 		}
 	}
 	return len(serving) > 0
+}
+
+// across reports whether a partitioned Federation answers a summary or page of c, a join, across its
+// members: every member serves every relation of c, takes it as ok says, and pushes its prefixes alone
+// (Conjunction.PrefixesOnly), from which spanning finds the matches no one member holds.
+func (f *Federation) across(c Conjunction, ok func(Source) bool) bool {
+	if !f.partitioned || len(c.Atoms) < 2 {
+		return false
+	}
+	for _, a := range c.Atoms {
+		if len(f.serving[a.Relation]) != len(f.members) {
+			return false
+		}
+	}
+	p := prefixesOf(c)
+	for _, m := range f.members {
+		ps, isPush := m.Source.(PushSource)
+		if !ok(m.Source) || !isPush || !ps.Pushes(p) {
+			return false
+		}
+	}
+	return true
+}
+
+// prefixesOf is c asking for its prefixes alone, with no page.
+func prefixesOf(c Conjunction) Conjunction {
+	return Conjunction{Atoms: c.Atoms, Compare: c.Compare, Partial: true, PrefixesOnly: true}
+}
+
+// spanning yields every match of c whose facts lie in more than one member (#253): each member whose
+// Holds allows c's first atom sends its prefixes alone, and each is continued in the other members, as
+// a partitioned push does (pushAcross). A member's own whole matches it summarizes or pages itself.
+func (f *Federation) spanning(ctx context.Context, c Conjunction, yield func([]Tuple) bool, fail func(error)) {
+	p := prefixesOf(c)
+	first := c.Atoms[0]
+	for _, i := range f.serving[first.Relation] {
+		if !f.holds(i, first) {
+			continue
+		}
+		var prefixes [][]Tuple
+		ok := f.pushMember(ctx, i, p, nil, func(row []Tuple, err error) bool {
+			switch {
+			case err != nil:
+				fail(err)
+				return false
+			case len(row) == 0 || len(row) >= len(c.Atoms):
+				fail(fmt.Errorf("member %s: a prefix of %d tuples for %d atoms", f.name(i), len(row), len(c.Atoms)))
+				return false
+			}
+			prefixes = append(prefixes, row)
+			return true
+		})
+		if !ok {
+			return
+		}
+		for _, row := range prefixes {
+			more := f.pushAcross(ctx, c.after(row), i, row, func(whole []Tuple, err error) bool {
+				if err != nil {
+					fail(err)
+					return false
+				}
+				return yield(whole)
+			})
+			if !more {
+				return
+			}
+		}
+	}
+}
+
+// summaryRowOf is a match spanning members as a summary row of one match: its values at s's Group and
+// Values as stored, and every fact's citations.
+func summaryRowOf(c Conjunction, s Summary, row []Tuple) SummaryRow {
+	vals := map[int]Value{}
+	for k, a := range c.Atoms {
+		for pos, x := range a.Args {
+			if _, ok := vals[x.Var]; x.Var > 0 && !ok && pos < len(row[k].Vals) {
+				vals[x.Var] = row[k].Vals[pos]
+			}
+		}
+	}
+	r := SummaryRow{Matches: 1}
+	for _, v := range s.Group {
+		r.Group = append(r.Group, vals[v])
+	}
+	for _, v := range s.Values {
+		r.Values = append(r.Values, vals[v])
+	}
+	for _, t := range row {
+		r.Cites = append(r.Cites, t.Cites...)
+	}
+	return r
 }

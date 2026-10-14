@@ -383,7 +383,9 @@ func (m *joinMem) Push(_ context.Context, c Conjunction) iter.Seq2[[]Tuple, erro
 			rows = append(rows, slices.Clone(row[:k]))
 		}
 		if k == len(c.Atoms) {
-			rows = append(rows, slices.Clone(row))
+			if !c.PrefixesOnly {
+				rows = append(rows, slices.Clone(row))
+			}
 			return
 		}
 		for _, t := range m.Tuples(c.Atoms[k].Relation) {
@@ -627,11 +629,15 @@ type summaryMem struct {
 
 func (m *summaryMem) Summarizes(Conjunction, Summary) bool { return true }
 
-func (m *summaryMem) Summarize(_ context.Context, c Conjunction, _ Summary) iter.Seq2[SummaryRow, error] {
+func (m *summaryMem) Summarize(ctx context.Context, c Conjunction, _ Summary) iter.Seq2[SummaryRow, error] {
 	m.summaries++
 	return func(yield func(SummaryRow, error) bool) {
-		for _, t := range m.Tuples(c.Atoms[0].Relation) {
-			if !yield(SummaryRow{Matches: 1, Cites: t.Cites}, nil) {
+		for row := range m.joinMem.Push(ctx, c) {
+			var cites []string
+			for _, t := range row {
+				cites = append(cites, t.Cites...)
+			}
+			if !yield(SummaryRow{Matches: 1, Cites: cites}, nil) {
 				return
 			}
 		}
@@ -688,5 +694,48 @@ func TestAFederationPagesAndSummarizesOneAtom(t *testing.T) {
 	members[1].Source = b.joinMem
 	if g, _ := NewFederation(members...); g.Summarizes(one, Summary{}) {
 		t.Errorf("a federation summarizes though a member doesn't")
+	}
+}
+
+// A partitioned federation summarizes a join across its members: each member's own matches, then the
+// matches spanning members, continued from each member's prefixes, so two hops from a1 count both,
+// the one through b9 cited to A and B (#253). It won't report extremes for a join, nor summarize one
+// unpartitioned.
+func TestAPartitionedFederationSummarizesAJoin(t *testing.T) {
+	_, _, members := partitionedEdges(true)
+	a := &summaryMem{joinMem: members[0].Source.(*joinMem)}
+	b := &summaryMem{joinMem: members[1].Source.(*joinMem)}
+	members[0].Source, members[1].Source = a, b
+	f, err := NewPartitionedFederation(members...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a1 := S("a1")
+	c := Conjunction{Atoms: []PushAtom{
+		{Relation: "edge", Args: []PushArg{{Const: &a1}, {Var: 1}}},
+		{Relation: "edge", Args: []PushArg{{Var: 1}, {Var: 2}}},
+	}}
+	if !f.Summarizes(c, Summary{}) {
+		t.Fatalf("a partitioned federation won't summarize a join")
+	}
+	var got []string
+	matches := 0
+	for row, err := range f.Summarize(context.Background(), c, Summary{}) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		matches += row.Matches
+		got = append(got, strings.Join(row.Cites, " "))
+	}
+	slices.Sort(got)
+	if want := []string{"A:a1-a2 A:a2-a3", "A:a1-b9 B:b9-b10"}; matches != 2 || !reflect.DeepEqual(got, want) {
+		t.Errorf("summarized %d matches %q, want 2: %q", matches, got, want)
+	}
+	if f.Summarizes(c, Summary{Extremes: []int{2}}) {
+		t.Errorf("a partitioned federation reports extremes for a join")
+	}
+	plain, _ := NewFederation(members...)
+	if plain.Summarizes(c, Summary{}) {
+		t.Errorf("control: a federation not declared partitioned summarizes a join")
 	}
 }

@@ -315,3 +315,69 @@ func TestExtremesKeepNaN(t *testing.T) {
 		}
 	}
 }
+
+// abEdges is #238's two stores partitioned by an edge's source: A holds a1 to a2, a2 to a3 and a1 to
+// b9, B holds b9 to b10, each a pushing store, in a partitioned federation; and the same edges in one
+// Source.
+func abEdges(partitioned bool) ([]*pushing, *ns.Federation, *ns.MemSource) {
+	whole := ns.NewMemSource().Declare("edge", "from", "to")
+	mem := func(edges ...[2]string) *ns.MemSource {
+		m := ns.NewMemSource().Declare("edge", "from", "to")
+		for _, e := range edges {
+			t := ns.Tuple{Vals: []ns.Value{ns.S(e[0]), ns.S(e[1])}, Cites: []string{e[0] + "-" + e[1]}}
+			m.Add("edge", t)
+			whole.Add("edge", t)
+		}
+		return m
+	}
+	a := pushingAt(mem([2]string{"a1", "a2"}, [2]string{"a2", "a3"}, [2]string{"a1", "b9"}))
+	b := pushingAt(mem([2]string{"b9", "b10"}))
+	members := []ns.Member{
+		{Source: a, Holds: ns.HoldsPrefix("a", map[string][]int{"edge": {0}})},
+		{Source: b, Holds: ns.HoldsPrefix("b", map[string][]int{"edge": {0}})},
+	}
+	federate := ns.NewFederation
+	if partitioned {
+		federate = ns.NewPartitionedFederation
+	}
+	f, err := federate(members...)
+	if err != nil {
+		panic(err)
+	}
+	return []*pushing{a, b}, f, whole
+}
+
+// A count and a page of two hops from a1, one of which crosses into B, are answered by a partitioned
+// federation: A summarizes or pages its own match, and the crossing one is continued from A's prefix
+// in B (#253). They answer, cite and witness as one Source does. control: a federation not declared
+// partitioned is asked literal by literal.
+func TestAJoinAcrossStoresIsSummarizedAndPaged(t *testing.T) {
+	for _, text := range []string{
+		`edge("a1", ?m), edge(?m, ?o) => count(?o), list(?o)`,
+		`edge("a1", ?m), edge(?m, ?o) => ?m, ?o order by ?o desc limit 2`,
+	} {
+		q := mustParse(t, text)
+		_, _, whole := abEdges(true)
+		want, err := both(q, baseFor(std(whole)))
+		if err != nil || len(want) == 0 {
+			t.Fatalf("%s in memory: %v %v", text, binds(want), err)
+		}
+		for _, opts := range [][]Option{nil, {Witnesses(), CanonicalCites()}} {
+			w, _ := Naive{}.Eval(bg, q, baseFor(std(whole)), opts...)
+			stores, f, _ := abEdges(true)
+			var r Report
+			got, err := SemiNaive{}.Eval(bg, q, MustBase(std(whole), f), append(opts, Explain(&r))...)
+			if err != nil || !reflect.DeepEqual(got, w) {
+				t.Errorf("%s with %d options: %v %v, in memory %v", text, len(opts), got, err, w)
+			}
+			if r.Pushes != 1 || r.Lookups+r.Batches != 0 || stores[1].yielded == 0 {
+				t.Errorf("%s: %d pushes, %d lookups and batches, B sent %d rows; want the goal pushed whole and B asked", text, r.Pushes, r.Lookups+r.Batches, stores[1].yielded)
+			}
+		}
+		_, plain, _ := abEdges(false)
+		var r Report
+		if _, err := (SemiNaive{}).Eval(bg, q, MustBase(std(whole), plain), Explain(&r)); err != nil || r.Pushes != 0 || r.Lookups+r.Batches == 0 {
+			t.Errorf("control: %s over an unpartitioned federation made %d pushes and %d lookups: %v", text, r.Pushes, r.Lookups+r.Batches, err)
+		}
+	}
+}

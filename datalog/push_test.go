@@ -397,6 +397,9 @@ func evalConjunction(c ns.Conjunction, schema func(string) ns.Schema, candidates
 			out = append(out, slices.Clone(row[:k]))
 		}
 		if k == len(c.Atoms) {
+			if c.PrefixesOnly {
+				return
+			}
 			if sloppy || numbersPass(c.Compare, vals) {
 				out = append(out, slices.Clone(row))
 			}
