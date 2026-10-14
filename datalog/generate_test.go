@@ -683,6 +683,9 @@ func (c genCase) check() (genOutcome, string) {
 	if diff := agreePushed(q, b, want, werr, c.opts()); diff != "" {
 		return genDisagreed, diff
 	}
+	if diff := agreePartitioned(q, b, want, werr, c.opts()); diff != "" {
+		return genDisagreed, diff
+	}
 	return genAgreed, ""
 }
 
@@ -785,6 +788,81 @@ func agreePushed(q Query, b *Base, want []Row, werr error, opts []Option) string
 	g, err := SemiNaive{}.Eval(bg, q, MustBase(b.reg, pushingAt(b.src)), canon...)
 	if err != nil || !reflect.DeepEqual(w, g) {
 		return fmt.Sprintf("planned SemiNaive pushed cites differently under CanonicalCites on %v\n whole:  %v\n pushed: %v %v", q, w, g, err)
+	}
+	return ""
+}
+
+// partitionedPrograms counts those whose planned evaluation pushed a conjunction to more than one
+// member of a partitioned federation (#238).
+var partitionedPrograms int
+
+// agreePartitioned is agreePushed over b's facts dealt across three pushing stores by their first
+// argument, in a partitioned federation whose Holds routes that argument (#238), so a pushed join
+// spans members and its prefixes continue across them. Each value is dealt as it reads, so a bound
+// value finds the member holding it however it's spelled.
+func agreePartitioned(q Query, b *Base, want []Row, werr error, opts []Option) string {
+	const n = 3
+	deal := func(rel string, v ns.Value) int {
+		s, _ := b.src.Schema(rel)
+		read := normalizeTuples([]ns.Tuple{{Vals: []ns.Value{v}}}, s.Types[:min(1, len(s.Types))])[0].Vals[0]
+		h := 0
+		for _, r := range valueKey(read) {
+			h = h*31 + int(r)
+		}
+		return (h%n + n) % n
+	}
+	mems := make([]*ns.MemSource, n)
+	for i := range mems {
+		mems[i] = ns.NewMemSource()
+		for _, rel := range b.src.Relations() {
+			s, _ := b.src.Schema(rel)
+			mems[i].DeclareSchema(rel, s)
+		}
+	}
+	for _, rel := range b.src.Relations() {
+		for k, t := range b.src.Tuples(rel) {
+			i := k % n
+			if len(t.Vals) > 0 {
+				i = deal(rel, t.Vals[0])
+			}
+			mems[i].Add(rel, t)
+		}
+	}
+	stores := make([]*pushing, n)
+	members := make([]ns.Member, n)
+	for i := range members {
+		i := i
+		stores[i] = pushingAt(mems[i])
+		members[i] = ns.Member{Source: stores[i], Holds: func(rel string, bound map[int]ns.Value) bool {
+			v, ok := bound[0]
+			return !ok || deal(rel, v) == i
+		}}
+	}
+	f, err := ns.NewPartitionedFederation(members...)
+	if err != nil {
+		return err.Error()
+	}
+	lb := MustBase(b.reg, f)
+	if diff := agreeOver(q, b, lb, "partitioned", want, werr, opts); diff != "" {
+		return diff
+	}
+	asked := 0
+	for _, st := range stores {
+		if st.pushes() > 0 {
+			asked++
+		}
+	}
+	if asked > 1 {
+		partitionedPrograms++
+	}
+	if werr != nil || anyRows(q) {
+		return ""
+	}
+	canon := append(opts[:len(opts):len(opts)], CanonicalCites(), Witnesses())
+	w, _ := Naive{}.Eval(bg, q, MustBase(b.reg, f), canon...)
+	g, err := SemiNaive{}.Eval(bg, q, MustBase(b.reg, f), canon...)
+	if err != nil || !reflect.DeepEqual(w, g) {
+		return fmt.Sprintf("planned SemiNaive over a partitioned federation cites differently under CanonicalCites on %v\n naive:  %v\n pushed: %v %v", q, w, g, err)
 	}
 	return ""
 }
@@ -1014,7 +1092,7 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 		first, seeds = int64(s), 1
 	}
 	compared, known, skipped, failed := map[string]int{}, map[int]int{}, 0, 0
-	lookedUpPrograms, federatedPrograms, batchedPrograms, pushedPrograms, unitAnswers, mixedAnswers = 0, 0, 0, 0, 0, 0
+	lookedUpPrograms, federatedPrograms, batchedPrograms, pushedPrograms, partitionedPrograms, unitAnswers, mixedAnswers = 0, 0, 0, 0, 0, 0, 0
 	withUnits := 0
 	for seed := first; seed < first+int64(seeds); seed++ {
 		rnd := rand.New(rand.NewSource(seed))
@@ -1079,6 +1157,9 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 	}
 	if pushedPrograms == 0 {
 		t.Errorf("control: no program pushed a conjunction to the Source")
+	}
+	if partitionedPrograms == 0 {
+		t.Errorf("control: no program pushed a conjunction across a partitioned federation's members")
 	}
 	if unitAnswers < seeds/100 {
 		t.Errorf("control: %d answers held a unit over %d seeds: units aren't reaching the goals", unitAnswers, seeds)
