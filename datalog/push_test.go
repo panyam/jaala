@@ -32,6 +32,7 @@ type pushing struct {
 	noExtremes        bool // refuses a summary with Extremes
 	pages, summaries  int
 	summarized        []ns.Summary
+	pagedAfter        [][]ns.Value
 }
 
 func pushingAt(src ns.Source) *pushing { return &pushing{looking: lookingAt(src)} }
@@ -59,6 +60,7 @@ func (p *pushing) Push(_ context.Context, c ns.Conjunction) iter.Seq2[[]ns.Tuple
 		if c.Page != nil {
 			p.mu.Lock()
 			p.pages++
+			p.pagedAfter = append(p.pagedAfter, c.Page.After)
 			p.mu.Unlock()
 			if !p.sloppy {
 				rows = pageOf(c, schema, rows)
@@ -227,6 +229,9 @@ func pageOf(c ns.Conjunction, schema func(string) ns.Schema, rows [][]ns.Tuple) 
 	var answers []answer
 	for _, row := range rows {
 		vals := rowValues(c, schema, row)
+		if !pageAfter(pg, vals) {
+			continue
+		}
 		if k := keyOf(vals); !seen[k] {
 			seen[k] = true
 			answers = append(answers, answer{vals, k})
@@ -263,6 +268,23 @@ func pageOf(c ns.Conjunction, schema func(string) ns.Schema, rows [][]ns.Tuple) 
 		}
 	}
 	return out
+}
+
+// pageAfter reports whether an answer's values come strictly after a page's cursor, if it has one.
+func pageAfter(pg *ns.Page, vals map[int]ns.Value) bool {
+	if pg.After == nil {
+		return true
+	}
+	for i, k := range pg.Order {
+		c := orderValues(vals[k.Var], pg.After[i])
+		if k.Desc {
+			c = -c
+		}
+		if c != 0 {
+			return c > 0
+		}
+	}
+	return false
 }
 
 // orderTie compares two answers by a page's keys and columns, 0 when the order can't tell them apart.

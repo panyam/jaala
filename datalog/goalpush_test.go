@@ -155,10 +155,9 @@ func TestAPageOrdersAsTheAnswerDoes(t *testing.T) {
 	}
 }
 
-// A goal with a comparison, a negation, a derived relation or an after cursor, or one whose total the
-// host asks for, isn't paged: a store
-// skipping the comparison would fill its page with rows failing it, and a page starts at the first
-// row, not after the cursor.
+// A goal with a comparison, a negation or a derived relation, or one whose total the host asks for,
+// isn't paged: a store skipping the comparison would fill its page with rows failing it, and a total
+// needs every row.
 func TestAGoalItCantPageIsSolved(t *testing.T) {
 	for _, text := range []string{
 		`val(?p, ?k, ?v), ?v > 2 => ?p order by ?p limit 1`,
@@ -177,17 +176,8 @@ func TestAGoalItCantPageIsSolved(t *testing.T) {
 		}
 	}
 	q := mustParse(t, `val(?p, ?k, ?v) => ?p order by ?p limit 1`)
-	after := After(map[Var]ns.Value{"p": ns.S("p2")})
-	want, err := both(q, baseFor(std(partValues())), after)
-	if err != nil || len(want) != 1 || want[0].Bind["p"].S != "p3" {
-		t.Fatalf("control: after p2, in memory, %v %v", binds(want), err)
-	}
-	src := pushingAt(partValues())
-	if got, err := (SemiNaive{}).Eval(bg, q, MustBase(std(partValues()), src), after); err != nil || !reflect.DeepEqual(binds(got), binds(want)) || src.pages != 0 {
-		t.Errorf("after p2: %v %v in %d pages, want %v unpaged", binds(got), err, src.pages, binds(want))
-	}
 	var total int
-	src = pushingAt(partValues())
+	src := pushingAt(partValues())
 	if _, err := (SemiNaive{}).Eval(bg, q, MustBase(std(partValues()), src), Total(&total)); err != nil || total != 6 || src.pages != 0 {
 		t.Errorf("asking the total, it was %d in %d pages, want 6 unpaged: %v", total, src.pages, err)
 	}
@@ -378,6 +368,36 @@ func TestAJoinAcrossStoresIsSummarizedAndPaged(t *testing.T) {
 		var r Report
 		if _, err := (SemiNaive{}).Eval(bg, q, MustBase(std(whole), plain), Explain(&r)); err != nil || r.Pushes != 0 || r.Lookups+r.Batches == 0 {
 			t.Errorf("control: %s over an unpartitioned federation made %d pushes and %d lookups: %v", text, r.Pushes, r.Lookups+r.Batches, err)
+		}
+	}
+}
+
+// A page after a cursor is each store's first rows after it (#254), so the second page of a listing
+// ships its limit per store as the first does, and answers as in memory, from the After option and
+// from the query's after clause alike.
+func TestAPageStartsAfterTheCursor(t *testing.T) {
+	cases := []struct {
+		text string
+		opts []Option
+	}{
+		{`attr(?id, "lines", ?n) => ?id order by ?id limit 2`, []Option{After(map[Var]ns.Value{"id": ns.S("a2")})}},
+		{`attr(?id, "lines", ?n) => ?id, ?n order by ?n desc, ?id after "7", "a1" limit 2`, nil},
+	}
+	for _, c := range cases {
+		q := mustParse(t, c.text)
+		stores, f, whole := linesStores()
+		want, err := both(q, baseFor(std(whole)), c.opts...)
+		if err != nil || len(want) != 2 {
+			t.Fatalf("%s in memory: %v %v", c.text, binds(want), err)
+		}
+		got, err := SemiNaive{}.Eval(bg, q, MustBase(std(whole), f), c.opts...)
+		if err != nil || !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: paged %v %v, in memory %v", c.text, binds(got), err, binds(want))
+		}
+		for i, s := range stores {
+			if s.pages != 1 || s.yielded > 2 || len(s.pagedAfter) != 1 || s.pagedAfter[0] == nil {
+				t.Errorf("%s: store %d paged %d times after %v, sending %d rows, want one page after the cursor of at most 2", c.text, i, s.pages, s.pagedAfter, s.yielded)
+			}
 		}
 	}
 }

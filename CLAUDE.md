@@ -127,7 +127,8 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   numbers, NaN and bounds (`ns.Extreme`), fed by `accumulator.addExtremes`; a store refusing them is
   asked for `Values` instead. Cached summaries are tuples (`encodeSummary`). A row merges only
   identical values (text, number, unit), since aggregates read units and spellings. A goal with a
-  limit and no comparison, `After` or `Total` sets `Conjunction.Page` and solves the returned matches
+  limit and no comparison or `Total` sets `Conjunction.Page` (an after cursor's values in `Page.After`,
+  #254) and solves the returned matches
   through the projector as usual. A Federation pages or summarizes a single-literal goal across
   members, anything for a lone member, and a join across a partitioned federation's members (#253):
   `across` checks every member takes it and pushes `PrefixesOnly`, and `spanning` continues each

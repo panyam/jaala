@@ -823,6 +823,7 @@ var goalQuestions = []string{
 	`weight(?n, ?w) => ?n, ?w order by ?w limit 2`,
 	`edge(?a, ?b), node(?b) => ?a, ?b order by ?a limit 2`,
 	`weight(?n, ?w) => ?n, min(?w), max(?w)`,
+	`edge(?a, ?b) => ?a, ?b order by ?a desc, ?b after "v3", "v1" limit 2`,
 	`edge(?a, ?b), weight(?b, ?w) => ?a, max(?w)`,
 	`weight(?n, ?w) => min(?w), max(distinct ?w)`,
 }
