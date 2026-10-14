@@ -291,3 +291,72 @@ func TestAFederationStreamsItsMembers(t *testing.T) {
 		t.Errorf("a failing member streamed %v, want its error named", failed)
 	}
 }
+
+// pushMem is a MemSource that pushes every conjunction, answering each with every tuple of its first
+// atom's relation as a one-tuple row, or failing.
+type pushMem struct {
+	*MemSource
+	fail error
+}
+
+func (m *pushMem) Pushes(Conjunction) bool { return true }
+
+func (m *pushMem) Push(_ context.Context, c Conjunction) iter.Seq2[[]Tuple, error] {
+	return func(yield func([]Tuple, error) bool) {
+		if m.fail != nil {
+			yield(nil, m.fail)
+			return
+		}
+		for _, t := range m.Tuples(c.Atoms[0].Relation) {
+			if !yield([]Tuple{t}, nil) {
+				return
+			}
+		}
+	}
+}
+
+// A Federation pushes a conjunction only to a lone member that pushes, citing each tuple to it, and
+// wraps the member's failure with its name.
+func TestAFederationPushesToALoneMember(t *testing.T) {
+	mem := NewMemSource().Declare("edge", "from", "to")
+	mem.Add("edge", Tuple{Vals: []Value{S("a"), S("b")}, Cites: []string{"e1"}})
+	c := Conjunction{Atoms: []PushAtom{{Relation: "edge", Args: []PushArg{{Var: 1}, {Var: 2}}}}}
+	pm := &pushMem{MemSource: mem}
+	lone, err := NewFederation(Member{Name: "repo0", Source: pm})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !lone.Pushes(c) {
+		t.Fatalf("a federation of one pushing member refuses to push")
+	}
+	var rows [][]Tuple
+	for row, err := range lone.Push(context.Background(), c) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows = append(rows, row)
+	}
+	if len(rows) != 1 || !reflect.DeepEqual(rows[0][0].Cites, []string{"repo0:e1"}) {
+		t.Errorf("pushed %v, want the edge cited to repo0", rows)
+	}
+	pm.fail = errors.New("locked")
+	for _, err := range lone.Push(context.Background(), c) {
+		if err == nil || !errors.Is(err, pm.fail) || !strings.Contains(err.Error(), `member "repo0": `) {
+			t.Errorf("a failing member's push gave %v, want its error wrapped with its name", err)
+		}
+	}
+	two, err := NewFederation(Member{Name: "repo0", Source: pm}, Member{Name: "repo1", Source: &pushMem{MemSource: mem}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if two.Pushes(c) {
+		t.Errorf("a federation of two members pushes a conjunction, whose join could span them (#238)")
+	}
+	plain, err := NewFederation(Member{Name: "repo0", Source: mem})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain.Pushes(c) {
+		t.Errorf("a federation whose lone member doesn't push pushes")
+	}
+}

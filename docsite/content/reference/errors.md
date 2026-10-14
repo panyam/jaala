@@ -653,6 +653,22 @@ The host's source failed to look up a relation's facts for a call with bound arg
 
 A source that answers lookups in batches (`ns.BatchLookupSource`) returned a different number of results than the values it was asked for. It must return one result per value, in the order asked.
 
+`query: evaluation stopped pushing …: …`
+
+The context ended while a source that evaluates conjunctions (`ns.PushSource`) was answering one. The message names the conjunction's literals.
+
+`query: pushing …: …`
+
+The host's source failed to evaluate a conjunction of a body's literals that it agreed to push. jaala doesn't keep a failed push.
+
+`query: pushing …: a row of … tuples for … literals`
+
+A source that evaluates conjunctions returned a row whose tuple count isn't the number of literals it was asked about. Each row holds one tuple per literal, in the order asked.
+
+`query: pushing …: a row's … tuple has … values, want …`
+
+A row's tuple for one relation has a different number of values than the relation takes.
+
 ## Setting up a vocabulary
 
 These come from a host's Go code registering a vocabulary, never from a query. They're listed so a host author can find them.
