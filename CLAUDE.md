@@ -226,6 +226,11 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   citation-leak fixture whose first derivation happened to follow the leaked path, a `ValidateBound`
   test with no closed-Domain argument (#68, which shipped). A `control:`
   assertion (Naive walks n times; the plan does start with the reordered literal) catches that.
+  A path a rewrite makes rare can be unreachable in the corpus, so before trusting a surviving
+  mutation, check the path runs at all (a temporary print over 1000 seeds). #237's bound-group
+  fallback ran only behind a generator the planner puts first, and its first fixture derived every
+  tuple in round zero, so emptying the fallback changed no answer; its test checks the bindings the
+  fallback passes too.
   A corpus control that counts a rare case has to hold at CI's 300 seeds, not only at the 1000 or
   5000 it was tried at: #192's mixed-units control passed at 1000 and failed CI's default, so it
   applies from 1000 seeds. Run `go test ./datalog` at its default before pushing a new control.
@@ -501,7 +506,11 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   `looking` (a LookupSource, optionally sloppy or failing), `batching` (it with `LookupBatch`,
   recording each batch) and `fanned(n)` (a hub calling n nodes with attributes) in `lookup_test.go`;
   `versionedLooking` in `lookupcache_test.go`. `wide` (an `edge` relation made as it's read, counting what it made) and `streamingWide` in
-  `stream_test.go`; a `store` streams unless `sliced`, and counts what it `shipped`. `both()` takes Eval options, so a `Bind`
+  `stream_test.go`; a `store` streams unless `sliced`, and counts what it `shipped`. `pushing` (a
+  looking store that evaluates conjunctions by its own join, `evalConjunction`, optionally sloppy,
+  refusing comparisons, or failing) in `push_test.go`, and the `store` pushes too; `joinMem` and
+  `partitionedEdges` (#238's two-store example) in `ns/federation_test.go`. The corpus's federations
+  leave their members unnamed: a `Name` prefixes citations, which `agreeOver` compares. `both()` takes Eval options, so a `Bind`
   case runs through all three evaluators. `both()` compares rows in order, so every test checks the
   answer order too. Don't compare rows by `fmt.Sprint`: `ns.Value.Num` is a pointer, so the text
   carries an address. datalog's tests import `stdlib` for `std()`; production datalog code must not.
@@ -531,8 +540,9 @@ charged to the budget, from declaire#211's measurement); it stays open for Decla
 `mission_store_pushdown` (#235), epic #213's second half: a store answers the part of a question it
 can evaluate (a conjunction, a walk, an aggregate, a page) and jaala combines the results, measured
 by the same benchmark's `shipped` column and its questions `two-hops-in-repo`, `count-lines`, `page`
-and `self-loops` (#236, closed), then #237 (a store evaluates a conjunction, with witnesses and
-`agreePushed`), #238 (across a federation), #239 (a walk in one call, #231), #240 and #241. jaala's
+and `self-loops` (#236). #237 (`ns.PushSource`, v0.1.46) and #238 (`NewPartitionedFederation`,
+v0.1.47) are closed, so two hops within a repo is one call at any store count; #239 (a walk in one
+call, #231), #240, #241 and #246 (a group bound partway through a body, batched) remain. jaala's
 earlier four are closed: `mission_selfcheck` (#86, at v0.1.29) left `./selfcheck.sh` as the check to
 run on `main` after every merge and before every tag; `mission_docsite` (#104) left the docs site
 with every example run by the engine; `mission_aggregate_answers` (#172, at v0.1.42) left Soufflé
