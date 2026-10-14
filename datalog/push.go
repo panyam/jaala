@@ -3,6 +3,7 @@ package datalog
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -18,10 +19,11 @@ import (
 // ones solving the literals one by one would give. The comparisons over the group's variables go to
 // the store as well when it takes them, and stay in the body, so the engine checks them too.
 //
-// A group is pushed only when constants are its only inputs: its first literal binds nothing an
-// earlier literal bound, and each literal joining it shares a variable with it and none with a
-// literal outside it before its place. A group bound partway through a body would be a call per
-// binding, where a lookup batches (#153). Naive and WrittenOrder never push.
+// A group may read variables an earlier literal binds, its inputs, when the Source takes them (#246):
+// prefetchPushed then collects the bindings the body before the group gives them and asks for all of
+// them in one call (Conjunction.Bindings), as a batched lookup does, filing each binding's rows where
+// solving the group under that binding looks. Each literal joining a group shares a variable with it
+// and none with a literal outside it before its place. Naive and WrittenOrder never push.
 
 // pushPrefix starts a pushed group's relation name, which the parser never accepts.
 const pushPrefix = "\x00p:"
@@ -81,16 +83,13 @@ func pushBody(b *Base, body Body) Body {
 // growGroup is the group starting at pos[i], or nil when none of two literals or more does, marking
 // its members used.
 func growGroup(b *Base, pos []Literal, i int, bound map[Var]bool, used []bool) *pushGroup {
-	if !b.pushable(pos[i]) || sharesVar(pos[i].Pos, bound) {
+	if !b.pushable(pos[i]) {
 		return nil
 	}
 	members := []int{i}
 	vars := map[Var]bool{}
 	bindAll(pos[i].Pos, vars)
 	outside := map[Var]bool{}
-	for v := range bound {
-		outside[v] = true
-	}
 	for j := i + 1; j < len(pos); j++ {
 		lit := pos[j]
 		if used[j] || lit.Pos == nil {
@@ -98,7 +97,7 @@ func growGroup(b *Base, pos []Literal, i int, bound map[Var]bool, used []bool) *
 		}
 		if b.pushable(lit) && !sharesVar(lit.Pos, outside) && sharesVar(lit.Pos, vars) {
 			g := groupOf(pos, append(members[:len(members):len(members)], j), nil)
-			if b.pusher.Pushes(g.conjunction(nil)) {
+			if b.pusher.Pushes(g.offered(bound)) {
 				members = append(members, j)
 				bindAll(lit.Pos, vars)
 				continue
@@ -116,13 +115,28 @@ func growGroup(b *Base, pos []Literal, i int, bound map[Var]bool, used []bool) *
 		}
 	}
 	g := groupOf(pos, members, cmps)
-	if len(cmps) > 0 && !b.pusher.Pushes(g.conjunction(nil)) {
+	if len(cmps) > 0 && !b.pusher.Pushes(g.offered(bound)) {
 		g.compare = nil
 	}
 	for _, m := range members {
 		used[m] = true
 	}
 	return g
+}
+
+// offered is g as the planner offers it to Pushes: its variables that bound, what the literals before
+// it bind, are its Inputs (#246), which a store answers for many bindings in one call.
+func (g *pushGroup) offered(bound map[Var]bool) ns.Conjunction {
+	c, nums := g.numbered(nil)
+	for _, lit := range g.lits {
+		for _, t := range lit.Pos.Args {
+			if n := nums[t.Var]; n > 0 && bound[t.Var] && !slices.Contains(c.Inputs, n) {
+				c.Inputs = append(c.Inputs, n)
+			}
+		}
+	}
+	slices.Sort(c.Inputs)
+	return c
 }
 
 // pushable reports whether lit calls a base relation the Source could be asked to push: one it serves
@@ -290,12 +304,23 @@ func pushKey(c ns.Conjunction) string {
 // bound is solved literal by literal instead, as it would have been without the Source.
 func (b *Base) extendPushed(atom *Atom, bnd *binding, yield func(*binding) error) error {
 	g := b.run.pushed[atom.Relation]
+	var rows []ns.Tuple
 	if g.boundIn(bnd) {
-		return b.solveUnpushed(g, bnd, yield)
-	}
-	rows, err := b.push(g)
-	if err != nil {
-		return err
+		// A binding prefetchPushed asked for is kept under the group with its inputs as constants;
+		// any other is solved literal by literal.
+		kept, hit, fromBase := b.lookedUp(pushKey(g.conjunction(bnd)))
+		if !hit {
+			return b.solveUnpushed(g, bnd, yield)
+		}
+		if b.run.explain != nil {
+			b.explainPush(g, 0, !fromBase, fromBase)
+		}
+		rows = kept
+	} else {
+		var err error
+		if rows, err = b.push(g); err != nil {
+			return err
+		}
 	}
 	n := len(g.lits)
 	for k := 0; k+n <= len(rows); k += n {
@@ -393,4 +418,182 @@ func pushErr(ctx context.Context, text string, err error) error {
 		return fmt.Errorf("query: evaluation stopped pushing %s: %w", text, ctx.Err())
 	}
 	return fmt.Errorf("query: pushing %s: %w", text, err)
+}
+
+// prefetchPushed asks the Source, for each pushed group in lits after the first literal, for the
+// matches of every binding the literals before it give its variables that no Eval has kept, in
+// batches of batchSize (#246), so solving the group under each binding finds its rows kept. A Volatile
+// predicate stops it, as it stops prefetch.
+func prefetchPushed(b *Base, lits []Literal) error {
+	if b.pusher == nil {
+		return nil
+	}
+	for i, lit := range lits {
+		atom := lit.Pos
+		if atom == nil {
+			continue
+		}
+		if bi, ok := b.reg.Predicate(atom.Relation); ok {
+			if bi.Volatile {
+				return nil
+			}
+			continue
+		}
+		if i == 0 || !isPushed(atom.Relation) {
+			continue
+		}
+		g := b.run.pushed[atom.Relation]
+		if err := b.run.explain.at(i, func() error { return prefetchGroup(b, lits[:i], g) }); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// prefetchGroup solves prefix and pushes g for the bindings it gives g's variables, grouped by which
+// of them are bound.
+func prefetchGroup(b *Base, prefix []Literal, g *pushGroup) error {
+	type batch struct {
+		vars    []Var
+		binding [][]ns.Value
+	}
+	pending := map[string]*batch{}
+	var order []string
+	asked := map[string]bool{}
+	e := b.run.explain
+	if e != nil {
+		e.quiet = true
+	}
+	err := solve(prefix, 0, newBinding(), b, func(bnd *binding) error {
+		var vars []Var
+		var vals []ns.Value
+		seen := map[Var]bool{}
+		for _, lit := range g.lits {
+			for _, t := range lit.Pos.Args {
+				if v, ok := bnd.vals[t.Var]; ok && t.Var != "" && t.Var != "_" && !seen[t.Var] {
+					seen[t.Var] = true
+					vars = append(vars, t.Var)
+					vals = append(vals, v)
+				}
+			}
+		}
+		if len(vars) == 0 {
+			return nil
+		}
+		key := pushKey(g.conjunction(bnd))
+		if _, done := b.run.looked[key]; done || asked[key] {
+			return nil
+		}
+		if _, kept := b.lookups.get(key); kept {
+			return nil
+		}
+		asked[key] = true
+		k := strings.Join(varNames(vars), "\x00")
+		if pending[k] == nil {
+			pending[k] = &batch{vars: vars}
+			order = append(order, k)
+		}
+		pending[k].binding = append(pending[k].binding, vals)
+		return nil
+	})
+	if e != nil {
+		e.quiet = false
+	}
+	if err != nil {
+		return err
+	}
+	for _, k := range order {
+		p := pending[k]
+		for start := 0; start < len(p.binding); start += batchSize {
+			if err := b.pushBatch(g, p.vars, p.binding[start:min(start+batchSize, len(p.binding))]); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func varNames(vars []Var) []string {
+	out := make([]string, len(vars))
+	for i, v := range vars {
+		out[i] = string(v)
+	}
+	return out
+}
+
+// pushBatch asks the Source for g's matches under each of bindings, values of vars, in one call
+// (Conjunction.Bindings), and keeps each binding's rows as pushing g with that binding's values as
+// constants would. A Source that declines the group with these inputs is left to solving, literal by
+// literal.
+func (b *Base) pushBatch(g *pushGroup, vars []Var, bindings [][]ns.Value) error {
+	c, nums := g.numbered(nil)
+	// vars come in the order g's literals first write them, which is the order numbered numbers them,
+	// so Inputs is ascending and each binding is in Inputs' order as collected.
+	for _, v := range vars {
+		c.Inputs = append(c.Inputs, nums[v])
+	}
+	if !b.pusher.Pushes(c) {
+		return nil
+	}
+	c.Bindings = bindings
+	if err := b.countWork(); err != nil {
+		return err
+	}
+	r := b.run
+	types := make([][]ns.ArgType, len(g.lits))
+	for i, lit := range g.lits {
+		types[i] = b.argTypesOf(lit.Pos.Relation)
+	}
+	// Where to read each input in a row: the first literal and argument it is written at.
+	type place struct{ lit, arg int }
+	places := make([]place, len(vars))
+	for i, v := range vars {
+		places[i] = place{-1, -1}
+		for li, lit := range g.lits {
+			if a := slices.IndexFunc(lit.Pos.Args, func(t Term) bool { return t.Var == v }); a >= 0 {
+				places[i] = place{li, a}
+				break
+			}
+		}
+	}
+	ctx := r.context()
+	byBinding := map[string][]ns.Tuple{}
+	fetched := 0
+	for row, err := range b.pusher.Push(ctx, c) {
+		if err != nil {
+			return pushErr(ctx, g.text, err)
+		}
+		if len(row) != len(g.lits) {
+			return fmt.Errorf("query: pushing %s: a row of %d tuples for %d literals", g.text, len(row), len(g.lits))
+		}
+		if err := r.readOne(); err != nil {
+			return err
+		}
+		read := make([]ns.Tuple, len(row))
+		for i, t := range row {
+			if want := len(g.lits[i].Pos.Args); len(t.Vals) != want {
+				return fmt.Errorf("query: pushing %s: a row's %s tuple has %d values, want %d", g.text, g.lits[i].Pos.Relation, len(t.Vals), want)
+			}
+			read[i] = normalizeTuples([]ns.Tuple{t}, types[i])[0]
+		}
+		var sb strings.Builder
+		for _, p := range places {
+			sb.WriteString(valueKey(read[p.lit].Vals[p.arg]) + "\x00")
+		}
+		byBinding[sb.String()] = append(byBinding[sb.String()], read...)
+		fetched++
+	}
+	for _, vals := range bindings {
+		var sb strings.Builder
+		bnd := newBinding()
+		for i, v := range vars {
+			sb.WriteString(valueKey(vals[i]) + "\x00")
+			bnd.vals[v] = vals[i]
+		}
+		b.keepLookup(pushKey(g.conjunction(bnd)), byBinding[sb.String()])
+	}
+	if r.explain != nil {
+		b.explainPush(g, fetched, false, false)
+	}
+	return nil
 }

@@ -30,6 +30,9 @@ func prefetch(b *Base, lits, negs []Literal) error {
 	if b.run == nil || !b.run.batch {
 		return nil
 	}
+	if err := prefetchPushed(b, lits); err != nil {
+		return err
+	}
 	bl, ok := b.looker.(ns.BatchLookupSource)
 	if !ok {
 		return nil

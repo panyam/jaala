@@ -102,10 +102,13 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
 - **A `PushSource` evaluates a conjunction of a body's base literals** (`push.go`, `ns/push.go`, #237).
   `pushConjunctions` runs after `plan`, in the planned SemiNaive only, and replaces each group the
   Source's `Pushes` accepts with one literal over `\x00p:{…}` whose arguments are the group's
-  variables (`run.pushed` holds the group). A group starts at a pushable literal binding nothing bound
-  before it, and takes each later literal sharing a variable with it and none with a literal outside it
-  before its place, so constants are its only inputs; comparisons over its variables go along when the
-  store takes them and stay in the body. `extendPushed` unifies every row's tuples with the literals as
+  variables (`run.pushed` holds the group). A group starts at a pushable literal and takes each later
+  literal sharing a variable with it and none with a literal outside it before its place; variables
+  bound before it are `Inputs` (`offered`), which the store must take (#246), and `prefetchPushed`
+  (from `prefetch`) asks for a batch of their bindings (`pushBatch`), filing each binding's rows under
+  `pushKey(g.conjunction(bnd))`, where `extendPushed` finds them; a binding not filed is solved literal
+  by literal (`solveUnpushed`). Comparisons over its variables go along when the store takes them and
+  stay in the body. `extendPushed` unifies every row's tuples with the literals as
   written, so a sloppy row drops and witnesses splice per literal at its `at` (`parts`). Rows are
   charged with `readOne` and kept in the lookup tiers under `pushKey`. A semi-naive round that binds a
   group (`deltaFirst`) solves it literal by literal (`solveUnpushed`); `scanSize` sizes a pushed
