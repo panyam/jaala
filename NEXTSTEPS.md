@@ -5,19 +5,17 @@ Maintained by /checkpoint: one thread per branch, pruned when the branch merges.
 
 ## At a glance
 
-- No open branches; everything is merged and released (v0.1.47 on 5cb5ba2, 2026-10-14).
-- #235 `mission_store_pushdown` is 3/7 (#236, #237, #238 closed). Next ready: #239 (a recursive
-  relation over one store's facts as one call; `deep-walk` is still 60 calls), then #240, #241 and
-  #246, all P2. Exercise last logged at f37485b, after PR #249; PR #248 (#216, arithmetic only)
-  merged since.
+- No open branches; everything is merged and released (v0.1.48 on 8c0c8f7, 2026-10-14).
+- #235 `mission_store_pushdown` is 4/8 (#236 to #239 closed). Next ready: #240 (push aggregates to
+  each store and combine them exactly; `count-lines` still ships every match), then #241 (pages),
+  #246 (P2) and #250 (P3). Exercise logged at 8c0c8f7, after PR #251; nothing merged since.
 - #219 `mission_store_federation` has all 7 jaala tickets closed and waits on Declaire's half:
-  `bench -engine stores -time` on a federated kubernetes view against declaire#180's baseline.
-  Declaire pins jaala v0.1.44, so the run starts with a bump to v0.1.47, from a Declaire session.
-  Logged at 5cb5ba2.
+  `bench -engine stores -time` on a federated kubernetes view against declaire#180's baseline,
+  from a Declaire session, which pins jaala v0.1.44 and starts with a bump to v0.1.48. Logged at
+  5cb5ba2.
 - No P0 or P1 is open. Off-mission and ready: #179, #205, #206, #209, #215, #220, #222, #234 (P3);
   #207, #242 and #244 `waiting`.
-- This run: merged PR #247 (#237), PR #249 (#238) and PR #248 (#216, an outside contributor's);
-  released v0.1.45, v0.1.46 and v0.1.47; filed #246; dropped the old resume list (all done).
+- This run: merged PR #251 (#239) and released v0.1.48; filed #250.
 
 ## Across threads
 

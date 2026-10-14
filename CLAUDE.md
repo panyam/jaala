@@ -242,6 +242,9 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   fallback ran only behind a generator the planner puts first, and its first fixture derived every
   tuple in round zero, so emptying the fallback changed no answer; its test checks the bindings the
   fallback passes too.
+  A control counting how often the corpus reaches a feature must evaluate on a fresh Base:
+  `agreeOver` runs Naive first on the Base it compares, and Naive's lookups fill the Base's cache, so
+  the planned run there finds nothing left to walk (#239's control read 0 until it got its own Base).
   A corpus control that counts a rare case has to hold at CI's 300 seeds, not only at the 1000 or
   5000 it was tried at: #192's mixed-units control passed at 1000 and failed CI's default, so it
   applies from 1000 seeds. Run `go test ./datalog` at its default before pushing a new control.
@@ -551,9 +554,10 @@ charged to the budget, from declaire#211's measurement); it stays open for Decla
 `mission_store_pushdown` (#235), epic #213's second half: a store answers the part of a question it
 can evaluate (a conjunction, a walk, an aggregate, a page) and jaala combines the results, measured
 by the same benchmark's `shipped` column and its questions `two-hops-in-repo`, `count-lines`, `page`
-and `self-loops` (#236). #237 (`ns.PushSource`, v0.1.46) and #238 (`NewPartitionedFederation`,
-v0.1.47) are closed, so two hops within a repo is one call at any store count; #239 (a walk in one
-call, #231), #240, #241 and #246 (a group bound partway through a body, batched) remain. jaala's
+and `self-loops` (#236). #237 (`ns.PushSource`, v0.1.46), #238 (`NewPartitionedFederation`,
+v0.1.47) and #239 (`ns.WalkSource`, v0.1.48) are closed, so two hops within a repo is one call and
+`deep-walk` one call at any store count; #240 (aggregates), #241 (pages), #246 (a group bound partway
+through a body, batched) and #250 (a walk whose step is several literals) remain. jaala's
 earlier four are closed: `mission_selfcheck` (#86, at v0.1.29) left `./selfcheck.sh` as the check to
 run on `main` after every merge and before every tag; `mission_docsite` (#104) left the docs site
 with every example run by the engine; `mission_aggregate_answers` (#172, at v0.1.42) left Soufflé
