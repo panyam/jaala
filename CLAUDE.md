@@ -577,7 +577,9 @@ passes too, so it can stay open after jaala's tickets close. Two are active:
 `mission_store_federation` (#219), a host answers a question over many stores without holding them
 in memory, measured by the `Stores` benchmark (#218: stores asked, unindexed probes, round trips,
 peak heap and a repeated question's fetches as the number of stores grows) and Declaire's `bench
--time` on a federated view. Its seven jaala tickets are closed, the last #233 (a `StreamSource` read
+-time` on a federated view. The benchmark's stores run in its process, so `peak-MB` counts their
+work too: `page`'s 15 MB at 50 stores is mostly the fixture's own paging (`pageOf` builds every
+match before sorting), not the engine, so profile before blaming jaala. Its seven jaala tickets are closed, the last #233 (a `StreamSource` read
 charged to the budget, from declaire#211's measurement); it stays open for Declaire's half.
 `mission_store_pushdown` (#235), epic #213's second half: a store answers the part of a question it
 can evaluate (a conjunction, a walk, an aggregate, a page) and jaala combines the results, measured
