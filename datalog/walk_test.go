@@ -170,3 +170,98 @@ func TestAWalkFollowsOnlyItsConstants(t *testing.T) {
 		t.Errorf("after the walk, q1 calls %q %v, want q2", col(got, "x"), err)
 	}
 }
+
+// stepChain is a call graph two relations a step: edge(n<i>, f<i>) from a node to its function and
+// call(f<i>, n<i+1>) on to the next node, n0 to n8; and z1's edges to g1 and g2, which call z2 and z3,
+// which no walk from n0 reaches. The last call listed is g2's.
+func stepChain() *ns.MemSource {
+	m := ns.NewMemSource().Declare("edge", "from", "to").Declare("call", "from", "to")
+	for i := range 8 {
+		f := fmt.Sprint("f", i)
+		m.Add("edge", ns.Tuple{Vals: []ns.Value{ns.S(fmt.Sprint("n", i)), ns.S(f)}, Cites: []string{fmt.Sprint("e", i)}})
+		m.Add("call", ns.Tuple{Vals: []ns.Value{ns.S(f), ns.S(fmt.Sprint("n", i+1))}, Cites: []string{fmt.Sprint("c", i)}})
+	}
+	for i, g := range []string{"g1", "g2"} {
+		m.Add("edge", ns.Tuple{Vals: []ns.Value{ns.S("z1"), ns.S(g)}})
+		m.Add("call", ns.Tuple{Vals: []ns.Value{ns.S(g), ns.S(fmt.Sprint("z", i+2))}})
+	}
+	return m
+}
+
+const stepQuestion = `r(?a, ?c) :- edge(?a, ?m), call(?m, ?c); r(?a, ?c) :- r(?a, ?b), edge(?b, ?m), call(?m, ?c); r("n0", ?x) => ?x`
+
+// A walk whose step is several literals is one call (#250), the demanded base rule's step included,
+// and answers, cites and witnesses as the rounds do. control: a store that doesn't walk a step is
+// pushed a batch a round (#246).
+func TestAStepOfSeveralLiteralsIsWalkedInOneCall(t *testing.T) {
+	q := mustParse(t, stepQuestion)
+	want, err := both(q, baseFor(std(stepChain())))
+	if err != nil || len(want) < 2 {
+		t.Fatalf("in memory: %v %v", binds(want), err)
+	}
+	for _, opts := range [][]Option{nil, {Witnesses(), CanonicalCites()}} {
+		w, _ := Naive{}.Eval(bg, q, baseFor(std(stepChain())), opts...)
+		src := pushingAt(stepChain())
+		got, err := SemiNaive{}.Eval(bg, q, MustBase(std(stepChain()), src), opts...)
+		if err != nil || !reflect.DeepEqual(got, w) {
+			t.Errorf("with %d options: walked %v %v, in memory %v", len(opts), got, err, w)
+		}
+		if src.stepWalks != 1 || src.pushes() != 0 || len(src.lookups) != 0 {
+			t.Errorf("with %d options: %d step walks, %d pushes, lookups %v, want one walk and nothing else", len(opts), src.stepWalks, src.pushes(), src.lookups)
+		}
+	}
+	unwalked := pushingAt(stepChain())
+	unwalked.noStepWalk = true
+	if _, err := (SemiNaive{}).Eval(bg, q, MustBase(std(stepChain()), unwalked)); err != nil || unwalked.stepWalks != 0 || unwalked.pushes() < 2 {
+		t.Errorf("control: a store that doesn't walk a step was pushed %d times and walked %d: %v", unwalked.pushes(), unwalked.stepWalks, err)
+	}
+}
+
+// A match the store sends that the walk doesn't reach is never kept as its value's whole answer: z1's
+// one match the sloppy store adds (through g2) would otherwise answer the step from z1, which has
+// two, for later queries.
+func TestAStepWalkKeepsOnlyWhatItReached(t *testing.T) {
+	src := pushingAt(stepChain())
+	src.sloppy = true
+	b := MustBase(std(stepChain()), src)
+	first, _ := both(mustParse(t, stepQuestion), baseFor(std(stepChain())))
+	if got, err := (SemiNaive{}).Eval(bg, mustParse(t, stepQuestion), b); err != nil || src.stepWalks != 1 || !reflect.DeepEqual(binds(got), binds(first)) {
+		t.Fatalf("%d step walks answered %v %v, want %v: a row whose join fails is no match", src.stepWalks, binds(got), err, binds(first))
+	}
+	q := mustParse(t, `edge("z1", ?m), call(?m, ?c) => ?c`)
+	want, _ := both(q, baseFor(std(stepChain())))
+	got, err := SemiNaive{}.Eval(bg, q, b)
+	if err != nil || len(want) != 2 || !reflect.DeepEqual(binds(got), binds(want)) {
+		t.Errorf("after the walk, z1's step answered %v %v, want %v", binds(got), err, binds(want))
+	}
+	if src.pushes() == 0 {
+		t.Errorf("control: z1's step was answered without asking the store")
+	}
+}
+
+// A failed step walk fails the query, wrapped with the step, and isn't kept; a step walk is charged to
+// the budget row by row.
+func TestAFailedStepWalkIsReportedAndNotKept(t *testing.T) {
+	src := pushingAt(stepChain())
+	broken := errors.New("cursor closed")
+	src.walkFail = broken
+	b := MustBase(std(stepChain()), src)
+	q := mustParse(t, stepQuestion)
+	if _, err := (SemiNaive{}).Eval(bg, q, b); !errors.Is(err, broken) || !strings.Contains(err.Error(), "query: pushing edge(") {
+		t.Fatalf("got %v, want the store's error wrapped with the step", err)
+	}
+	src.walkFail = nil
+	if got, err := (SemiNaive{}).Eval(bg, q, b); err != nil || len(got) < 2 || src.stepWalks != 2 {
+		t.Errorf("after the failure, %v %v in %d step walks, want a second walk", binds(got), err, src.stepWalks)
+	}
+	long := ns.NewMemSource().Declare("edge", "from", "to").Declare("call", "from", "to")
+	for i := range 300 {
+		long.Add("edge", ns.Tuple{Vals: []ns.Value{ns.S(fmt.Sprint("n", i)), ns.S(fmt.Sprint("f", i))}})
+		long.Add("call", ns.Tuple{Vals: []ns.Value{ns.S(fmt.Sprint("f", i)), ns.S(fmt.Sprint("n", i+1))}})
+	}
+	big := pushingAt(long)
+	_, err := SemiNaive{}.Eval(bg, q, MustBase(std(long), big), Budget(50))
+	if over := (*BudgetExceeded)(nil); !errors.As(err, &over) || big.yielded > 51 {
+		t.Errorf("under a budget of 50 the step walk yielded %d rows: %v, want it stopped there", big.yielded, err)
+	}
+}

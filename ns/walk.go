@@ -39,3 +39,20 @@ type Walk struct {
 	Bound    map[int]Value
 	Start    []Value
 }
+
+// ConjunctionWalkSource is optionally implemented by a Source that follows a step of several literals
+// itself (#250): a recursive rule such as reach(?a, ?c) :- reach(?a, ?b), edge(?b, ?m), attr(?m,
+// "kind", "func"), edge(?m, ?c) walks the conjunction of its edge and attr literals from ?b to ?c, a
+// call (or batch) per round however its bindings batch (#246). The planned evaluator asks for the whole
+// walk in one call instead, as WalkSource does for a single relation, and files each value's matches
+// where a round under that value looks, so answers, citations and witnesses don't change.
+type ConjunctionWalkSource interface {
+	// WalksConjunction reports whether the store walks c from its variable in to its variable out. It
+	// is asked while planning and must be cheap.
+	WalksConjunction(c Conjunction, in, out int) bool
+	// WalkConjunction returns every match of c, one Tuple per atom as Push's rows, whose value at in is
+	// reached: one of start, or the value at out of a match it returns. As with Walk, a match for a
+	// reached value must not be left out, since the engine asks nothing more about that value, and
+	// values compare as Lookup's do. Each row is charged to the Budget as it arrives.
+	WalkConjunction(ctx context.Context, c Conjunction, in, out int, start []Value) iter.Seq2[[]Tuple, error]
+}

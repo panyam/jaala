@@ -49,7 +49,7 @@ func HoldsPrefix(prefix string, positions map[string][]int) func(rel string, bou
 // answer rows are distinct either way, and an aggregate counting bindings counts both.
 //
 // It is a ContextSource, a StreamSource, a LookupSource, a BatchLookupSource, IndexedLookups,
-// PushSource, SummarySource, WalkSource and Versioned whatever its members are, and pushes a conjunction to a lone member, or
+// PushSource, SummarySource, WalkSource, ConjunctionWalkSource and Versioned whatever its members are, and pushes a conjunction to a lone member, or
 // across partitioned ones (NewPartitionedFederation). A relation is looked
 // up only when every member serving it looks it up (LooksUp), so a Federation can be a member of
 // another; otherwise the engine reads it
@@ -796,4 +796,31 @@ func summaryRowOf(c Conjunction, s Summary, row []Tuple) SummaryRow {
 		r.Cites = append(r.Cites, t.Cites...)
 	}
 	return r
+}
+
+// WalksConjunction implements ConjunctionWalkSource for a Federation of one member that walks it. Over
+// several, a step's facts could lie in different members, and the step is pushed per round instead.
+func (f *Federation) WalksConjunction(c Conjunction, in, out int) bool {
+	cw, ok := f.members[0].Source.(ConjunctionWalkSource)
+	return len(f.members) == 1 && ok && cw.WalksConjunction(c, in, out)
+}
+
+// WalkConjunction implements ConjunctionWalkSource through the lone member, citing each tuple to it.
+func (f *Federation) WalkConjunction(ctx context.Context, c Conjunction, in, out int, start []Value) iter.Seq2[[]Tuple, error] {
+	return func(yield func([]Tuple, error) bool) {
+		cw, ok := f.members[0].Source.(ConjunctionWalkSource)
+		if len(f.members) != 1 || !ok {
+			yield(nil, fmt.Errorf("federation: %d members can't walk a conjunction together", len(f.members)))
+			return
+		}
+		for row, err := range cw.WalkConjunction(ctx, c, in, out, start) {
+			if err != nil {
+				yield(nil, fmt.Errorf("member %s: %w", f.name(0), err))
+				return
+			}
+			if !yield(f.citedRow(0, nil, row), nil) {
+				return
+			}
+		}
+	}
 }

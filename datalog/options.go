@@ -124,6 +124,9 @@ type evalRun struct {
 	pushed map[string]*pushGroup
 	// walks are, by head relation, the walks its recursive bodies make that the Source walks (#239).
 	walks map[string][]walkStep
+	// stepWalks are, by head relation, the walks of a pushed group its recursive bodies make that the
+	// Source walks (#250).
+	stepWalks map[string][]stepWalk
 	// batch sets prefetch asking a batching Source for a body's lookups ahead of solving it (#153),
 	// which only the planned SemiNaive does.
 	batch bool
