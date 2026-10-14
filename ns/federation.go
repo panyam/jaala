@@ -385,6 +385,9 @@ func (f *Federation) Pushes(c Conjunction) bool {
 		ps, ok := f.members[0].Source.(PushSource)
 		return ok && ps.Pushes(c)
 	}
+	if len(c.Inputs) > 0 {
+		return false // a binding's values would have to be routed by Holds, member by member
+	}
 	if c.Page != nil {
 		if f.single(c, func(src Source) bool { ps, ok := src.(PushSource); return ok && ps.Pushes(c) }) {
 			return true

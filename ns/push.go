@@ -62,6 +62,15 @@ type Conjunction struct {
 	// Page asks for only the matches behind the first rows of a goal's answer (#241); nil asks for
 	// every match.
 	Page *Page
+	// Inputs are variables an earlier part of the body binds (#246), and Bindings their values, one
+	// set per binding in Inputs' order: Push answers c once for each, returning every match whose
+	// Inputs equal one of the Bindings, compared as Lookup's values are, in one call, as LookupBatch
+	// answers a lookup for many values. A match for no binding may come back, since the engine reads
+	// each row's inputs and files it under its binding, but a binding's match left out is lost. The
+	// planner offers c with Inputs and no Bindings to Pushes; a store that declines is asked literal by
+	// literal, as before.
+	Inputs   []int
+	Bindings [][]Value
 }
 
 // A Page limits a pushed goal to the matches behind its first Limit answer rows. An answer row is a

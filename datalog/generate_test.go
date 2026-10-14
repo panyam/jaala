@@ -780,6 +780,9 @@ func agreePushed(q Query, b *Base, want []Row, werr error, opts []Option) string
 	if src.pushes() > 0 {
 		pushedPrograms++
 	}
+	if slices.ContainsFunc(src.pushed, func(c ns.Conjunction) bool { return len(c.Bindings) > 0 }) {
+		batchPushedPrograms++
+	}
 	if src.pages > 0 {
 		pagedPrograms++
 	}
@@ -806,6 +809,10 @@ func agreePushed(q Query, b *Base, want []Row, werr error, opts []Option) string
 	}
 	return ""
 }
+
+// batchPushedPrograms counts those whose planned evaluation pushed a group for a batch of bindings
+// (#246).
+var batchPushedPrograms int
 
 // pagedPrograms and summarizedPrograms count the goals agreeGoals pushed that a store paged or
 // summarized (#241, #240).
@@ -1229,7 +1236,7 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 	}
 	compared, known, skipped, failed := map[string]int{}, map[int]int{}, 0, 0
 	lookedUpPrograms, federatedPrograms, batchedPrograms, pushedPrograms, partitionedPrograms, walkedPrograms, unitAnswers, mixedAnswers = 0, 0, 0, 0, 0, 0, 0, 0
-	pagedPrograms, summarizedPrograms = 0, 0
+	pagedPrograms, summarizedPrograms, batchPushedPrograms = 0, 0, 0
 	withUnits := 0
 	for seed := first; seed < first+int64(seeds); seed++ {
 		rnd := rand.New(rand.NewSource(seed))
@@ -1294,6 +1301,9 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 	}
 	if pushedPrograms == 0 {
 		t.Errorf("control: no program pushed a conjunction to the Source")
+	}
+	if batchPushedPrograms == 0 {
+		t.Errorf("control: no program pushed a group for a batch of bindings")
 	}
 	if pagedPrograms == 0 {
 		t.Errorf("control: no program's goal was paged by the store")

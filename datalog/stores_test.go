@@ -212,7 +212,7 @@ func (s *store) Push(_ context.Context, c ns.Conjunction) iter.Seq2[[]ns.Tuple, 
 			return out
 		}
 		schema := func(rel string) ns.Schema { sc, _ := s.Schema(rel); return sc }
-		rows := evalConjunction(c, schema, match, false)
+		rows := forBindings(c, schema, evalConjunction(c, schema, match, false))
 		if c.Page != nil {
 			rows = pageOf(c, schema, rows)
 		}

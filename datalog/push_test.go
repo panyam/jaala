@@ -33,12 +33,13 @@ type pushing struct {
 	pages, summaries  int
 	summarized        []ns.Summary
 	pagedAfter        [][]ns.Value
+	noInputs          bool // refuses a conjunction with Inputs, as a store before #246
 }
 
 func pushingAt(src ns.Source) *pushing { return &pushing{looking: lookingAt(src)} }
 
 func (p *pushing) Pushes(c ns.Conjunction) bool {
-	if p.noCompare && len(c.Compare) > 0 || c.Page != nil && p.noGoal {
+	if p.noCompare && len(c.Compare) > 0 || c.Page != nil && p.noGoal || len(c.Inputs) > 0 && p.noInputs {
 		return false
 	}
 	return p.refuse == nil || !p.refuse(c)
@@ -57,6 +58,9 @@ func (p *pushing) Push(_ context.Context, c ns.Conjunction) iter.Seq2[[]ns.Tuple
 		schema := func(rel string) ns.Schema { s, _ := p.Source.Schema(rel); return s }
 		all := func(rel string, _ map[int]ns.Value) []ns.Tuple { return p.Source.Tuples(rel) }
 		rows := evalConjunction(c, schema, all, p.sloppy)
+		if !p.sloppy {
+			rows = forBindings(c, schema, rows)
+		}
 		if c.Page != nil {
 			p.mu.Lock()
 			p.pages++
@@ -194,6 +198,29 @@ func (p *pushing) Summarize(_ context.Context, c ns.Conjunction, s ns.Summary) i
 			}
 		}
 	}
+}
+
+// forBindings keeps the rows whose Inputs equal one of c's Bindings, each read as its type, or every
+// row when c has none.
+func forBindings(c ns.Conjunction, schema func(string) ns.Schema, rows [][]ns.Tuple) [][]ns.Tuple {
+	if len(c.Bindings) == 0 {
+		return rows
+	}
+	var out [][]ns.Tuple
+	for _, row := range rows {
+		vals := rowValues(c, schema, row)
+		if slices.ContainsFunc(c.Bindings, func(b []ns.Value) bool {
+			for i, n := range c.Inputs {
+				if !valueEq(vals[n], b[i]) {
+					return false
+				}
+			}
+			return true
+		}) {
+			out = append(out, row)
+		}
+	}
+	return out
 }
 
 // rowValues is a match's value for each variable of c, read as its argument's type.
@@ -506,8 +533,9 @@ var pushedQuestions = []string{
 
 // A semi-naive round may start from the delta of a recursive call that binds a pushed group's
 // variables, which it does here because the generator the planner runs first gives the round no size
-// to compare the delta with (scanSize). The group is then solved literal by literal, and answers as
-// in memory.
+// to compare the delta with (scanSize). The round's bindings are then pushed in one batch (#246), or,
+// from a store refusing inputs, the group is solved literal by literal; either way it answers as in
+// memory.
 func TestABoundGroupIsSolvedLiteralByLiteral(t *testing.T) {
 	chain := ns.NewMemSource().Declare("edge", "from", "to")
 	for i := range 8 {
@@ -518,24 +546,31 @@ func TestABoundGroupIsSolvedLiteralByLiteral(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, opts := range [][]Option{nil, {Witnesses(), CanonicalCites()}} {
-		w, _ := Naive{}.Eval(bg, q, baseFor(std(chain)), opts...)
-		src := pushingAt(chain)
-		var r Report
-		got, err := SemiNaive{}.Eval(bg, q, MustBase(std(chain), src), append(opts, Explain(&r))...)
-		if err != nil || !reflect.DeepEqual(got, w) {
-			t.Errorf("with %d options: pushed %v %v, in memory %v", len(opts), binds(got), err, binds(w))
-		}
-		unpushed := 0
-		for _, br := range r.Rules {
-			for _, l := range br.Literals {
-				if strings.HasPrefix(l.Literal, "pushed{") && !slices.Contains(l.Access, "pushed") {
-					unpushed += int(l.Passed)
+	for _, noInputs := range []bool{false, true} {
+		for _, opts := range [][]Option{nil, {Witnesses(), CanonicalCites()}} {
+			w, _ := Naive{}.Eval(bg, q, baseFor(std(chain)), opts...)
+			src := pushingAt(chain)
+			src.noInputs = noInputs
+			var r Report
+			got, err := SemiNaive{}.Eval(bg, q, MustBase(std(chain), src), append(opts, Explain(&r))...)
+			if err != nil || !reflect.DeepEqual(got, w) {
+				t.Errorf("noInputs %v, %d options: pushed %v %v, in memory %v", noInputs, len(opts), binds(got), err, binds(w))
+			}
+			unpushed := 0
+			for _, br := range r.Rules {
+				for _, l := range br.Literals {
+					if strings.HasPrefix(l.Literal, "pushed{") && !slices.Contains(l.Access, "pushed") {
+						unpushed += int(l.Passed)
+					}
 				}
 			}
-		}
-		if src.pushes() != 1 || unpushed == 0 {
-			t.Errorf("control: %d pushes, and the rounds starting from the delta passed %d bindings through the group, want one push and some:\n%s", src.pushes(), unpushed, r.String())
+			batched := slices.ContainsFunc(src.pushed, func(c ns.Conjunction) bool { return len(c.Bindings) > 0 })
+			switch {
+			case !noInputs && (unpushed != 0 || !batched):
+				t.Errorf("%d options: the rounds starting from the delta passed %d bindings through the group unpushed (batched %v), want every round's bindings pushed in a batch (#246):\n%s", len(opts), unpushed, batched, r.String())
+			case noInputs && (src.pushes() != 1 || unpushed == 0):
+				t.Errorf("control: from a store refusing inputs, %d pushes, and the rounds starting from the delta passed %d bindings through the group, want one push and some solved literal by literal:\n%s", src.pushes(), unpushed, r.String())
+			}
 		}
 	}
 	if len(want) <= 8 {
@@ -622,23 +657,30 @@ func TestComparisonsArePushedWhenTheStoreTakesThem(t *testing.T) {
 	}
 }
 
-// A group whose variables something earlier binds isn't pushed: it would be a call per binding, where
-// its literals' lookups batch. The plan says so, since a group pushed anyway would be solved literal by
-// literal at run time and make no call either.
-func TestAGroupBoundPartwayIsNotPushed(t *testing.T) {
+// A group whose variables something earlier binds is pushed for every binding in one call, when the
+// store takes inputs (#246); a store that doesn't is left its batched lookups, never a call per
+// binding.
+func TestAGroupBoundPartwayIsPushedInABatch(t *testing.T) {
 	q := mustParse(t, `edge(?x, ?y), edge(?y, ?z) => ?x, ?z`)
-	pushedIn := func(bind map[Var][]ns.Value) bool {
-		var r Report
-		if _, err := (SemiNaive{}).Eval(bg, q, MustBase(std(graph()), pushingAt(graph())), Bind(bind), Explain(&r)); err != nil {
-			t.Fatal(err)
-		}
-		return slices.ContainsFunc(r.Goal.Literals, func(l *LiteralReport) bool { return strings.HasPrefix(l.Literal, "pushed{") })
+	two := Bind(map[Var][]ns.Value{"x": {ns.S("a"), ns.S("b")}})
+	want, err := both(q, baseFor(std(graph())), two)
+	if err != nil || len(want) != 2 {
+		t.Fatalf("in memory: %v %v", binds(want), err)
 	}
-	if pushedIn(map[Var][]ns.Value{"x": {ns.S("a"), ns.S("b")}}) {
-		t.Errorf("with ?x bound to two values, the goal pushed its edges")
+	src := pushingAt(graph())
+	got, err := SemiNaive{}.Eval(bg, q, MustBase(std(graph()), src), two)
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Errorf("with ?x bound to a and b: %v %v, in memory %v", binds(got), err, binds(want))
 	}
-	if !pushedIn(map[Var][]ns.Value{"x": {ns.S("a")}}) {
-		t.Errorf("control: with ?x bound to one value, a constant, the goal pushed nothing")
+	if src.pushes() != 1 || len(src.pushed[0].Bindings) != 2 || len(src.pushed[0].Inputs) != 1 || len(src.lookups) != 0 {
+		t.Errorf("pushed %d times (%+v) and looked up %v, want one push for both bindings (#246)", src.pushes(), src.pushed, src.lookups)
+	}
+	refusing := pushingAt(graph())
+	refusing.noInputs = true
+	var r Report
+	if got, err := (SemiNaive{}).Eval(bg, q, MustBase(std(graph()), refusing), two, Explain(&r)); err != nil || !reflect.DeepEqual(binds(got), binds(want)) || refusing.pushes() != 0 ||
+		slices.ContainsFunc(r.Goal.Literals, func(l *LiteralReport) bool { return strings.HasPrefix(l.Literal, "pushed{") }) {
+		t.Errorf("control: from a store refusing inputs, %v %v with %d pushes, want the edges looked up as before", binds(got), err, refusing.pushes())
 	}
 }
 
@@ -747,5 +789,35 @@ func TestARecursiveRoundKeepsItsPush(t *testing.T) {
 	}
 	if src.pushes() != 1 || rounds < 2 {
 		t.Errorf("control: pushed %d times over %d runs of the group's bodies, want one push read in two rounds or more:\n%s", src.pushes(), rounds, r.String())
+	}
+}
+
+// A demanded rule's join, which its demand guard binds, is pushed for every demanded value in one
+// call per round (#246), and a group read by two inputs carries each binding's values in Inputs'
+// order. Both answer as in memory.
+func TestABatchedPushAnswersAsItsLiteralsDo(t *testing.T) {
+	for _, c := range []struct {
+		text string
+		opts []Option
+	}{
+		{`p(?x, ?z) :- edge(?x, ?y), edge(?y, ?z); p(?x, ?z) :- edge(?x, ?z), node(?z); p("a", ?b) => ?b`, nil},
+		{`edge(?x, ?m), edge(?m, ?y) => ?x, ?y`, []Option{Bind(map[Var][]ns.Value{"x": {ns.S("a"), ns.S("b")}, "y": {ns.S("c"), ns.S("d")}})}},
+	} {
+		q := mustParse(t, c.text)
+		want, err := both(q, baseFor(std(graph())), c.opts...)
+		if err != nil || len(want) == 0 {
+			t.Fatalf("%s in memory: %v %v", c.text, binds(want), err)
+		}
+		for _, opts := range [][]Option{c.opts, append(c.opts[:len(c.opts):len(c.opts)], Witnesses(), CanonicalCites())} {
+			w, _ := Naive{}.Eval(bg, q, baseFor(std(graph())), opts...)
+			src := pushingAt(graph())
+			got, err := SemiNaive{}.Eval(bg, q, MustBase(std(graph()), src), opts...)
+			if err != nil || !reflect.DeepEqual(got, w) {
+				t.Errorf("%s with %d options: %v %v, in memory %v", c.text, len(opts), got, err, w)
+			}
+			if !slices.ContainsFunc(src.pushed, func(c ns.Conjunction) bool { return len(c.Bindings) > 0 }) || len(src.lookups) != 0 {
+				t.Errorf("%s: pushed %+v and looked up %v, want a batched push and no lookups", c.text, src.pushed, src.lookups)
+			}
+		}
 	}
 }
