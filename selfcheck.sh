@@ -70,7 +70,7 @@ if command -v souffle >/dev/null 2>&1; then
 	tr -d '\000' <"$out" | grep -E 'seeds$|compared with|skipped:|disagreements|disagrees|refused|replay|shrunk|facts:|bind:|naive:|souffle:|^(--- |ok|FAIL)'
 else
 	souffle_ran=no
-	echo "  could not run: souffle is not on PATH (see #23 for installing it)"
+	echo "  could not run: souffle is not on PATH (make setup installs it)"
 fi
 
 if [ $status -ne 0 ]; then

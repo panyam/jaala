@@ -322,9 +322,9 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   row over nothing explicitly. `order by` and `limit` are applied in Go with jaala's own order. A
   program outside the fragment (`list`, a rule head `sum`/`min`/`max` with no group column) is
   counted by reason, never dropped. `TestSouffleCatchesAWrongTranslation` drops negation on purpose
-  and requires a shrunk disagreement. Locally Soufflé is built from source on arm64 (no package); on
-  x86_64, extract CI's release `.deb` (`dpkg-deb -x`) into a scratch directory and put its
-  `usr/bin` on `PATH` for `./selfcheck.sh`, which otherwise prints "could not run".
+  and requires a shrunk disagreement. `make setup` installs Soufflé 2.5, CI's version: Homebrew's
+  bottle on macOS (arm64 included), CI's release `.deb` on Ubuntu x86_64. Without it on `PATH`,
+  `./selfcheck.sh` prints "could not run".
 - **The query text is fuzzed** (`fuzz_test.go`, #89). `FuzzParse`: any text parses or fails with a
   `query:` error, and a parsed rule prints back as text that parses to the same rule. `FuzzEval`: a
   program that parses is validated and evaluated without a panic, every error keeps `query:`, and when
