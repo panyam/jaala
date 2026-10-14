@@ -3,6 +3,8 @@ package stdlib
 import (
 	"context"
 	"errors"
+	"math"
+	"strconv"
 
 	"github.com/panyam/jaala/ns"
 )
@@ -60,6 +62,35 @@ type (
 	unitFn func(x, y ns.Unit) (ns.Unit, bool)
 )
 
+// roundTripNumber simplifies a forward result only when both original inverse computations recover
+// its operands. Inverse results themselves keep their full precision.
+func roundTripNumber(result, a, b float64, toB, toA numFn) float64 {
+	if math.IsNaN(result) || math.IsInf(result, 0) {
+		return result
+	}
+	rounded, err := strconv.ParseFloat(strconv.FormatFloat(result, 'g', 15, 64), 64)
+	if err != nil || math.IsNaN(rounded) || math.IsInf(rounded, 0) {
+		return result // rounding the largest finite value can exceed float64's range
+	}
+	if rounded == result {
+		return result
+	}
+	recoveredB, okB := toB(rounded, a)
+	recoveredA, okA := toA(rounded, b)
+	if okB && okA && recoveredB == b && recoveredA == a {
+		return rounded
+	}
+	return result
+}
+
+func sameArithmeticNumber(a, b float64) bool {
+	return a == b || math.IsNaN(a) && math.IsNaN(b)
+}
+
+func finiteArithmeticNumber(x float64) bool {
+	return !math.IsNaN(x) && !math.IsInf(x, 0)
+}
+
 // binary is a function c = f(a, b) as a three-place relation: forward from a and b, and backward to a
 // or b from c and the other (ba and bb, with their units), each mode reading what it has bound.
 func binary(doc string, units func() *ns.Units, f numFn, fu unitFn, toB numFn, toBu unitFn, toA numFn, toAu unitFn) ns.Builtin {
@@ -85,34 +116,77 @@ func binary(doc string, units func() *ns.Units, f numFn, fu unitFn, toB numFn, t
 			a, ua, okA := num(0)
 			b, ub, okB := num(1)
 			c, uc, okC := num(2)
-			out := func(i int, x float64, u ns.Unit) error {
+			numberValue := func(x float64, u ns.Unit) (ns.Value, bool) {
 				f, unit, err := t.Write(x, u)
 				if err != nil {
-					return nil
+					return ns.Value{}, false
 				}
+				return ns.NU(f, unit), true
+			}
+			forward := func(a float64, ua ns.Unit, b float64, ub ns.Unit) (ns.Value, bool) {
+				x, ok := f(a, b)
+				if !ok {
+					return ns.Value{}, false
+				}
+				u, ok := fu(ua, ub)
+				if !ok {
+					return ns.Value{}, false
+				}
+				value, ok := numberValue(x, u)
+				if !ok {
+					return ns.Value{}, false
+				}
+				rounded := roundTripNumber(*value.Num, a, b, toB, toA)
+				if !sameArithmeticNumber(rounded, *value.Num) {
+					value = ns.NU(rounded, value.BaseUnit)
+				}
+				return value, true
+			}
+			matches := func(a float64, ua ns.Unit, b float64, ub ns.Unit, c float64) bool {
+				// Preserve the existing inverse behavior outside the finite forward domain.
+				// In particular, IEEE inverses can yield NaN and division's inverse can
+				// multiply by zero even though forward division by zero has no result.
+				if !finiteArithmeticNumber(a) || !finiteArithmeticNumber(b) || !finiteArithmeticNumber(c) {
+					return true
+				}
+				if _, ok := f(a, b); !ok {
+					return true
+				}
+				result, ok := forward(a, ua, b, ub)
+				return ok && sameArithmeticNumber(*result.Num, c)
+			}
+			out := func(i int, value ns.Value) error {
 				vals := []ns.Value{args[0].Value, args[1].Value, args[2].Value}
-				vals[i] = ns.NU(f, unit)
+				vals[i] = value
 				return emit(vals, nil)
 			}
 			switch {
 			case okA && okB:
-				if x, ok := f(a, b); ok {
-					if u, ok := fu(ua, ub); ok {
-						return out(2, x, u)
-					}
+				if value, ok := forward(a, ua, b, ub); ok {
+					return out(2, value)
 				}
 				return nil
 			case okA && okC:
 				if x, ok := toB(c, a); ok {
 					if u, ok := toBu(uc, ua); ok {
-						return out(1, x, u)
+						if value, ok := numberValue(x, u); ok {
+							u.Scale = 0 // Write has put the value in base units
+							if matches(a, ua, *value.Num, u, c) {
+								return out(1, value)
+							}
+						}
 					}
 				}
 				return nil
 			case okB && okC:
 				if x, ok := toA(c, b); ok {
 					if u, ok := toAu(uc, ub); ok {
-						return out(0, x, u)
+						if value, ok := numberValue(x, u); ok {
+							u.Scale = 0 // validate the value actually emitted, in the same unit scale
+							if matches(*value.Num, u, b, ub, c) {
+								return out(0, value)
+							}
+						}
 					}
 				}
 				return nil
