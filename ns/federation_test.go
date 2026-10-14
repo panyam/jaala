@@ -618,3 +618,75 @@ func TestAFederationWalksAcrossMembers(t *testing.T) {
 		t.Errorf("walked %d facts, A %d times and B %d, want 3 facts and one walk each: A reached a9 already", n, a.walks, b.walks)
 	}
 }
+
+// summaryMem is a joinMem that also summarizes, as a row per fact, counting its summaries.
+type summaryMem struct {
+	*joinMem
+	summaries int
+}
+
+func (m *summaryMem) Summarizes(Conjunction, Summary) bool { return true }
+
+func (m *summaryMem) Summarize(_ context.Context, c Conjunction, _ Summary) iter.Seq2[SummaryRow, error] {
+	m.summaries++
+	return func(yield func(SummaryRow, error) bool) {
+		for _, t := range m.Tuples(c.Atoms[0].Relation) {
+			if !yield(SummaryRow{Matches: 1, Cites: t.Cites}, nil) {
+				return
+			}
+		}
+	}
+}
+
+// A page or a summary of one atom goes to every member whose Holds allows it, partitioned or not,
+// each cited to its member; of a join, to none, since a join could pair facts across members.
+func TestAFederationPagesAndSummarizesOneAtom(t *testing.T) {
+	_, _, members := partitionedEdges(true)
+	a := &summaryMem{joinMem: members[0].Source.(*joinMem)}
+	b := &summaryMem{joinMem: members[1].Source.(*joinMem)}
+	members[0].Source, members[1].Source = a, b
+	f, err := NewFederation(members...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	one := Conjunction{Atoms: []PushAtom{{Relation: "edge", Args: []PushArg{{Var: 1}, {Var: 2}}}}}
+	if !f.Summarizes(one, Summary{}) {
+		t.Fatalf("a federation won't summarize one atom")
+	}
+	var cites []string
+	for row, err := range f.Summarize(context.Background(), one, Summary{}) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		cites = append(cites, row.Cites...)
+	}
+	slices.Sort(cites)
+	if want := []string{"A:a1-a2", "A:a1-b9", "A:a2-a3", "B:b9-b10"}; !reflect.DeepEqual(cites, want) || a.summaries != 1 || b.summaries != 1 {
+		t.Errorf("summarized %q from %d and %d summaries, want %q from one each", cites, a.summaries, b.summaries, want)
+	}
+	a1 := S("a1")
+	fromA1 := Conjunction{Atoms: []PushAtom{{Relation: "edge", Args: []PushArg{{Const: &a1}, {Var: 1}}}}}
+	a.summaries, b.summaries = 0, 0
+	for range f.Summarize(context.Background(), fromA1, Summary{}) {
+	}
+	if a.summaries != 1 || b.summaries != 0 {
+		t.Errorf("summarizing a1's edges asked A %d times and B %d, want only A, whose Holds allows it", a.summaries, b.summaries)
+	}
+	paged := one
+	paged.Page = &Page{Columns: []int{1}, Limit: 1}
+	if !f.Pushes(paged) {
+		t.Errorf("a federation won't page one atom")
+	}
+	join := Conjunction{Atoms: append(append([]PushAtom(nil), one.Atoms...), PushAtom{Relation: "edge", Args: []PushArg{{Var: 2}, {Var: 3}}})}
+	if f.Summarizes(join, Summary{}) {
+		t.Errorf("a federation summarizes a join across members")
+	}
+	join.Page = paged.Page
+	if f.Pushes(join) {
+		t.Errorf("a federation pages a join across members")
+	}
+	members[1].Source = b.joinMem
+	if g, _ := NewFederation(members...); g.Summarizes(one, Summary{}) {
+		t.Errorf("a federation summarizes though a member doesn't")
+	}
+}

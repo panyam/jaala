@@ -96,18 +96,27 @@ func answerGoal(b *Base, pos, negs []Literal, having []Compare, sel, cols []Term
 	if hasAggregate(sel) || len(having) > 0 {
 		ag := newAggregator(sel, having, true)
 		lits := deferComparisons(pos, b.reg)
-		if err := prefetch(b, lits, negs); err != nil {
-			return nil, err
-		}
-		err := solve(lits, 0, newBinding(), b, func(bnd *binding) error {
-			ok, err := passesNegations(bnd, negs, b)
-			if ok {
-				ag.add(bnd)
+		summarized := false
+		if g := goalGroup(b, pos, negs); g != nil {
+			var err error
+			if summarized, err = summarizeGoal(b, g, ag); err != nil {
+				return nil, err
 			}
-			return err
-		})
-		if err != nil {
-			return nil, err
+		}
+		if !summarized {
+			if err := prefetch(b, lits, negs); err != nil {
+				return nil, err
+			}
+			err := solve(lits, 0, newBinding(), b, func(bnd *binding) error {
+				ok, err := passesNegations(bnd, negs, b)
+				if ok {
+					ag.add(bnd)
+				}
+				return err
+			})
+			if err != nil {
+				return nil, err
+			}
 		}
 		b.run.held = len(ag.groups)
 		grouped, err := ag.rows()
@@ -149,20 +158,30 @@ func answerGoal(b *Base, pos, negs []Literal, having []Compare, sel, cols []Term
 			p.total = map[string]bool{}
 		}
 		lits := deferComparisons(pos, b.reg)
-		if p.stopAt == 0 { // a limit without an order by stops at its first rows, before most lookups
-			if err := prefetch(b, lits, negs); err != nil {
-				return nil, err
-			}
-		}
-		err := solve(lits, 0, newBinding(), b, func(bnd *binding) error {
+		emit := func(bnd *binding) error {
 			ok, err := passesNegations(bnd, negs, b)
 			if err != nil || !ok {
 				return err
 			}
 			return p.add(bnd)
-		})
-		if err != nil && !errors.Is(err, errEnough) {
-			return nil, err
+		}
+		paged := false
+		if g := goalGroup(b, pos, negs); g != nil && written.Limit > 0 && written.After == nil && o.total == nil {
+			var err error
+			if paged, err = pageGoal(b, g, cols, fixed, written, emit); err != nil {
+				return nil, err
+			}
+		}
+		if !paged {
+			if p.stopAt == 0 { // a limit without an order by stops at its first rows, before most lookups
+				if err := prefetch(b, lits, negs); err != nil {
+					return nil, err
+				}
+			}
+			err := solve(lits, 0, newBinding(), b, emit)
+			if err != nil && !errors.Is(err, errEnough) {
+				return nil, err
+			}
 		}
 		b.run.held = p.held
 		rows = p.answer()

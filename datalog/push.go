@@ -186,6 +186,12 @@ func (g *pushGroup) atom(b *Base) *Atom {
 // conjunction is g as the Source is asked it, its variables numbered in the order they're first
 // written and, under bnd, a bound one read as its value.
 func (g *pushGroup) conjunction(bnd *binding) ns.Conjunction {
+	c, _ := g.numbered(bnd)
+	return c
+}
+
+// numbered is conjunction, with the number it gave each variable.
+func (g *pushGroup) numbered(bnd *binding) (ns.Conjunction, map[Var]int) {
 	nums := map[Var]int{}
 	arg := func(t Term) ns.PushArg {
 		switch {
@@ -218,7 +224,7 @@ func (g *pushGroup) conjunction(bnd *binding) ns.Conjunction {
 	for _, cmp := range g.compare {
 		c.Compare = append(c.Compare, ns.PushComparison{Op: cmp.Op, Left: arg(cmp.Left), Right: arg(cmp.Right)})
 	}
-	return c
+	return c, nums
 }
 
 // boundIn reports whether bnd binds any of g's variables, which happens when a semi-naive round
@@ -265,6 +271,15 @@ func pushKey(c ns.Conjunction) string {
 		arg(cmp.Left)
 		arg(cmp.Right)
 		sb.WriteByte(';')
+	}
+	if p := c.Page; p != nil {
+		sb.WriteString("page" + strconv.Itoa(p.Limit))
+		for _, v := range p.Columns {
+			sb.WriteString("," + strconv.Itoa(v))
+		}
+		for _, k := range p.Order {
+			sb.WriteString(";" + strconv.Itoa(k.Var) + strconv.FormatBool(k.Desc))
+		}
 	}
 	return sb.String()
 }
@@ -327,8 +342,10 @@ func (b *Base) solveUnpushed(g *pushGroup, bnd *binding, yield func(*binding) er
 // push returns g's rows, each len(g.lits) tuples in a row, read as their arguments' types: from what
 // this Eval or an earlier one kept, else from the Source, charging each row to the budget as it
 // arrives and keeping a completed push as a lookup is kept.
-func (b *Base) push(g *pushGroup) ([]ns.Tuple, error) {
-	c := g.conjunction(nil)
+func (b *Base) push(g *pushGroup) ([]ns.Tuple, error) { return b.pushAs(g, g.conjunction(nil)) }
+
+// pushAs is push asking the Source for c, g's conjunction with a Page (#241).
+func (b *Base) pushAs(g *pushGroup, c ns.Conjunction) ([]ns.Tuple, error) {
 	key := pushKey(c)
 	r := b.run
 	if rows, hit, kept := b.lookedUp(key); hit {

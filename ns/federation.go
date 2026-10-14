@@ -49,7 +49,7 @@ func HoldsPrefix(prefix string, positions map[string][]int) func(rel string, bou
 // answer rows are distinct either way, and an aggregate counting bindings counts both.
 //
 // It is a ContextSource, a StreamSource, a LookupSource, a BatchLookupSource, IndexedLookups,
-// PushSource, WalkSource and Versioned whatever its members are, and pushes a conjunction to a lone member, or
+// PushSource, SummarySource, WalkSource and Versioned whatever its members are, and pushes a conjunction to a lone member, or
 // across partitioned ones (NewPartitionedFederation). A relation is looked
 // up only when every member serving it looks it up (LooksUp), so a Federation can be a member of
 // another; otherwise the engine reads it
@@ -374,7 +374,9 @@ func NewPartitionedFederation(members ...Member) (*Federation, error) {
 	return f, nil
 }
 
-// Pushes implements PushSource. A Federation of one member pushes what that member pushes. One of
+// Pushes implements PushSource. A Federation of one member pushes what that member pushes. A page
+// (Conjunction.Page) of one atom is pushed when every member serving it pushes it, since one fact is in
+// one member and the federation's first rows are among theirs. Otherwise one of
 // several pushes only when it is partitioned (NewPartitionedFederation), every member serves every
 // relation of c, and each pushes c with its prefixes (Partial). A join of a federation's members
 // otherwise could pair facts no one member sees, and is asked literal by literal.
@@ -382,6 +384,9 @@ func (f *Federation) Pushes(c Conjunction) bool {
 	if len(f.members) == 1 {
 		ps, ok := f.members[0].Source.(PushSource)
 		return ok && ps.Pushes(c)
+	}
+	if c.Page != nil {
+		return f.single(c, func(src Source) bool { ps, ok := src.(PushSource); return ok && ps.Pushes(c) })
 	}
 	if !f.partitioned || c.Partial {
 		return false
@@ -403,7 +408,8 @@ func (f *Federation) Pushes(c Conjunction) bool {
 }
 
 // Push implements PushSource, citing each tuple to the member it came from. With one member it asks
-// that member. Partitioned, it asks each member whose Holds allows c's first atom for c with its
+// that member. A page of one atom goes to each member whose Holds allows it, each answering its own
+// first rows, which hold the federation's (see Page). Partitioned, it asks each member whose Holds allows c's first atom for c with its
 // prefixes, yields that member's whole rows, and continues each prefix in the other members whose
 // Holds allows the next atom, by pushing the rest of c with the prefix's values as constants. A
 // match is found once, through the member holding its first fact and then, at each fact held
@@ -412,6 +418,14 @@ func (f *Federation) Push(ctx context.Context, c Conjunction) iter.Seq2[[]Tuple,
 	return func(yield func([]Tuple, error) bool) {
 		if len(f.members) == 1 {
 			f.pushMember(ctx, 0, c, nil, yield)
+			return
+		}
+		if c.Page != nil {
+			for _, i := range f.serving[c.Atoms[0].Relation] {
+				if f.holds(i, c.Atoms[0]) && !f.pushMember(ctx, i, c, nil, yield) {
+					return
+				}
+			}
 			return
 		}
 		f.pushAcross(ctx, c, -1, nil, yield)
@@ -613,4 +627,63 @@ func walkKey(v Value) string {
 		return "\x00n" + ftoa(*v.Num)
 	}
 	return v.S
+}
+
+// Summarizes implements SummarySource: a Federation of one member summarizes what it does, and one of
+// several a conjunction of one atom, every member serving it summarizing too. A match of one atom is
+// one fact, held by one member, so the members' rows together hold every match once. A join could
+// pair facts across members, and is pushed (Pushes) or solved instead.
+func (f *Federation) Summarizes(c Conjunction, s Summary) bool {
+	ok := func(src Source) bool { ss, ok := src.(SummarySource); return ok && ss.Summarizes(c, s) }
+	if len(f.members) == 1 {
+		return ok(f.members[0].Source)
+	}
+	return f.single(c, ok)
+}
+
+// Summarize implements SummarySource: each member whose Holds allows c's atom summarizes its own
+// facts, and its rows' citations name it.
+func (f *Federation) Summarize(ctx context.Context, c Conjunction, s Summary) iter.Seq2[SummaryRow, error] {
+	return func(yield func(SummaryRow, error) bool) {
+		for _, i := range f.serving[c.Atoms[0].Relation] {
+			if len(f.members) > 1 && !f.holds(i, c.Atoms[0]) {
+				continue
+			}
+			ss, ok := f.members[i].Source.(SummarySource)
+			if !ok {
+				yield(SummaryRow{}, fmt.Errorf("member %s doesn't summarize", f.name(i)))
+				return
+			}
+			for row, err := range ss.Summarize(ctx, c, s) {
+				if err != nil {
+					yield(SummaryRow{}, fmt.Errorf("member %s: %w", f.name(i), err))
+					return
+				}
+				if name := f.members[i].Name; name != "" {
+					cites := make([]string, len(row.Cites))
+					for k, ct := range row.Cites {
+						cites[k] = name + ":" + ct
+					}
+					row.Cites = cites
+				}
+				if !yield(row, nil) {
+					return
+				}
+			}
+		}
+	}
+}
+
+// single reports whether c is one atom every member serving it takes, as ok says.
+func (f *Federation) single(c Conjunction, ok func(Source) bool) bool {
+	if len(c.Atoms) != 1 {
+		return false
+	}
+	serving := f.serving[c.Atoms[0].Relation]
+	for _, i := range serving {
+		if !ok(f.members[i].Source) {
+			return false
+		}
+	}
+	return len(serving) > 0
 }

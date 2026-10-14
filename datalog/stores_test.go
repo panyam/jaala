@@ -49,6 +49,8 @@ type store struct {
 	sliced       bool
 	// noWalk hides the store's Walk, as a store that doesn't implement ns.WalkSource.
 	noWalk bool
+	// noGoal refuses a page or a summary, as a store before #240 and #241.
+	noGoal bool
 
 	mu                                 sync.Mutex
 	calls, unindexed, scanned, shipped int
@@ -192,7 +194,7 @@ func (s *store) match(rel string, bound map[int]ns.Value) ([]ns.Tuple, bool) {
 
 // Pushes implements ns.PushSource: a store evaluates any conjunction of its relations, as one SQL
 // statement over its tables would (#237).
-func (s *store) Pushes(ns.Conjunction) bool { return true }
+func (s *store) Pushes(c ns.Conjunction) bool { return c.Page == nil || !s.noGoal }
 
 // Push evaluates c as one call, joining through the store's indexes where the bound values allow and
 // scanning where they don't, and ships the rows' tuples.
@@ -209,7 +211,11 @@ func (s *store) Push(_ context.Context, c ns.Conjunction) iter.Seq2[[]ns.Tuple, 
 			}
 			return out
 		}
-		rows := evalConjunction(c, func(rel string) ns.Schema { sc, _ := s.Schema(rel); return sc }, match, false)
+		schema := func(rel string) ns.Schema { sc, _ := s.Schema(rel); return sc }
+		rows := evalConjunction(c, schema, match, false)
+		if c.Page != nil {
+			rows = pageOf(c, schema, rows)
+		}
 		if scanned {
 			s.unindexed++
 		}
@@ -219,6 +225,39 @@ func (s *store) Push(_ context.Context, c ns.Conjunction) iter.Seq2[[]ns.Tuple, 
 			s.shipped += len(row)
 			s.mu.Unlock()
 			if !yield(row, nil) {
+				return
+			}
+		}
+	}
+}
+
+// Summarizes implements ns.SummarySource: a store reduces any conjunction itself, as GROUP BY would
+// (#240).
+func (s *store) Summarizes(ns.Conjunction, ns.Summary) bool { return !s.noGoal }
+
+// Summarize reduces c's matches as sm asks in one call, shipping a tuple per row.
+func (s *store) Summarize(_ context.Context, c ns.Conjunction, sm ns.Summary) iter.Seq2[ns.SummaryRow, error] {
+	return func(yield func(ns.SummaryRow, error) bool) {
+		s.mu.Lock()
+		s.calls++
+		scanned := false
+		match := func(rel string, bound map[int]ns.Value) []ns.Tuple {
+			out, scan := s.match(rel, bound)
+			if scan {
+				s.scanned += len(s.MemSource.Tuples(rel))
+				scanned = true
+			}
+			return out
+		}
+		schema := func(rel string) ns.Schema { sc, _ := s.Schema(rel); return sc }
+		rows := summaryOf(c, sm, schema, evalConjunction(c, schema, match, false), false)
+		if scanned {
+			s.unindexed++
+		}
+		s.shipped += len(rows)
+		s.mu.Unlock()
+		for _, r := range rows {
+			if !yield(r, nil) {
 				return
 			}
 		}
@@ -406,6 +445,14 @@ func unbatchedStoreSet(n int) storeSet {
 	return storeSet{stores: stores, fed: f, v: std(f)}.unwalked()
 }
 
+// An ungoaled storeSet's stores neither page nor summarize, as before #240 and #241.
+func (s storeSet) ungoaled() storeSet {
+	for _, st := range s.stores {
+		st.noGoal = true
+	}
+	return s
+}
+
 // An unwalked storeSet's stores don't walk, as before #239.
 func (s storeSet) unwalked() storeSet {
 	for _, st := range s.stores {
@@ -582,10 +629,15 @@ func TestStoresExercise(t *testing.T) {
 	if c, _, rows, err := newStoreSet(1).askTwice(twoHops); err != nil || c.calls != 1 || c.shipped != 2*len(rows) {
 		t.Errorf("two hops within one store made %d calls shipping %d tuples for %d answers, want one pushed call shipping two tuples an answer (#237): %v", c.calls, c.shipped, len(rows), err)
 	}
-	// A pushed-down count ships a row per store and a page its limit; today each store ships every match.
+	// A count ships a row per store and a page its limit per store (#240, #241); a store that only
+	// looks up ships every match.
 	for name, pushed := range map[string]int{"count-lines": n, "page": 10 * n} {
-		if c := costs[name]; c.asked != n || c.shipped <= pushed {
-			t.Errorf("control: %s asked %d stores, which shipped %d tuples, want %d stores shipping more than the %d pushdown would (#240, #241)", name, c.asked, c.shipped, n, pushed)
+		q := mustParse(t, storeQuestions[slices.IndexFunc(storeQuestions, func(sq struct{ name, text string }) bool { return sq.name == name })].text)
+		if c := costs[name]; c.asked != n || c.shipped > pushed {
+			t.Errorf("%s asked %d stores, which shipped %d tuples, want %d stores shipping at most %d (#240, #241)", name, c.asked, c.shipped, n, pushed)
+		}
+		if c, _, _, err := newStoreSet(n).ungoaled().askTwice(q); err != nil || c.shipped <= pushed {
+			t.Errorf("control: from stores that don't page or summarize, %s shipped %d tuples, want more than %d: %v", name, c.shipped, pushed, err)
 		}
 	}
 	edges := len(whole.Tuples("edge"))

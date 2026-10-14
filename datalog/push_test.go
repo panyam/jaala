@@ -7,6 +7,7 @@ import (
 	"iter"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -27,12 +28,14 @@ type pushing struct {
 	noWalk            bool
 	walkFail          error
 	walked            []ns.Walk
+	noGoal            bool // refuses a page or a summary
+	pages, summaries  int
 }
 
 func pushingAt(src ns.Source) *pushing { return &pushing{looking: lookingAt(src)} }
 
 func (p *pushing) Pushes(c ns.Conjunction) bool {
-	if p.noCompare && len(c.Compare) > 0 {
+	if p.noCompare && len(c.Compare) > 0 || c.Page != nil && p.noGoal {
 		return false
 	}
 	return p.refuse == nil || !p.refuse(c)
@@ -50,7 +53,16 @@ func (p *pushing) Push(_ context.Context, c ns.Conjunction) iter.Seq2[[]ns.Tuple
 		}
 		schema := func(rel string) ns.Schema { s, _ := p.Source.Schema(rel); return s }
 		all := func(rel string, _ map[int]ns.Value) []ns.Tuple { return p.Source.Tuples(rel) }
-		for _, row := range evalConjunction(c, schema, all, p.sloppy) {
+		rows := evalConjunction(c, schema, all, p.sloppy)
+		if c.Page != nil {
+			p.mu.Lock()
+			p.pages++
+			p.mu.Unlock()
+			if !p.sloppy {
+				rows = pageOf(c, schema, rows)
+			}
+		}
+		for _, row := range rows {
 			p.mu.Lock()
 			p.yielded++
 			p.mu.Unlock()
@@ -145,6 +157,182 @@ func (p *pushing) pushes() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return len(p.pushed)
+}
+
+// Summarizes implements ns.SummarySource, unless noGoal.
+func (p *pushing) Summarizes(ns.Conjunction, ns.Summary) bool { return !p.noGoal }
+
+// Summarize groups the store's own matches of c as s asks, skipping c's comparisons as a store may; a
+// sloppy store sends each match as a row of its own, which a store unsure two values are equal may.
+func (p *pushing) Summarize(_ context.Context, c ns.Conjunction, s ns.Summary) iter.Seq2[ns.SummaryRow, error] {
+	return func(yield func(ns.SummaryRow, error) bool) {
+		p.mu.Lock()
+		p.summaries++
+		fail := p.pushFail
+		p.mu.Unlock()
+		if fail != nil {
+			yield(ns.SummaryRow{}, fail)
+			return
+		}
+		schema := func(rel string) ns.Schema { sc, _ := p.Source.Schema(rel); return sc }
+		all := func(rel string, _ map[int]ns.Value) []ns.Tuple { return p.Source.Tuples(rel) }
+		uncompared := c
+		uncompared.Compare = nil // left to the engine, which checks them on each row
+		for _, row := range summaryOf(c, s, schema, evalConjunction(uncompared, schema, all, false), p.sloppy) {
+			p.mu.Lock()
+			p.yielded++
+			p.mu.Unlock()
+			if !yield(row, nil) {
+				return
+			}
+		}
+	}
+}
+
+// rowValues is a match's value for each variable of c, read as its argument's type.
+func rowValues(c ns.Conjunction, schema func(string) ns.Schema, row []ns.Tuple) map[int]ns.Value {
+	vals := map[int]ns.Value{}
+	for k, a := range c.Atoms {
+		read := normalizeTuples([]ns.Tuple{row[k]}, schema(a.Relation).Types)[0]
+		for pos, x := range a.Args {
+			if _, ok := vals[x.Var]; x.Var > 0 && !ok {
+				vals[x.Var] = read.Vals[pos]
+			}
+		}
+	}
+	return vals
+}
+
+// pageOf is the matches behind the first c.Page.Limit distinct rows of c.Page.Columns, ordered by its
+// keys and then the columns, in the engine's order.
+func pageOf(c ns.Conjunction, schema func(string) ns.Schema, rows [][]ns.Tuple) [][]ns.Tuple {
+	pg := c.Page
+	type answer struct {
+		vals map[int]ns.Value
+		key  string
+	}
+	keyOf := func(vals map[int]ns.Value) string {
+		var sb strings.Builder
+		for _, v := range pg.Columns {
+			sb.WriteString(valueKey(vals[v]) + "\x00")
+		}
+		return sb.String()
+	}
+	seen := map[string]bool{}
+	var answers []answer
+	for _, row := range rows {
+		vals := rowValues(c, schema, row)
+		if k := keyOf(vals); !seen[k] {
+			seen[k] = true
+			answers = append(answers, answer{vals, k})
+		}
+	}
+	slices.SortFunc(answers, func(x, y answer) int {
+		for _, k := range pg.Order {
+			if o := orderValues(x.vals[k.Var], y.vals[k.Var]); o != 0 {
+				if k.Desc {
+					return -o
+				}
+				return o
+			}
+		}
+		for _, v := range pg.Columns {
+			if o := orderValues(x.vals[v], y.vals[v]); o != 0 {
+				return o
+			}
+		}
+		return 0
+	})
+	keep := map[string]bool{}
+	for i, a := range answers {
+		// Rows tied with the last one kept go too, since the engine's order may break the tie either way.
+		if i >= pg.Limit && (i == 0 || orderTie(pg, answers[i-1].vals, a.vals) != 0) {
+			break
+		}
+		keep[a.key] = true
+	}
+	var out [][]ns.Tuple
+	for _, row := range rows {
+		if keep[keyOf(rowValues(c, schema, row))] {
+			out = append(out, row)
+		}
+	}
+	return out
+}
+
+// orderTie compares two answers by a page's keys and columns, 0 when the order can't tell them apart.
+func orderTie(pg *ns.Page, x, y map[int]ns.Value) int {
+	for _, k := range pg.Order {
+		if o := orderValues(x[k.Var], y[k.Var]); o != 0 {
+			return o
+		}
+	}
+	for _, v := range pg.Columns {
+		if o := orderValues(x[v], y[v]); o != 0 {
+			return o
+		}
+	}
+	return 0
+}
+
+// summaryOf groups rows, c's matches, by their values at s.Group and s.Values, read as their types and
+// identical in text, number and unit, counting each group's matches and gathering its citations, and
+// returns each row's values as stored; split sends each match as a row of its own.
+func summaryOf(c ns.Conjunction, s ns.Summary, schema func(string) ns.Schema, rows [][]ns.Tuple, split bool) []ns.SummaryRow {
+	var out []ns.SummaryRow
+	at := map[string]int{}
+	for i, row := range rows {
+		vals := rowValues(c, schema, row)
+		raw := rawValues(c, row)
+		var r ns.SummaryRow
+		var sb strings.Builder
+		for _, v := range s.Group {
+			r.Group = append(r.Group, raw[v])
+			sb.WriteString(identityKey(vals[v]))
+		}
+		for _, v := range s.Values {
+			r.Values = append(r.Values, raw[v])
+			sb.WriteString(identityKey(vals[v]))
+		}
+		k := sb.String()
+		if split {
+			k += strconv.Itoa(i)
+		}
+		j, ok := at[k]
+		if !ok {
+			j = len(out)
+			at[k] = j
+			out = append(out, r)
+		}
+		out[j].Matches++
+		for _, t := range row {
+			out[j].Cites = append(out[j].Cites, t.Cites...)
+		}
+	}
+	return out
+}
+
+// rawValues is a match's value for each variable of c as the store holds it, which a summary returns:
+// the engine reads it as its argument's type.
+func rawValues(c ns.Conjunction, row []ns.Tuple) map[int]ns.Value {
+	vals := map[int]ns.Value{}
+	for k, a := range c.Atoms {
+		for pos, x := range a.Args {
+			if _, ok := vals[x.Var]; x.Var > 0 && !ok {
+				vals[x.Var] = row[k].Vals[pos]
+			}
+		}
+	}
+	return vals
+}
+
+// identityKey keys a value by everything an aggregate reads of it: absent, its text, number and unit.
+func identityKey(v ns.Value) string {
+	num := ""
+	if v.Num != nil {
+		num = ftoa(*v.Num)
+	}
+	return fmt.Sprintf("%v\x00%s\x00%s\x00%s\x00", v.Absent, v.S, num, v.BaseUnit)
 }
 
 // evalConjunction is a store's own answer to c: each combination of the facts candidates offers per
