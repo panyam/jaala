@@ -29,7 +29,9 @@ type pushing struct {
 	walkFail          error
 	walked            []ns.Walk
 	noGoal            bool // refuses a page or a summary
+	noExtremes        bool // refuses a summary with Extremes
 	pages, summaries  int
+	summarized        []ns.Summary
 }
 
 func pushingAt(src ns.Source) *pushing { return &pushing{looking: lookingAt(src)} }
@@ -160,7 +162,9 @@ func (p *pushing) pushes() int {
 }
 
 // Summarizes implements ns.SummarySource, unless noGoal.
-func (p *pushing) Summarizes(ns.Conjunction, ns.Summary) bool { return !p.noGoal }
+func (p *pushing) Summarizes(_ ns.Conjunction, s ns.Summary) bool {
+	return !p.noGoal && (!p.noExtremes || len(s.Extremes) == 0)
+}
 
 // Summarize groups the store's own matches of c as s asks, skipping c's comparisons as a store may; a
 // sloppy store sends each match as a row of its own, which a store unsure two values are equal may.
@@ -168,6 +172,7 @@ func (p *pushing) Summarize(_ context.Context, c ns.Conjunction, s ns.Summary) i
 	return func(yield func(ns.SummaryRow, error) bool) {
 		p.mu.Lock()
 		p.summaries++
+		p.summarized = append(p.summarized, s)
 		fail := p.pushFail
 		p.mu.Unlock()
 		if fail != nil {
@@ -281,6 +286,7 @@ func orderTie(pg *ns.Page, x, y map[int]ns.Value) int {
 func summaryOf(c ns.Conjunction, s ns.Summary, schema func(string) ns.Schema, rows [][]ns.Tuple, split bool) []ns.SummaryRow {
 	var out []ns.SummaryRow
 	at := map[string]int{}
+	bounds := map[string]*ns.Value{}
 	for i, row := range rows {
 		vals := rowValues(c, schema, row)
 		raw := rawValues(c, row)
@@ -302,14 +308,54 @@ func summaryOf(c ns.Conjunction, s ns.Summary, schema func(string) ns.Schema, ro
 		if !ok {
 			j = len(out)
 			at[k] = j
+			r.Extremes = make([][]ns.Extreme, len(s.Extremes))
 			out = append(out, r)
 		}
 		out[j].Matches++
 		for _, t := range row {
 			out[j].Cites = append(out[j].Cites, t.Cites...)
 		}
+		for i, v := range s.Extremes {
+			bound := func(kind, unit string) *ns.Value {
+				k := fmt.Sprint(j, "\x00", i, "\x00", kind, "\x00", unit)
+				if bounds[k] == nil {
+					bounds[k] = &ns.Value{}
+				}
+				return bounds[k]
+			}
+			out[j].Extremes[i] = addExtreme(out[j].Extremes[i], vals[v], raw[v], bound)
+		}
 	}
 	return out
+}
+
+// addExtreme folds a match's value, read as its type, into a row's extremes by unit: a number joins
+// its unit's count, NaN or bounds, which the row reports as stored, as a store would; anything else
+// adds nothing. bound holds each of the row's bounds as read, by kind and unit, to compare by.
+func addExtreme(es []ns.Extreme, read, raw ns.Value, bound func(kind, unit string) *ns.Value) []ns.Extreme {
+	if read.Absent || read.Num == nil {
+		return es
+	}
+	i := slices.IndexFunc(es, func(e ns.Extreme) bool { return e.Unit == read.BaseUnit })
+	if i < 0 {
+		es = append(es, ns.Extreme{Unit: read.BaseUnit, Min: ns.Absent(), Max: ns.Absent()})
+		i = len(es) - 1
+	}
+	e := &es[i]
+	e.Numbers++
+	x := *read.Num
+	switch {
+	case x != x:
+		e.NaN = true
+	default:
+		if lo := bound("min", read.BaseUnit); e.Min.Absent || x < *lo.Num {
+			e.Min, *lo = raw, read
+		}
+		if hi := bound("max", read.BaseUnit); e.Max.Absent || x > *hi.Num {
+			e.Max, *hi = raw, read
+		}
+	}
+	return es
 }
 
 // rawValues is a match's value for each variable of c as the store holds it, which a summary returns:

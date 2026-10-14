@@ -182,6 +182,35 @@ func (acc *accumulator) addN(val ns.Value, ok bool, n int) {
 	acc.numbers += n
 }
 
+// addExtremes adds n bindings whose numbers a store reduced to their extremes by unit (#252), as
+// adding each binding would for min and max: every unit counts toward mixed units, a NaN makes the
+// answer NaN, and the smallest (or largest) number wins.
+func (acc *accumulator) addExtremes(n int, ext []ns.Extreme) {
+	acc.bindings += n
+	for _, e := range ext {
+		if e.Numbers <= 0 {
+			continue
+		}
+		if e.Unit != "" && !containsString(acc.units, e.Unit) {
+			acc.units = append(acc.units, e.Unit)
+		}
+		if e.NaN {
+			acc.nan = true
+		}
+		v := e.Min
+		if acc.a.Func == "max" {
+			v = e.Max
+		}
+		if !v.Absent && v.Num != nil {
+			x := *v.Num
+			if acc.numbers == 0 || acc.a.Func == "min" && x < acc.best || acc.a.Func == "max" && x > acc.best {
+				acc.best = x
+			}
+		}
+		acc.numbers += e.Numbers
+	}
+}
+
 // result is the aggregate's value, and why when it is absent (Row.Why): count is how many; list joins
 // the values in answer order; min, max and sum reduce the numbers, which over none is 0 for sum and
 // absent for min and max (#122), and over numbers in different units is absent for all three (#80).
@@ -309,10 +338,14 @@ func (ag *aggregator) value(bnd *binding, v Var) (ns.Value, bool) {
 	return val, ok
 }
 
-func (ag *aggregator) add(bnd *binding) { ag.addN(bnd, 1) }
+func (ag *aggregator) add(bnd *binding) { ag.addSummary(bnd, 1, nil) }
 
 // addN adds n bindings like bnd, as a store's summary row stands for n matches (#240).
-func (ag *aggregator) addN(bnd *binding, n int) {
+func (ag *aggregator) addN(bnd *binding, n int) { ag.addSummary(bnd, n, nil) }
+
+// addSummary adds n bindings like bnd, an aggregate over a variable in ext reading its extremes by
+// unit rather than a value (#252).
+func (ag *aggregator) addSummary(bnd *binding, n int, ext map[Var][]ns.Extreme) {
 	key := groupKeyOf(ag.keyVars, bnd)
 	g := ag.groups[key]
 	if g == nil {
@@ -335,6 +368,10 @@ func (ag *aggregator) addN(bnd *binding, n int) {
 		}
 	}
 	for i := range g.accs {
+		if e, ok := ext[g.accs[i].a.Var]; ok {
+			g.accs[i].addExtremes(n, e)
+			continue
+		}
 		val, ok := ag.value(bnd, g.accs[i].a.Var)
 		g.accs[i].addN(val, ok, n)
 	}

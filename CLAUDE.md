@@ -122,7 +122,10 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   groups) and comparisons over their variables, with no negation. An aggregating goal asks
   `ns.SummarySource` for rows per distinct group and reduced values, a plain `count` needing none,
   plus every variable a comparison reads, which the engine checks per row; `aggregator.addN` feeds a
-  row's match count (`exactSum.addTimes` adds a product with its FMA error). A row merges only
+  row's match count (`exactSum.addTimes` adds a product with its FMA error). A variable only `min`/`max`
+  read, and nothing compares, goes as `Summary.Extremes` (#252): per row and unit the store reports
+  numbers, NaN and bounds (`ns.Extreme`), fed by `accumulator.addExtremes`; a store refusing them is
+  asked for `Values` instead. Cached summaries are tuples (`encodeSummary`). A row merges only
   identical values (text, number, unit), since aggregates read units and spellings. A goal with a
   limit and no comparison, `After` or `Total` sets `Conjunction.Page` and solves the returned matches
   through the projector as usual. A Federation pages or summarizes a single-literal goal across

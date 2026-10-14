@@ -822,6 +822,9 @@ var goalQuestions = []string{
 	`edge(?a, ?b) => ?a, ?b order by ?b desc, ?a limit 3 offset 1`,
 	`weight(?n, ?w) => ?n, ?w order by ?w limit 2`,
 	`edge(?a, ?b), node(?b) => ?a, ?b order by ?a limit 2`,
+	`weight(?n, ?w) => ?n, min(?w), max(?w)`,
+	`edge(?a, ?b), weight(?b, ?w) => ?a, max(?w)`,
+	`weight(?n, ?w) => min(?w), max(distinct ?w)`,
 }
 
 // agreeGoals runs goalQuestions over a Source that pages and summarizes, on a fresh Base each (Naive
