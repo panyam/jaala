@@ -780,7 +780,19 @@ func agreePushed(q Query, b *Base, want []Row, werr error, opts []Option) string
 	if src.pushes() > 0 {
 		pushedPrograms++
 	}
+	if src.pages > 0 {
+		pagedPrograms++
+	}
+	if src.summaries > 0 {
+		summarizedPrograms++
+	}
 	if diff := agreeWalked(b, func() (ns.Source, func() int) { p := pushingAt(b.src); return p, p.walks }); diff != "" {
+		return diff
+	}
+	if diff := agreeGoals(b, func() (ns.Source, func() (int, int)) {
+		p := pushingAt(b.src)
+		return p, func() (int, int) { return p.pages, p.summaries }
+	}); diff != "" {
 		return diff
 	}
 	if werr != nil || anyRows(q) {
@@ -791,6 +803,59 @@ func agreePushed(q Query, b *Base, want []Row, werr error, opts []Option) string
 	g, err := SemiNaive{}.Eval(bg, q, MustBase(b.reg, pushingAt(b.src)), canon...)
 	if err != nil || !reflect.DeepEqual(w, g) {
 		return fmt.Sprintf("planned SemiNaive pushed cites differently under CanonicalCites on %v\n whole:  %v\n pushed: %v %v", q, w, g, err)
+	}
+	return ""
+}
+
+// pagedPrograms and summarizedPrograms count the goals agreeGoals pushed that a store paged or
+// summarized (#241, #240).
+var pagedPrograms, summarizedPrograms int
+
+// goalQuestions aggregate and page over a graph's own relations, the shapes a store pages or
+// summarizes and the generated programs rarely take: their goals read derived relations or negate.
+// The weights carry units in some graphs (#192), mixed in some, so the unit rules are exercised.
+var goalQuestions = []string{
+	`edge(?a, ?b) => ?a, count(?b)`,
+	`weight(?n, ?w) => sum(?w), min(?w), max(?w)`,
+	`weight(?n, ?w) => count(distinct ?w), list(?w), list(distinct ?w), sum(distinct ?w)`,
+	`edge(?a, ?b), weight(?b, ?w), ?w > 2 => ?a, sum(?w), count(?b)`,
+	`edge(?a, ?b) => ?a, ?b order by ?b desc, ?a limit 3 offset 1`,
+	`weight(?n, ?w) => ?n, ?w order by ?w limit 2`,
+	`edge(?a, ?b), node(?b) => ?a, ?b order by ?a limit 2`,
+}
+
+// agreeGoals runs goalQuestions over a Source that pages and summarizes, on a fresh Base each (Naive
+// reading a relation whole would leave nothing to push), and compares each with Naive reading whole:
+// its rows, then under CanonicalCites its citations and witnesses.
+func agreeGoals(b *Base, pushing func() (ns.Source, func() (int, int))) string {
+	for _, text := range goalQuestions {
+		q, err := Parse(text)
+		if err != nil {
+			return err.Error()
+		}
+		want, werr := Naive{}.Eval(bg, q, b)
+		src, counts := pushing()
+		got, gerr := SemiNaive{}.Eval(bg, q, MustBase(b.reg, src))
+		if errText(gerr) != errText(werr) || !reflect.DeepEqual(binds(got), binds(want)) {
+			return fmt.Sprintf("planned SemiNaive over a store paging and summarizing answers differently on %v\n whole:  %v %v\n pushed: %v %v", q, binds(want), werr, binds(got), gerr)
+		}
+		pages, sums := counts()
+		if pages > 0 {
+			pagedPrograms++
+		}
+		if sums > 0 {
+			summarizedPrograms++
+		}
+		if werr != nil {
+			continue
+		}
+		canon := []Option{CanonicalCites(), Witnesses()}
+		w, _ := Naive{}.Eval(bg, q, b, canon...)
+		fresh, _ := pushing()
+		g, err := SemiNaive{}.Eval(bg, q, MustBase(b.reg, fresh), canon...)
+		if err != nil || !reflect.DeepEqual(w, g) {
+			return fmt.Sprintf("planned SemiNaive paging and summarizing cites differently under CanonicalCites on %v\n naive:  %v\n pushed: %v %v", q, w, g, err)
+		}
 	}
 	return ""
 }
@@ -894,6 +959,19 @@ func agreePartitioned(q Query, b *Base, want []Row, werr error, opts []Option) s
 		}
 	}
 	if diff := agreeWalked(b, walking); diff != "" {
+		return diff
+	}
+	if diff := agreeGoals(b, func() (ns.Source, func() (int, int)) {
+		stores, f, _ := federate()
+		return f, func() (int, int) {
+			pages, sums := 0, 0
+			for _, st := range stores {
+				pages += st.pages
+				sums += st.summaries
+			}
+			return pages, sums
+		}
+	}); diff != "" {
 		return diff
 	}
 	lb := MustBase(b.reg, f)
@@ -1147,6 +1225,7 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 	}
 	compared, known, skipped, failed := map[string]int{}, map[int]int{}, 0, 0
 	lookedUpPrograms, federatedPrograms, batchedPrograms, pushedPrograms, partitionedPrograms, walkedPrograms, unitAnswers, mixedAnswers = 0, 0, 0, 0, 0, 0, 0, 0
+	pagedPrograms, summarizedPrograms = 0, 0
 	withUnits := 0
 	for seed := first; seed < first+int64(seeds); seed++ {
 		rnd := rand.New(rand.NewSource(seed))
@@ -1211,6 +1290,12 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 	}
 	if pushedPrograms == 0 {
 		t.Errorf("control: no program pushed a conjunction to the Source")
+	}
+	if pagedPrograms == 0 {
+		t.Errorf("control: no program's goal was paged by the store")
+	}
+	if summarizedPrograms == 0 {
+		t.Errorf("control: no program's goal was summarized by the store")
 	}
 	if walkedPrograms == 0 {
 		t.Errorf("control: no program asked a store to walk a relation")

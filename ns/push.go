@@ -54,6 +54,67 @@ type Conjunction struct {
 	// can't return prefixes refuses a Partial conjunction in Pushes, and is then asked literal by
 	// literal; one that returns only whole rows loses the matches that span members.
 	Partial bool
+	// Page asks for only the matches behind the first rows of a goal's answer (#241); nil asks for
+	// every match.
+	Page *Page
+}
+
+// A Page limits a pushed goal to the matches behind its first Limit answer rows. An answer row is a
+// match's values at Columns, and rows are distinct: matches with equal values there make one row. The
+// rows are ordered by Order's keys and then by Columns, each ascending unless a key says Desc, in the
+// engine's order: an absent value first, then numbers by value, then text by its bytes. With no Order
+// the store may take any Limit rows. The store returns every match behind each of the rows it takes,
+// so the engine picks among them as it would in memory; it may return more matches or more rows,
+// never fewer of either. Across stores, the rows the answer needs are among each store's first Limit,
+// which is why a store can answer a page of a federation's answer alone.
+type Page struct {
+	Columns []int
+	Order   []PageKey
+	Limit   int
+}
+
+// A PageKey orders a Page by a variable of the Conjunction.
+type PageKey struct {
+	Var  int
+	Desc bool
+}
+
+// SummarySource is optionally implemented by a PushSource that reduces a conjunction's matches itself,
+// such as a database answering GROUP BY (#240). The planned evaluator asks it for a goal that
+// aggregates, and reduces what comes back with its own rules (exact sums, units, NaN, absent over
+// nothing), so a count costs a row per group and store rather than a row per match.
+type SummarySource interface {
+	// Summarizes reports whether the store summarizes c as s asks. Like Pushes, it is asked while
+	// planning and must be cheap.
+	Summarizes(c Conjunction, s Summary) bool
+	// Summarize returns c's matches as rows of a Summary: every match in exactly one row, whose Group
+	// and Values are the match's values at s.Group and s.Values, Matches how many matches the row
+	// covers, and Cites the citations of every fact behind them. Two matches share a row only when
+	// their values there are identical, the same text, number and unit, since an aggregate reads each
+	// one: 5 V and 5 A are one number but two units, and a sum over them is absent. A store may split
+	// matches it could have merged, since the engine merges rows by its own equality, but a match
+	// counted twice, or left out, changes the answer. A match is a combination of facts satisfying
+	// every atom of c, its constants and joins, which the engine can't check again; c's comparisons the
+	// store may skip, since the engine asks for the values they read (in s.Values) and checks them on
+	// each row. Each row is charged to the Budget as it arrives.
+	Summarize(ctx context.Context, c Conjunction, s Summary) iter.Seq2[SummaryRow, error]
+}
+
+// A Summary asks for a conjunction's matches grouped by the values of the variables in Group and in
+// Values. The engine reads Group as an aggregate's group and Values as the values it reduces; a count
+// of bindings needs neither, so a goal counting with no group asks for one row.
+type Summary struct {
+	Group  []int
+	Values []int
+}
+
+// A SummaryRow is one row of a Summary: the values at its Group and Values variables, in their order,
+// the number of matches with them, and those matches' facts' citations.
+type SummaryRow struct {
+	Group   []Value
+	Values  []Value
+	Matches int
+	Cites   []string
 }
 
 // A PushAtom is one literal of a Conjunction: a relation the Source serves, and an argument per

@@ -669,6 +669,10 @@ A source that evaluates conjunctions returned a row whose tuple count isn't the 
 
 A row's tuple for one relation has a different number of values than the relation takes.
 
+`query: summarizing …: a row's values don't match the summary asked for`
+
+A source that summarizes a goal (`ns.SummarySource`) returned a row whose group or values don't match the variables it was asked for, or a negative match count.
+
 ## Setting up a vocabulary
 
 These come from a host's Go code registering a vocabulary, never from a query. They're listed so a host author can find them.

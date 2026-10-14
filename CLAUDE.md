@@ -117,6 +117,19 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   engine sees only whole rows. The corpus runs every program over `pushing` (`agreePushed`,
   alternating a store that refuses comparisons) and over a partitioned three-member federation dealt
   by first argument (`agreePartitioned`); `pushedPrograms` and `partitionedPrograms` are its controls.
+- **A goal a store could evaluate whole is summarized or paged** (`goalpush.go`, #240, #241).
+  `goalGroup` takes the goal's positive body when it is only pushable base literals (or pushed
+  groups) and comparisons over their variables, with no negation. An aggregating goal asks
+  `ns.SummarySource` for rows per distinct group and reduced values, a plain `count` needing none,
+  plus every variable a comparison reads, which the engine checks per row; `aggregator.addN` feeds a
+  row's match count (`exactSum.addTimes` adds a product with its FMA error). A row merges only
+  identical values (text, number, unit), since aggregates read units and spellings. A goal with a
+  limit and no comparison, `After` or `Total` sets `Conjunction.Page` and solves the returned matches
+  through the projector as usual. A Federation pages or summarizes a single-literal goal across
+  members, or anything for a lone member. The corpus's generated goals rarely qualify, so
+  `agreeGoals` runs `goalQuestions` per graph on a fresh Base; `pagedPrograms` and
+  `summarizedPrograms` are its controls. NaN can't go in a `both()` fixture: `reflect.DeepEqual`
+  never equates it with itself.
 - **A `WalkSource` follows a relation from value to value** (`walk.go`, `ns/walk.go`, #239).
   `findWalks` runs after `pushConjunctions` and records, per head relation, each looked-up literal
   whose argument at `from` is the recursive call's column j and at `to` the head's column j;

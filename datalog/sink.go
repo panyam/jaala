@@ -54,6 +54,26 @@ func (s *exactSum) add(x float64) {
 	s.partials = append(s.partials[:i], x)
 }
 
+// addTimes adds x n times: x*n as its rounded product and the product's rounding error, which together
+// are x*n exactly, so a summary row of n matches sums as its matches would (#240). An infinity or NaN
+// adds once, as n of them would, and a product that overflows adds x n times.
+func (s *exactSum) addTimes(x float64, n int) {
+	if n == 1 || math.IsInf(x, 0) || math.IsNaN(x) {
+		s.add(x)
+		return
+	}
+	m := float64(n)
+	p := x * m
+	if math.IsInf(p, 0) {
+		for range n {
+			s.add(x)
+		}
+		return
+	}
+	s.add(p)
+	s.add(math.FMA(x, m, -p))
+}
+
 func (s *exactSum) value() float64 {
 	if s.inf {
 		return s.special
@@ -103,8 +123,12 @@ type accumulator struct {
 	units    []string
 }
 
-func (acc *accumulator) add(val ns.Value, ok bool) {
-	acc.bindings++
+func (acc *accumulator) add(val ns.Value, ok bool) { acc.addN(val, ok, 1) }
+
+// addN adds n bindings with the value val, as n calls of add would: a store's summary row stands for
+// n matches (#240). A sum adds val times n exactly, through its product's rounding error.
+func (acc *accumulator) addN(val ns.Value, ok bool, n int) {
+	acc.bindings += n
 	switch acc.a.Func {
 	case "count", "list":
 		if !ok || val.Absent || val.S == "" {
@@ -119,7 +143,9 @@ func (acc *accumulator) add(val ns.Value, ok bool) {
 				acc.keys[k] = val
 			}
 		} else if acc.a.Func == "list" {
-			acc.list = append(acc.list, val)
+			for range n {
+				acc.list = append(acc.list, val)
+			}
 		}
 		return
 	}
@@ -141,8 +167,9 @@ func (acc *accumulator) add(val ns.Value, ok bool) {
 				acc.seen = map[float64]bool{}
 			}
 			acc.seen[x] = true
+			n = 1
 		}
-		acc.sum.add(x)
+		acc.sum.addTimes(x, n)
 	case "min", "max":
 		// A NaN makes the answer NaN, whenever it arrives, so the result doesn't depend on order.
 		switch {
@@ -152,7 +179,7 @@ func (acc *accumulator) add(val ns.Value, ok bool) {
 			acc.best = x
 		}
 	}
-	acc.numbers++
+	acc.numbers += n
 }
 
 // result is the aggregate's value, and why when it is absent (Row.Why): count is how many; list joins
@@ -282,7 +309,10 @@ func (ag *aggregator) value(bnd *binding, v Var) (ns.Value, bool) {
 	return val, ok
 }
 
-func (ag *aggregator) add(bnd *binding) {
+func (ag *aggregator) add(bnd *binding) { ag.addN(bnd, 1) }
+
+// addN adds n bindings like bnd, as a store's summary row stands for n matches (#240).
+func (ag *aggregator) addN(bnd *binding, n int) {
 	key := groupKeyOf(ag.keyVars, bnd)
 	g := ag.groups[key]
 	if g == nil {
@@ -306,7 +336,7 @@ func (ag *aggregator) add(bnd *binding) {
 	}
 	for i := range g.accs {
 		val, ok := ag.value(bnd, g.accs[i].a.Var)
-		g.accs[i].add(val, ok)
+		g.accs[i].addN(val, ok, n)
 	}
 }
 
