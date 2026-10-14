@@ -166,7 +166,7 @@ func answerGoal(b *Base, pos, negs []Literal, having []Compare, sel, cols []Term
 			return p.add(bnd)
 		}
 		paged := false
-		if g := goalGroup(b, pos, negs); g != nil && written.Limit > 0 && written.After == nil && o.total == nil {
+		if g := goalGroup(b, pos, negs); g != nil && written.Limit > 0 && o.total == nil {
 			var err error
 			if paged, err = pageGoal(b, g, cols, fixed, written, emit); err != nil {
 				return nil, err

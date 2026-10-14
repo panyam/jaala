@@ -76,6 +76,11 @@ type Page struct {
 	Columns []int
 	Order   []PageKey
 	Limit   int
+	// After, when set, has one value per Order key: the page starts after them (#254), its rows being
+	// those whose values at Order come strictly after After in that order, each key compared in the
+	// engine's order and reversed by Desc, as the query's after clause keeps them. The store's first
+	// Limit rows are then its first after the cursor.
+	After []Value
 }
 
 // A PageKey orders a Page by a variable of the Conjunction.

@@ -313,7 +313,8 @@ func summaryKey(c ns.Conjunction, s ns.Summary) string {
 // pageGoal answers a goal with a limit from the matches the Source sends for its first rows (#241),
 // feeding each match's binding to emit as solving would, and reports whether it did. The page is
 // offset plus limit rows of the answer's columns, ordered by the order by and then the columns, as
-// the answer is. A goal with a comparison isn't paged: a store skipping one would fill its page with
+// the answer is, after the after clause's values when it has one (#254); the projector applies the
+// cursor too, so rows a store sends from before it are dropped. A goal with a comparison isn't paged: a store skipping one would fill its page with
 // matches failing it.
 func pageGoal(b *Base, g *pushGroup, cols []Term, fixed map[int]ns.Value, written Query, emit func(*binding) error) (bool, error) {
 	if len(g.compare) > 0 {
@@ -333,7 +334,7 @@ func pageGoal(b *Base, g *pushGroup, cols []Term, fixed map[int]ns.Value, writte
 		}
 		page.Columns = append(page.Columns, n)
 	}
-	for _, ob := range written.OrderBy {
+	for i, ob := range written.OrderBy {
 		v := ob.Term.Var
 		if isFixed[v] {
 			continue
@@ -343,6 +344,9 @@ func pageGoal(b *Base, g *pushGroup, cols []Term, fixed map[int]ns.Value, writte
 			return false, nil
 		}
 		page.Order = append(page.Order, ns.PageKey{Var: n, Desc: ob.Desc})
+		if written.After != nil {
+			page.After = append(page.After, written.After[i])
+		}
 	}
 	c.Page = page
 	if !b.pusher.Pushes(c) {
