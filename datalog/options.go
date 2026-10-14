@@ -122,6 +122,8 @@ type evalRun struct {
 	// pushed are the groups of base literals pushConjunctions handed the Source, by their literal's
 	// relation name (#237).
 	pushed map[string]*pushGroup
+	// walks are, by head relation, the walks its recursive bodies make that the Source walks (#239).
+	walks map[string][]walkStep
 	// batch sets prefetch asking a batching Source for a body's lookups ahead of solving it (#153),
 	// which only the planned SemiNaive does.
 	batch bool

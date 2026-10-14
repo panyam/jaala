@@ -49,7 +49,7 @@ func HoldsPrefix(prefix string, positions map[string][]int) func(rel string, bou
 // answer rows are distinct either way, and an aggregate counting bindings counts both.
 //
 // It is a ContextSource, a StreamSource, a LookupSource, a BatchLookupSource, IndexedLookups,
-// PushSource and Versioned whatever its members are, and pushes a conjunction to a lone member, or
+// PushSource, WalkSource and Versioned whatever its members are, and pushes a conjunction to a lone member, or
 // across partitioned ones (NewPartitionedFederation). A relation is looked
 // up only when every member serving it looks it up (LooksUp), so a Federation can be a member of
 // another; otherwise the engine reads it
@@ -525,4 +525,92 @@ func (c Conjunction) after(row []Tuple) Conjunction {
 		rest.Compare = append(rest.Compare, PushComparison{Op: cmp.Op, Left: arg(cmp.Left), Right: arg(cmp.Right)})
 	}
 	return rest
+}
+
+// Walks implements WalkSource: a Federation walks rel when every member serving it does.
+func (f *Federation) Walks(rel string, from, to int, bound []int) bool {
+	serving := f.serving[rel]
+	for _, i := range serving {
+		ws, ok := f.members[i].Source.(WalkSource)
+		if !ok || !ws.Walks(rel, from, to, bound) {
+			return false
+		}
+	}
+	return len(serving) > 0
+}
+
+// Walk implements WalkSource across the members (#239): each start value goes to the members whose
+// Holds allows it, each member walks from its values in one call, and a value a member reached goes on
+// to the other members whose Holds allows it, until no member has a value it hasn't walked. Each
+// member walks a value once, so a walk staying in one store costs one call, and one crossing stores a
+// call per store per crossing. Every member serving the relation is asked when Holds is nil. Each
+// tuple is cited to its member, and a member's failure is wrapped with its name.
+func (f *Federation) Walk(ctx context.Context, w Walk) iter.Seq2[Tuple, error] {
+	return func(yield func(Tuple, error) bool) {
+		serving := f.serving[w.Relation]
+		walked := make([]map[string]bool, len(f.members))
+		for _, i := range serving {
+			walked[i] = map[string]bool{}
+		}
+		pending := map[int][]Value{}
+		route := func(v Value, from int) {
+			bound := make(map[int]Value, len(w.Bound)+1)
+			for p, c := range w.Bound {
+				bound[p] = c
+			}
+			bound[w.From] = v
+			for _, i := range serving {
+				k := walkKey(v)
+				if i == from || walked[i][k] {
+					continue
+				}
+				if h := f.members[i].Holds; h == nil || h(w.Relation, bound) {
+					walked[i][k] = true
+					pending[i] = append(pending[i], v)
+				}
+			}
+		}
+		for _, v := range w.Start {
+			route(v, -1)
+		}
+		for len(pending) > 0 {
+			for _, i := range serving {
+				vals, ok := pending[i]
+				if !ok {
+					continue
+				}
+				delete(pending, i)
+				ws := f.members[i].Source.(WalkSource)
+				mw := w
+				mw.Start = vals
+				for t, err := range ws.Walk(ctx, mw) {
+					if err != nil {
+						yield(Tuple{}, fmt.Errorf("member %s: %w", f.name(i), err))
+						return
+					}
+					if w.From < len(t.Vals) {
+						walked[i][walkKey(t.Vals[w.From])] = true
+					}
+					if w.To < len(t.Vals) {
+						walked[i][walkKey(t.Vals[w.To])] = true
+						route(t.Vals[w.To], i)
+					}
+					if !yield(f.cite(i, t), nil) {
+						return
+					}
+				}
+			}
+		}
+	}
+}
+
+// walkKey keys a value a member has walked, a number by its value.
+func walkKey(v Value) string {
+	switch {
+	case v.Absent:
+		return "\x00a"
+	case v.Num != nil:
+		return "\x00n" + ftoa(*v.Num)
+	}
+	return v.S
 }

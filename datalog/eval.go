@@ -69,6 +69,8 @@ type Base struct {
 	indexed ns.IndexedLookups
 	// pusher is the Source when it evaluates conjunctions itself (ns.PushSource, #237), else nil.
 	pusher ns.PushSource
+	// walker is the Source when it follows a relation from value to value itself (ns.WalkSource, #239).
+	walker ns.WalkSource
 	// run is one Eval's own state (its context and budget), set on that Eval's copy of the Base and
 	// nil on a Base no Eval is running on.
 	run *evalRun
@@ -122,7 +124,8 @@ func NewBase(v *ns.Vocabulary, src ns.Source) (*Base, error) {
 	lookRels, _ := src.(ns.LookupRelations)
 	indexed, _ := src.(ns.IndexedLookups)
 	pusher, _ := src.(ns.PushSource)
-	return &Base{src: src, reg: v, looker: looker, lookRels: lookRels, indexed: indexed, pusher: pusher, edb: newEDBCache(), derived: newDerivedCache(), lookups: newLookupCache(), work: new(int64)}, nil
+	walker, _ := src.(ns.WalkSource)
+	return &Base{src: src, reg: v, looker: looker, lookRels: lookRels, indexed: indexed, pusher: pusher, walker: walker, edb: newEDBCache(), derived: newDerivedCache(), lookups: newLookupCache(), work: new(int64)}, nil
 }
 
 // MustBase is NewBase for a Source known to match its vocabulary, such as a test fixture. It panics

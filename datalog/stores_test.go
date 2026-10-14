@@ -47,6 +47,8 @@ type store struct {
 	// LookupSource that doesn't implement ns.IndexedLookups is taken to.
 	uncatalogued bool
 	sliced       bool
+	// noWalk hides the store's Walk, as a store that doesn't implement ns.WalkSource.
+	noWalk bool
 
 	mu                                 sync.Mutex
 	calls, unindexed, scanned, shipped int
@@ -223,6 +225,34 @@ func (s *store) Push(_ context.Context, c ns.Conjunction) iter.Seq2[[]ns.Tuple, 
 	}
 }
 
+// Walks implements ns.WalkSource: a store follows any relation itself, as WITH RECURSIVE over its
+// tables would (#239).
+func (s *store) Walks(string, int, int, []int) bool { return !s.noWalk }
+
+// Walk follows w in one call, reading each reached value's facts through the store's index where the
+// catalog has one and scanning where it doesn't.
+func (s *store) Walk(_ context.Context, w ns.Walk) iter.Seq2[ns.Tuple, error] {
+	return func(yield func(ns.Tuple, error) bool) {
+		s.mu.Lock()
+		s.calls++
+		facts := walkFacts(w, func(bound map[int]ns.Value) []ns.Tuple {
+			out, scan := s.match(w.Relation, bound)
+			if scan {
+				s.scanned += len(s.MemSource.Tuples(w.Relation))
+				s.unindexed++
+			}
+			return out
+		})
+		s.shipped += len(facts)
+		s.mu.Unlock()
+		for _, t := range facts {
+			if !yield(t, nil) {
+				return
+			}
+		}
+	}
+}
+
 // A batchingStore is a store answering a batch of lookups in one call (ns.BatchLookupSource, #153),
 // as a database asked `WHERE id IN (...)` does; an unindexed batch scans the relation once.
 type batchingStore struct{ *store }
@@ -369,10 +399,19 @@ func newStoreSet(n int) storeSet {
 	return storeSet{stores: stores, fed: f, v: std(f)}
 }
 
-// unbatchedStoreSet is newStoreSet over stores asked one lookup at a time, as before #153.
+// unbatchedStoreSet is newStoreSet over stores asked one lookup at a time, as before #153, and that
+// don't walk.
 func unbatchedStoreSet(n int) storeSet {
 	stores, f := repoStores(n, false)
-	return storeSet{stores: stores, fed: f, v: std(f)}
+	return storeSet{stores: stores, fed: f, v: std(f)}.unwalked()
+}
+
+// An unwalked storeSet's stores don't walk, as before #239.
+func (s storeSet) unwalked() storeSet {
+	for _, st := range s.stores {
+		st.noWalk = true
+	}
+	return s
 }
 
 // askTwice asks q on a fresh Base over the stores, set up by each of setup, then again on the same
@@ -495,8 +534,15 @@ func TestStoresExercise(t *testing.T) {
 	if c, _, _, err := unbatchedStoreSet(n).askTwice(reach); err != nil || c.calls <= storeNodes {
 		t.Errorf("control: over stores that don't batch, reach made %d store calls, want more than its repo's %d nodes (a call per demanded value): %v", c.calls, storeNodes, err)
 	}
-	if c := costs["deep-walk"]; c.calls < storeChain-1 {
-		t.Errorf("control: a walk %d deep made %d calls, want one per level: batching can't go below that without the store walking itself (#231)", storeChain, c.calls)
+	deepWalk := mustParse(t, storeQuestions[5].text)
+	if c, _, _, err := newStoreSet(n).unwalked().askTwice(deepWalk); err != nil || c.calls < storeChain-1 {
+		t.Errorf("control: over stores that don't walk, a walk %d deep made %d calls, want one per level: batching can't go below that (#231): %v", storeChain, c.calls, err)
+	}
+	if c := costs["deep-walk"]; c.calls != 1 {
+		t.Errorf("a walk %d deep made %d calls, want one: the store walks it (#239)", storeChain, c.calls)
+	}
+	if c := costs["reach"]; c.calls != c.asked || c.asked != 2 {
+		t.Errorf("reach made %d calls to %d stores, want one to each of repo0 and repo1, whose leaves repo0 calls: each store walks its part (#239)", c.calls, c.asked)
 	}
 	if c, depth := costs["reach"], bits.Len(storeNodes); c.calls > c.asked*depth {
 		t.Errorf("reach made %d calls to %d stores, want at most a batch per store per level of its %d-level tree (#153)", c.calls, c.asked, depth)

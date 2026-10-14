@@ -46,6 +46,9 @@ type Report struct {
 	// Pushes are the calls to the Source's Push (ns.PushSource, #237), each a conjunction of several
 	// relations and another round trip; Fetched counts the tuples of the rows they returned.
 	Pushes int64 `json:"pushes,omitempty"`
+	// Walks are the calls to the Source's Walk (ns.WalkSource, #239), each answering every round of a
+	// recursive relation's probes of one relation; Fetched counts the facts they returned.
+	Walks int64 `json:"walks,omitempty"`
 	// Cold is what the Eval would have cost on a Base that kept nothing from earlier queries. Unset
 	// when the Eval failed.
 	Cold *ColdReport `json:"cold,omitempty"`
@@ -74,6 +77,7 @@ type ColdReport struct {
 	Batches int64 `json:"batches,omitempty"`
 	Fetched int64 `json:"fetched,omitempty"`
 	Pushes  int64 `json:"pushes,omitempty"`
+	Walks   int64 `json:"walks,omitempty"`
 	// Error is why the cold run stopped, such as the Eval's Budget, when it did.
 	Error string `json:"error,omitempty"`
 }
@@ -150,6 +154,8 @@ type SourceReport struct {
 	// Pushes are the pushed conjunctions it was part of (#237); a conjunction answered from what was
 	// kept counts in Hits or Kept as a lookup does, and its tuples of their rows in Fetched.
 	Pushes int64 `json:"pushes,omitempty"`
+	// Walks are the walks that fetched its facts (#239).
+	Walks int64 `json:"walks,omitempty"`
 }
 
 // An IndexReport is one index of a base relation the Eval probed.
@@ -179,6 +185,8 @@ type explainer struct {
 	cachedIndexes map[idxKey]bool
 	// pushes counts the calls to the Source's Push, which each name several relations (#237).
 	pushes int64
+	// walks counts the calls to the Source's Walk (#239).
+	walks int64
 	// quiet is set while prefetch runs a body's prefix again, whose literals were reached already: its
 	// work still counts against the body, but no literal counts it as reached or passed.
 	quiet bool
@@ -337,10 +345,10 @@ func (e *explainer) finish(b *Base, rows int, err error, budget int64) {
 			r.Fetched += int64(s.Tuples)
 		}
 	}
-	r.Pushes = e.pushes
+	r.Pushes, r.Walks = e.pushes, e.walks
 	r.Relations = e.relations(b)
 	if err == nil {
-		r.Cold = &ColdReport{Work: r.Work, Lookups: r.Lookups, Batches: r.Batches, Fetched: cold, Pushes: r.Pushes}
+		r.Cold = &ColdReport{Work: r.Work, Lookups: r.Lookups, Batches: r.Batches, Fetched: cold, Pushes: r.Pushes, Walks: r.Walks}
 	}
 }
 
@@ -352,7 +360,7 @@ func (e *explainer) warm(b *Base) bool {
 	if len(e.held) > 0 {
 		return true
 	}
-	if b.looker == nil && b.pusher == nil {
+	if b.looker == nil && b.pusher == nil && b.walker == nil {
 		return false
 	}
 	for _, s := range e.sources {
@@ -530,7 +538,7 @@ func (r *Report) String() string {
 	if r.Error != "" {
 		fmt.Fprintf(&sb, "error: %s\n", r.Error)
 	}
-	if r.Lookups > 0 || r.Batches > 0 || r.Fetched > 0 || r.Pushes > 0 {
+	if r.Lookups > 0 || r.Batches > 0 || r.Fetched > 0 || r.Pushes > 0 || r.Walks > 0 {
 		fmt.Fprintf(&sb, "fetched %d tuples from the source", r.Fetched)
 		if r.Lookups > 0 || r.Batches > 0 {
 			fmt.Fprintf(&sb, " in %d lookups", r.Lookups)
@@ -541,15 +549,21 @@ func (r *Report) String() string {
 		if r.Pushes > 0 {
 			fmt.Fprintf(&sb, ", %d pushed conjunctions", r.Pushes)
 		}
+		if r.Walks > 0 {
+			fmt.Fprintf(&sb, ", %d walks", r.Walks)
+		}
 		sb.WriteString("\n")
 	}
-	if c := r.Cold; c != nil && (c.Work != r.Work || c.Lookups != r.Lookups || c.Batches != r.Batches || c.Fetched != r.Fetched || c.Pushes != r.Pushes || c.Error != "") {
+	if c := r.Cold; c != nil && (c.Work != r.Work || c.Lookups != r.Lookups || c.Batches != r.Batches || c.Fetched != r.Fetched || c.Pushes != r.Pushes || c.Walks != r.Walks || c.Error != "") {
 		fmt.Fprintf(&sb, "cold: work %d, fetched %d tuples, %d lookups", c.Work, c.Fetched, c.Lookups)
 		if c.Batches > 0 {
 			fmt.Fprintf(&sb, ", %d batches", c.Batches)
 		}
 		if c.Pushes > 0 {
 			fmt.Fprintf(&sb, ", %d pushed conjunctions", c.Pushes)
+		}
+		if c.Walks > 0 {
+			fmt.Fprintf(&sb, ", %d walks", c.Walks)
 		}
 		if c.Error != "" {
 			fmt.Fprintf(&sb, ", error: %s", c.Error)
@@ -601,6 +615,9 @@ func (r *Report) String() string {
 			}
 			if s.Pushes > 0 {
 				fmt.Fprintf(&sb, ", in %d pushed conjunctions", s.Pushes)
+			}
+			if s.Walks > 0 {
+				fmt.Fprintf(&sb, ", %d walks", s.Walks)
 			}
 			if s.Lookups > 0 || s.Batches > 0 || s.Hits > 0 || s.Kept > 0 || s.Pushes > 0 {
 				fmt.Fprintf(&sb, ", %d lookups", s.Lookups)
@@ -755,4 +772,14 @@ func (b *Base) explainPush(g *pushGroup, rows int, hit, kept bool) {
 		}
 	}
 	e.access("pushed")
+}
+
+// explainWalk records a walk of atom's relation from its probe on mask that fetched facts (#239).
+func (b *Base) explainWalk(atom *Atom, mask patternMask, fetched int) {
+	e := b.run.explain
+	e.walks++
+	s := e.readSource(atom.Relation, 0, false)
+	s.Walks++
+	s.Fetched += int64(fetched)
+	e.access("walked (" + strings.Join(maskLabels(b, atom.Relation, mask), ", ") + ")")
 }

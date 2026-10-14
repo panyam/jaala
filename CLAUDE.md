@@ -117,6 +117,17 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   engine sees only whole rows. The corpus runs every program over `pushing` (`agreePushed`,
   alternating a store that refuses comparisons) and over a partitioned three-member federation dealt
   by first argument (`agreePartitioned`); `pushedPrograms` and `partitionedPrograms` are its controls.
+- **A `WalkSource` follows a relation from value to value** (`walk.go`, `ns/walk.go`, #239).
+  `findWalks` runs after `pushConjunctions` and records, per head relation, each looked-up literal
+  whose argument at `from` is the recursive call's column j and at `to` the head's column j;
+  `prefetchWalks`, called by `applyRule` before `prefetch`, turns a probe of exactly that pattern (from
+  plus the literal's constants) into one `Walk` from the values no tier holds. `walk` files each value
+  it reaches itself (a BFS from the starts through facts matching the constants) as that value's
+  complete lookup, so a stray fact is never a whole answer, and the fixpoint runs unchanged. A
+  Federation walks across members, each walking a value once (`walkKey`). The corpus's programs
+  rarely walk, so `agreeWalked` runs a fixed reach from each graph's first edge over a walking store
+  and over the partitioned federation, on a fresh Base (Naive's lookups would leave nothing to walk);
+  `walkedPrograms` is its control.
 - **`Report.Cold` reruns the query when the Eval was warm** (`coldCost`, #147): it reused a derived
   relation, answered a lookup from an earlier Eval's (`SourceReport.Kept`, #212), or probed a held
   relation a fresh Base would have looked up. The rerun is a copy with no derived or lookup cache, no
