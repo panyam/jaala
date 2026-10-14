@@ -49,8 +49,8 @@ func HoldsPrefix(prefix string, positions map[string][]int) func(rel string, bou
 // answer rows are distinct either way, and an aggregate counting bindings counts both.
 //
 // It is a ContextSource, a StreamSource, a LookupSource, a BatchLookupSource, IndexedLookups,
-// PushSource and Versioned whatever its members are, and pushes a conjunction only to a lone member
-// (Pushes). A relation is looked
+// PushSource and Versioned whatever its members are, and pushes a conjunction to a lone member, or
+// across partitioned ones (NewPartitionedFederation). A relation is looked
 // up only when every member serving it looks it up (LooksUp), so a Federation can be a member of
 // another; otherwise the engine reads it
 // whole, from every member, and keeps it. Its version changes whenever a member's does, and a member
@@ -62,6 +62,8 @@ type Federation struct {
 	serving map[string][]int // relation -> the members serving it, by index
 	order   []string
 	lookups map[string]bool
+	// partitioned pushes a conjunction across the members (NewPartitionedFederation, #238).
+	partitioned bool
 }
 
 // NewFederation builds a Federation over members, in the order their relations are listed and their
@@ -353,38 +355,174 @@ func (f *Federation) cite(i int, t Tuple) Tuple {
 	return Tuple{Vals: t.Vals, Cites: cites}
 }
 
-// Pushes implements PushSource: a Federation evaluates a conjunction only when it has one member, and
-// that member pushes it. With several, a join could pair facts from different members, which no one
-// member sees (#238).
-func (f *Federation) Pushes(c Conjunction) bool {
-	if len(f.members) != 1 {
-		return false
+// NewPartitionedFederation is NewFederation over members that partition the facts and evaluate
+// conjunctions (PushSource), such as one SQLite file per repo, whose Holds routes each value to the
+// member storing it (#238). It pushes a conjunction across them: to each member Holds allows for the
+// first atom, asking for every prefix of its matches too (Conjunction.Partial), and continues each
+// prefix in the other members Holds allows for the next atom, so a join whose facts span members
+// costs a call per member asked rather than a call per literal.
+//
+// The answer never depends on how precisely Holds routes: a prefix is continued in every other member
+// whose Holds allows the next atom, so a Holds that answers true when unsure costs calls, never
+// matches. What the partition promises is that pushing pays off.
+func NewPartitionedFederation(members ...Member) (*Federation, error) {
+	f, err := NewFederation(members...)
+	if err != nil {
+		return nil, err
 	}
-	ps, ok := f.members[0].Source.(PushSource)
-	return ok && ps.Pushes(c)
+	f.partitioned = true
+	return f, nil
 }
 
-// Push implements PushSource through the one member Pushes allows, citing each tuple to it as a read
-// or a lookup does. A member's failure is wrapped with its name.
+// Pushes implements PushSource. A Federation of one member pushes what that member pushes. One of
+// several pushes only when it is partitioned (NewPartitionedFederation), every member serves every
+// relation of c, and each pushes c with its prefixes (Partial). A join of a federation's members
+// otherwise could pair facts no one member sees, and is asked literal by literal.
+func (f *Federation) Pushes(c Conjunction) bool {
+	if len(f.members) == 1 {
+		ps, ok := f.members[0].Source.(PushSource)
+		return ok && ps.Pushes(c)
+	}
+	if !f.partitioned || c.Partial {
+		return false
+	}
+	p := c
+	p.Partial = true
+	for _, a := range c.Atoms {
+		if len(f.serving[a.Relation]) != len(f.members) {
+			return false
+		}
+	}
+	for _, m := range f.members {
+		ps, ok := m.Source.(PushSource)
+		if !ok || !ps.Pushes(p) {
+			return false
+		}
+	}
+	return true
+}
+
+// Push implements PushSource, citing each tuple to the member it came from. With one member it asks
+// that member. Partitioned, it asks each member whose Holds allows c's first atom for c with its
+// prefixes, yields that member's whole rows, and continues each prefix in the other members whose
+// Holds allows the next atom, by pushing the rest of c with the prefix's values as constants. A
+// match is found once, through the member holding its first fact and then, at each fact held
+// elsewhere, the member holding it. A member's failure is wrapped with its name.
 func (f *Federation) Push(ctx context.Context, c Conjunction) iter.Seq2[[]Tuple, error] {
 	return func(yield func([]Tuple, error) bool) {
-		ps, ok := f.members[0].Source.(PushSource)
-		if len(f.members) != 1 || !ok {
-			yield(nil, fmt.Errorf("federation: %d members can't evaluate a conjunction together", len(f.members)))
+		if len(f.members) == 1 {
+			f.pushMember(ctx, 0, c, nil, yield)
 			return
 		}
-		for row, err := range ps.Push(ctx, c) {
-			if err != nil {
-				yield(nil, fmt.Errorf("member %s: %w", f.name(0), err))
-				return
+		f.pushAcross(ctx, c, -1, nil, yield)
+	}
+}
+
+// pushMember yields member i's rows for c, each after prefix and cited to i.
+func (f *Federation) pushMember(ctx context.Context, i int, c Conjunction, prefix []Tuple, yield func([]Tuple, error) bool) bool {
+	ps, ok := f.members[i].Source.(PushSource)
+	if !ok {
+		return yield(nil, fmt.Errorf("member %s doesn't evaluate conjunctions", f.name(i)))
+	}
+	for row, err := range ps.Push(ctx, c) {
+		if err != nil {
+			return yield(nil, fmt.Errorf("member %s: %w", f.name(i), err))
+		}
+		if !yield(f.citedRow(i, prefix, row), nil) {
+			return false
+		}
+	}
+	return true
+}
+
+// pushAcross yields the rows for c, after prefix, from every member but except whose Holds allows c's
+// first atom, continuing their prefixes in the others (see Push).
+func (f *Federation) pushAcross(ctx context.Context, c Conjunction, except int, prefix []Tuple, yield func([]Tuple, error) bool) bool {
+	p := c
+	p.Partial = true
+	first := c.Atoms[0]
+	for _, i := range f.serving[first.Relation] {
+		if i == except || !f.holds(i, first) {
+			continue
+		}
+		var partial [][]Tuple
+		more := f.pushMember(ctx, i, p, nil, func(row []Tuple, err error) bool {
+			switch {
+			case err != nil:
+				return yield(nil, err)
+			case len(row) == 0 || len(row) > len(c.Atoms):
+				return yield(nil, fmt.Errorf("member %s: a row of %d tuples for %d atoms", f.name(i), len(row), len(c.Atoms)))
+			case len(row) < len(c.Atoms):
+				partial = append(partial, row)
+				return true
 			}
-			cited := make([]Tuple, len(row))
-			for k, t := range row {
-				cited[k] = f.cite(0, t)
-			}
-			if !yield(cited, nil) {
-				return
+			return yield(append(prefix[:len(prefix):len(prefix)], row...), nil)
+		})
+		if !more {
+			return false
+		}
+		for _, row := range partial {
+			next := append(prefix[:len(prefix):len(prefix)], row...)
+			if !f.pushAcross(ctx, c.after(row), i, next, yield) {
+				return false
 			}
 		}
 	}
+	return true
+}
+
+// holds reports whether member i's Holds allows atom a, its constants bound.
+func (f *Federation) holds(i int, a PushAtom) bool {
+	h := f.members[i].Holds
+	if h == nil {
+		return true
+	}
+	bound := map[int]Value{}
+	for pos, x := range a.Args {
+		if x.Const != nil {
+			bound[pos] = *x.Const
+		}
+	}
+	return h(a.Relation, bound)
+}
+
+// citedRow is prefix, then row's tuples cited to member i.
+func (f *Federation) citedRow(i int, prefix, row []Tuple) []Tuple {
+	out := make([]Tuple, 0, len(prefix)+len(row))
+	out = append(out, prefix...)
+	for _, t := range row {
+		out = append(out, f.cite(i, t))
+	}
+	return out
+}
+
+// after is the rest of c once a prefix of its atoms matched the tuples in row: the atoms and
+// comparisons after them, each variable the prefix bound replaced by its value.
+func (c Conjunction) after(row []Tuple) Conjunction {
+	vals := map[int]Value{}
+	for k, t := range row {
+		for pos, x := range c.Atoms[k].Args {
+			if _, ok := vals[x.Var]; x.Var > 0 && !ok && pos < len(t.Vals) {
+				vals[x.Var] = t.Vals[pos]
+			}
+		}
+	}
+	arg := func(x PushArg) PushArg {
+		if v, ok := vals[x.Var]; x.Var > 0 && ok {
+			return PushArg{Const: &v}
+		}
+		return x
+	}
+	var rest Conjunction
+	for _, a := range c.Atoms[len(row):] {
+		na := PushAtom{Relation: a.Relation, Args: make([]PushArg, len(a.Args))}
+		for pos, x := range a.Args {
+			na.Args[pos] = arg(x)
+		}
+		rest.Atoms = append(rest.Atoms, na)
+	}
+	for _, cmp := range c.Compare {
+		rest.Compare = append(rest.Compare, PushComparison{Op: cmp.Op, Left: arg(cmp.Left), Right: arg(cmp.Right)})
+	}
+	return rest
 }

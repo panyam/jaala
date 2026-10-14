@@ -109,9 +109,14 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   written, so a sloppy row drops and witnesses splice per literal at its `at` (`parts`). Rows are
   charged with `readOne` and kept in the lookup tiers under `pushKey`. A semi-naive round that binds a
   group (`deltaFirst`) solves it literal by literal (`solveUnpushed`); `scanSize` sizes a pushed
-  literal 0 so a round keeps starting from it. A Federation pushes only to a lone member (#238). The
-  corpus runs every program over `pushing` (`agreePushed`), alternating a store that refuses
-  comparisons, and `pushedPrograms` is its control.
+  literal 0 so a round keeps starting from it. A Federation of one member pushes what it pushes; one
+  built with `NewPartitionedFederation` pushes across members (#238): `pushAcross` asks each member
+  `Holds` allows for the first atom with `Partial` (every prefix of its matches too), and continues each
+  prefix in every other member `Holds` allows for the next atom (`Conjunction.after` substitutes the
+  prefix's values), so a match is found once and a loose `Holds` costs calls, never answers. The
+  engine sees only whole rows. The corpus runs every program over `pushing` (`agreePushed`,
+  alternating a store that refuses comparisons) and over a partitioned three-member federation dealt
+  by first argument (`agreePartitioned`); `pushedPrograms` and `partitionedPrograms` are its controls.
 - **`Report.Cold` reruns the query when the Eval was warm** (`coldCost`, #147): it reused a derived
   relation, answered a lookup from an earlier Eval's (`SourceReport.Kept`, #212), or probed a held
   relation a fresh Base would have looked up. The rerun is a copy with no derived or lookup cache, no

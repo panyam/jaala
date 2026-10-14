@@ -360,3 +360,149 @@ func TestAFederationPushesToALoneMember(t *testing.T) {
 		t.Errorf("a federation whose lone member doesn't push pushes")
 	}
 }
+
+// joinMem is a MemSource that evaluates conjunctions by a nested-loop join comparing values by their
+// text, returning every prefix of its matches when asked (Partial) unless noPartial, and counting its
+// pushes.
+type joinMem struct {
+	*MemSource
+	noPartial bool
+	pushes    int
+}
+
+func (m *joinMem) Pushes(c Conjunction) bool { return !c.Partial || !m.noPartial }
+
+func (m *joinMem) Push(_ context.Context, c Conjunction) iter.Seq2[[]Tuple, error] {
+	m.pushes++
+	var rows [][]Tuple
+	vals := map[int]string{}
+	row := make([]Tuple, len(c.Atoms))
+	var walk func(k int)
+	walk = func(k int) {
+		if c.Partial && k > 0 && k < len(c.Atoms) {
+			rows = append(rows, slices.Clone(row[:k]))
+		}
+		if k == len(c.Atoms) {
+			rows = append(rows, slices.Clone(row))
+			return
+		}
+		for _, t := range m.Tuples(c.Atoms[k].Relation) {
+			ok, set := true, []int{}
+			for i, x := range c.Atoms[k].Args {
+				v := t.Vals[i].S
+				switch w, has := vals[x.Var]; {
+				case x.Const != nil:
+					ok = ok && x.Const.S == v
+				case x.Var > 0 && has:
+					ok = ok && w == v
+				case x.Var > 0:
+					vals[x.Var] = v
+					set = append(set, x.Var)
+				}
+			}
+			if ok {
+				row[k] = t
+				walk(k + 1)
+			}
+			for _, n := range set {
+				delete(vals, n)
+			}
+		}
+	}
+	walk(0)
+	return func(yield func([]Tuple, error) bool) {
+		for _, r := range rows {
+			if !yield(r, nil) {
+				return
+			}
+		}
+	}
+}
+
+// Two stores partitioned by an edge's source, A holding a1's edges and a2's, B holding b9's: two
+// hops from a1 reach a3 within A and b10 through B.
+func partitionedEdges(holds bool) (*joinMem, *joinMem, []Member) {
+	edge := func(m *MemSource, from, to string) {
+		m.Add("edge", Tuple{Vals: []Value{S(from), S(to)}, Cites: []string{from + "-" + to}})
+	}
+	a, b := &joinMem{MemSource: NewMemSource().Declare("edge", "from", "to")}, &joinMem{MemSource: NewMemSource().Declare("edge", "from", "to")}
+	edge(a.MemSource, "a1", "a2")
+	edge(a.MemSource, "a2", "a3")
+	edge(a.MemSource, "a1", "b9")
+	edge(b.MemSource, "b9", "b10")
+	members := []Member{{Name: "A", Source: a}, {Name: "B", Source: b}}
+	if holds {
+		members[0].Holds = HoldsPrefix("a", map[string][]int{"edge": {0}})
+		members[1].Holds = HoldsPrefix("b", map[string][]int{"edge": {0}})
+	}
+	return a, b, members
+}
+
+func pushedRows(t *testing.T, f *Federation, c Conjunction) []string {
+	t.Helper()
+	var out []string
+	for row, err := range f.Push(context.Background(), c) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		var cites []string
+		for _, tu := range row {
+			cites = append(cites, tu.Cites...)
+		}
+		out = append(out, strings.Join(cites, " "))
+	}
+	slices.Sort(out)
+	return out
+}
+
+// A partitioned federation pushes a conjunction across its members: each answers the matches it
+// holds whole, and a prefix leaving it continues in the member Holds routes the next atom to, so a
+// join spanning members is answered whole, in a call per member asked. A loose Holds costs calls,
+// never matches.
+func TestAPartitionedFederationPushesAcrossMembers(t *testing.T) {
+	a1 := S("a1")
+	c := Conjunction{Atoms: []PushAtom{
+		{Relation: "edge", Args: []PushArg{{Const: &a1}, {Var: 1}}},
+		{Relation: "edge", Args: []PushArg{{Var: 1}, {Var: 2}}},
+	}}
+	want := []string{"A:a1-a2 A:a2-a3", "A:a1-b9 B:b9-b10"}
+	for _, holds := range []bool{true, false} {
+		a, b, members := partitionedEdges(holds)
+		f, err := NewPartitionedFederation(members...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !f.Pushes(c) {
+			t.Fatalf("holds %v: a partitioned federation refuses to push", holds)
+		}
+		if got := pushedRows(t, f, c); !reflect.DeepEqual(got, want) {
+			t.Errorf("holds %v: pushed %q, want %q", holds, got, want)
+		}
+		if holds && (a.pushes != 1 || b.pushes != 1) {
+			t.Errorf("A was pushed %d times and B %d, want once each", a.pushes, b.pushes)
+		}
+		if !holds && a.pushes+b.pushes <= 2 {
+			t.Errorf("control: with no Holds, A was pushed %d times and B %d, want more than once each", a.pushes, b.pushes)
+		}
+	}
+	_, _, members := partitionedEdges(true)
+	plain, _ := NewFederation(members...)
+	if plain.Pushes(c) {
+		t.Errorf("a federation not declared partitioned pushes a conjunction across members")
+	}
+	a, _, members := partitionedEdges(true)
+	a.noPartial = true
+	if f, _ := NewPartitionedFederation(members...); f.Pushes(c) {
+		t.Errorf("a partitioned federation pushes though a member can't return prefixes")
+	}
+	_, b, members := partitionedEdges(true)
+	members[1].Source = b.MemSource
+	if f, _ := NewPartitionedFederation(members...); f.Pushes(c) {
+		t.Errorf("a partitioned federation pushes though a member doesn't evaluate conjunctions")
+	}
+	_, _, members = partitionedEdges(true)
+	members = append(members, Member{Name: "C", Source: &joinMem{MemSource: NewMemSource().Declare("node", "id")}})
+	if f, _ := NewPartitionedFederation(members...); f.Pushes(c) {
+		t.Errorf("a partitioned federation pushes though a member doesn't serve edge")
+	}
+}

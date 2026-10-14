@@ -66,8 +66,9 @@ func (p *pushing) pushes() int {
 
 // evalConjunction is a store's own answer to c: each combination of the facts candidates offers per
 // atom (given the values bound so far) whose values, read as their schema's types, equal the atom's
-// constants and agree on each variable, and whose numbers pass c's comparisons. Any other comparison
-// is left to the engine, as a store unsure of the engine's order may. sloppy ignores constants and
+// constants (read so too) and agree on each variable, and whose numbers pass c's comparisons. Any
+// other comparison is left to the engine, as a store unsure of the engine's order may. When c is
+// Partial, each combination satisfying the first k atoms is a row too. sloppy ignores constants and
 // comparisons.
 func evalConjunction(c ns.Conjunction, schema func(string) ns.Schema, candidates func(rel string, bound map[int]ns.Value) []ns.Tuple, sloppy bool) [][]ns.Tuple {
 	var out [][]ns.Tuple
@@ -75,6 +76,9 @@ func evalConjunction(c ns.Conjunction, schema func(string) ns.Schema, candidates
 	row := make([]ns.Tuple, len(c.Atoms))
 	var walk func(k int)
 	walk = func(k int) {
+		if c.Partial && k > 0 && k < len(c.Atoms) {
+			out = append(out, slices.Clone(row[:k]))
+		}
 		if k == len(c.Atoms) {
 			if sloppy || numbersPass(c.Compare, vals) {
 				out = append(out, slices.Clone(row))
@@ -82,16 +86,20 @@ func evalConjunction(c ns.Conjunction, schema func(string) ns.Schema, candidates
 			return
 		}
 		a := c.Atoms[k]
+		types := schema(a.Relation).Types
+		consts := map[int]ns.Value{}
 		bound := map[int]ns.Value{}
 		for i, x := range a.Args {
-			if x.Const != nil && !sloppy {
-				bound[i] = *x.Const
+			if x.Const != nil {
+				consts[i] = normalizeTuples([]ns.Tuple{{Vals: []ns.Value{*x.Const}}}, types[min(i, len(types)):min(i+1, len(types))])[0].Vals[0]
+				if !sloppy {
+					bound[i] = consts[i]
+				}
 			}
 			if v, ok := vals[x.Var]; x.Var > 0 && ok {
 				bound[i] = v
 			}
 		}
-		types := schema(a.Relation).Types
 		for _, t := range candidates(a.Relation, bound) {
 			read := normalizeTuples([]ns.Tuple{t}, types)[0]
 			var set []int
@@ -100,7 +108,7 @@ func evalConjunction(c ns.Conjunction, schema func(string) ns.Schema, candidates
 				v := read.Vals[i]
 				switch {
 				case x.Const != nil:
-					ok = sloppy || valueEq(v, *x.Const)
+					ok = sloppy || valueEq(v, consts[i])
 				case x.Var > 0:
 					if w, has := vals[x.Var]; has {
 						ok = valueEq(v, w)

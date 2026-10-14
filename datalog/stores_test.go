@@ -257,7 +257,8 @@ func (s *store) reset() {
 }
 
 // repoStores is n repos' stores, each held by the repo's id prefix wherever an argument is a
-// repo's own id, and answering a batch of lookups in one call when batching. An edge lives in its
+// repo's own id, and answering a batch of lookups in one call when batching, in a partitioned
+// federation, which pushes a conjunction across them (#238). An edge lives in its
 // source's repo, so its target names no store.
 func repoStores(n int, batching bool) ([]*store, *ns.Federation) {
 	stores := make([]*store, n)
@@ -274,7 +275,7 @@ func repoStores(n int, batching bool) ([]*store, *ns.Federation) {
 			Holds:  ns.HoldsPrefix(fmt.Sprintf("repo%d/", i), map[string][]int{"node": {0}, "attr": {0}, "edge": {0}, "next": {0}}),
 		}
 	}
-	f, err := ns.NewFederation(members...)
+	f, err := ns.NewPartitionedFederation(members...)
 	if err != nil {
 		panic(err)
 	}
@@ -510,8 +511,26 @@ func TestStoresExercise(t *testing.T) {
 	if c := costs["two-hops"]; c.asked != 2 {
 		t.Errorf("control: two hops from a node calling across repos asked %d stores, want 2", c.asked)
 	}
-	if c := costs["two-hops-in-repo"]; c.asked != 1 || c.calls < 2 {
-		t.Errorf("control: two hops within repo0 asked %d stores in %d calls, want 1 store and a call per hop until a federation of several pushes (#238)", c.asked, c.calls)
+	if c := costs["two-hops-in-repo"]; c.asked != 1 || c.calls != 1 {
+		t.Errorf("two hops within repo0 asked %d stores in %d calls, want one pushed call to one store (#238)", c.asked, c.calls)
+	}
+	if c := costs["two-hops"]; c.calls != c.asked {
+		t.Errorf("two hops from a node calling across repos made %d calls to %d stores, want one per store asked: the prefix leaving repo0 continued in the store holding it (#238)", c.calls, c.asked)
+	}
+	unpartitioned := func(set storeSet) storeSet {
+		members := make([]ns.Member, len(set.stores))
+		for i, st := range set.stores {
+			members[i] = ns.Member{Name: fmt.Sprintf("repo%d", i), Source: batchingStore{st}, Holds: ns.HoldsPrefix(fmt.Sprintf("repo%d/", i), map[string][]int{"node": {0}, "attr": {0}, "edge": {0}, "next": {0}})}
+		}
+		f, err := ns.NewFederation(members...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		set.fed = f
+		return set
+	}
+	if c, _, _, err := unpartitioned(newStoreSet(n)).askTwice(mustParse(t, storeQuestions[6].text)); err != nil || c.calls < 2 {
+		t.Errorf("control: over a federation not declared partitioned, two hops within repo0 made %d calls, want a call per hop: %v", c.calls, err)
 	}
 	twoHops := mustParse(t, `edge("repo0/n5", _, ?m), edge(?m, _, ?o) => ?o`)
 	if c, _, rows, err := newStoreSet(1).askTwice(twoHops); err != nil || c.calls != 1 || c.shipped != 2*len(rows) {
