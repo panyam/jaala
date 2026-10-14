@@ -54,6 +54,11 @@ type Conjunction struct {
 	// can't return prefixes refuses a Partial conjunction in Pushes, and is then asked literal by
 	// literal; one that returns only whole rows loses the matches that span members.
 	Partial bool
+	// PrefixesOnly, with Partial, asks for the prefixes alone, not the whole matches: a partitioned
+	// Federation summarizing or paging a join across members (#253) has each member's whole matches
+	// from its own summary or page, and needs only where each match leaves the member. A store that
+	// takes Partial takes this too.
+	PrefixesOnly bool
 	// Page asks for only the matches behind the first rows of a goal's answer (#241); nil asks for
 	// every match.
 	Page *Page

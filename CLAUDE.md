@@ -129,7 +129,10 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   identical values (text, number, unit), since aggregates read units and spellings. A goal with a
   limit and no comparison, `After` or `Total` sets `Conjunction.Page` and solves the returned matches
   through the projector as usual. A Federation pages or summarizes a single-literal goal across
-  members, or anything for a lone member. The corpus's generated goals rarely qualify, so
+  members, anything for a lone member, and a join across a partitioned federation's members (#253):
+  `across` checks every member takes it and pushes `PrefixesOnly`, and `spanning` continues each
+  member's prefixes elsewhere (`pushAcross`), adding each crossing match as a summary row of one match
+  or a page candidate; such a summary refuses `Extremes`. The corpus's generated goals rarely qualify, so
   `agreeGoals` runs `goalQuestions` per graph on a fresh Base; `pagedPrograms` and
   `summarizedPrograms` are its controls. NaN can't go in a `both()` fixture: `reflect.DeepEqual`
   never equates it with itself.
