@@ -67,6 +67,8 @@ type Base struct {
 	// indexed, when the Source implements it, says which lookup patterns it answers from an index
 	// (ns.IndexedLookups); nil means all of them.
 	indexed ns.IndexedLookups
+	// pusher is the Source when it evaluates conjunctions itself (ns.PushSource, #237), else nil.
+	pusher ns.PushSource
 	// run is one Eval's own state (its context and budget), set on that Eval's copy of the Base and
 	// nil on a Base no Eval is running on.
 	run *evalRun
@@ -119,7 +121,8 @@ func NewBase(v *ns.Vocabulary, src ns.Source) (*Base, error) {
 	looker, _ := src.(ns.LookupSource)
 	lookRels, _ := src.(ns.LookupRelations)
 	indexed, _ := src.(ns.IndexedLookups)
-	return &Base{src: src, reg: v, looker: looker, lookRels: lookRels, indexed: indexed, edb: newEDBCache(), derived: newDerivedCache(), lookups: newLookupCache(), work: new(int64)}, nil
+	pusher, _ := src.(ns.PushSource)
+	return &Base{src: src, reg: v, looker: looker, lookRels: lookRels, indexed: indexed, pusher: pusher, edb: newEDBCache(), derived: newDerivedCache(), lookups: newLookupCache(), work: new(int64)}, nil
 }
 
 // MustBase is NewBase for a Source known to match its vocabulary, such as a test fixture. It panics

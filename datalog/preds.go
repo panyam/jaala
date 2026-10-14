@@ -80,6 +80,9 @@ func extendBuiltin(bi ns.Builtin, atom *Atom, bnd *binding, b *Base, yield func(
 // IDB rule relation — each checked for arity first so a wrong-arity atom fails clearly. yield is
 // called per solution and its error (from a deeper solve, or the negation early-stop) propagates.
 func (b *Base) extendAtom(atom *Atom, bnd *binding, yield func(*binding) error) error {
+	if isPushed(atom.Relation) {
+		return b.extendPushed(atom, bnd, yield)
+	}
 	if err := b.checkAtom(atom); err != nil {
 		return err
 	}

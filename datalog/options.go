@@ -119,6 +119,9 @@ type evalRun struct {
 	lookGen int64
 	// explain is the Explain report being filled, or nil.
 	explain *explainer
+	// pushed are the groups of base literals pushConjunctions handed the Source, by their literal's
+	// relation name (#237).
+	pushed map[string]*pushGroup
 	// batch sets prefetch asking a batching Source for a body's lookups ahead of solving it (#153),
 	// which only the planned SemiNaive does.
 	batch bool

@@ -48,7 +48,9 @@ func HoldsPrefix(prefix string, positions map[string][]int) func(rel string, bou
 // A fact two members serve is two facts, as it would be in one Source serving it twice: a goal's
 // answer rows are distinct either way, and an aggregate counting bindings counts both.
 //
-// It is a ContextSource, a StreamSource, a LookupSource, a BatchLookupSource, IndexedLookups and Versioned whatever its members are. A relation is looked
+// It is a ContextSource, a StreamSource, a LookupSource, a BatchLookupSource, IndexedLookups,
+// PushSource and Versioned whatever its members are, and pushes a conjunction only to a lone member
+// (Pushes). A relation is looked
 // up only when every member serving it looks it up (LooksUp), so a Federation can be a member of
 // another; otherwise the engine reads it
 // whole, from every member, and keeps it. Its version changes whenever a member's does, and a member
@@ -349,4 +351,40 @@ func (f *Federation) cite(i int, t Tuple) Tuple {
 		cites[j] = name + ":" + c
 	}
 	return Tuple{Vals: t.Vals, Cites: cites}
+}
+
+// Pushes implements PushSource: a Federation evaluates a conjunction only when it has one member, and
+// that member pushes it. With several, a join could pair facts from different members, which no one
+// member sees (#238).
+func (f *Federation) Pushes(c Conjunction) bool {
+	if len(f.members) != 1 {
+		return false
+	}
+	ps, ok := f.members[0].Source.(PushSource)
+	return ok && ps.Pushes(c)
+}
+
+// Push implements PushSource through the one member Pushes allows, citing each tuple to it as a read
+// or a lookup does. A member's failure is wrapped with its name.
+func (f *Federation) Push(ctx context.Context, c Conjunction) iter.Seq2[[]Tuple, error] {
+	return func(yield func([]Tuple, error) bool) {
+		ps, ok := f.members[0].Source.(PushSource)
+		if len(f.members) != 1 || !ok {
+			yield(nil, fmt.Errorf("federation: %d members can't evaluate a conjunction together", len(f.members)))
+			return
+		}
+		for row, err := range ps.Push(ctx, c) {
+			if err != nil {
+				yield(nil, fmt.Errorf("member %s: %w", f.name(0), err))
+				return
+			}
+			cited := make([]Tuple, len(row))
+			for k, t := range row {
+				cited[k] = f.cite(0, t)
+			}
+			if !yield(cited, nil) {
+				return
+			}
+		}
+	}
 }

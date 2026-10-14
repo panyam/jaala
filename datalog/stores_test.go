@@ -188,6 +188,41 @@ func (s *store) match(rel string, bound map[int]ns.Value) ([]ns.Tuple, bool) {
 	return out, true
 }
 
+// Pushes implements ns.PushSource: a store evaluates any conjunction of its relations, as one SQL
+// statement over its tables would (#237).
+func (s *store) Pushes(ns.Conjunction) bool { return true }
+
+// Push evaluates c as one call, joining through the store's indexes where the bound values allow and
+// scanning where they don't, and ships the rows' tuples.
+func (s *store) Push(_ context.Context, c ns.Conjunction) iter.Seq2[[]ns.Tuple, error] {
+	return func(yield func([]ns.Tuple, error) bool) {
+		s.mu.Lock()
+		s.calls++
+		scanned := false
+		match := func(rel string, bound map[int]ns.Value) []ns.Tuple {
+			out, scan := s.match(rel, bound)
+			if scan {
+				s.scanned += len(s.MemSource.Tuples(rel))
+				scanned = true
+			}
+			return out
+		}
+		rows := evalConjunction(c, func(rel string) ns.Schema { sc, _ := s.Schema(rel); return sc }, match, false)
+		if scanned {
+			s.unindexed++
+		}
+		s.mu.Unlock()
+		for _, row := range rows {
+			s.mu.Lock()
+			s.shipped += len(row)
+			s.mu.Unlock()
+			if !yield(row, nil) {
+				return
+			}
+		}
+	}
+}
+
 // A batchingStore is a store answering a batch of lookups in one call (ns.BatchLookupSource, #153),
 // as a database asked `WHERE id IN (...)` does; an unindexed batch scans the relation once.
 type batchingStore struct{ *store }
@@ -476,7 +511,11 @@ func TestStoresExercise(t *testing.T) {
 		t.Errorf("control: two hops from a node calling across repos asked %d stores, want 2", c.asked)
 	}
 	if c := costs["two-hops-in-repo"]; c.asked != 1 || c.calls < 2 {
-		t.Errorf("control: two hops within repo0 asked %d stores in %d calls, want 1 store and a call per hop until it's pushed down (#237)", c.asked, c.calls)
+		t.Errorf("control: two hops within repo0 asked %d stores in %d calls, want 1 store and a call per hop until a federation of several pushes (#238)", c.asked, c.calls)
+	}
+	twoHops := mustParse(t, `edge("repo0/n5", _, ?m), edge(?m, _, ?o) => ?o`)
+	if c, _, rows, err := newStoreSet(1).askTwice(twoHops); err != nil || c.calls != 1 || c.shipped != 2*len(rows) {
+		t.Errorf("two hops within one store made %d calls shipping %d tuples for %d answers, want one pushed call shipping two tuples an answer (#237): %v", c.calls, c.shipped, len(rows), err)
 	}
 	// A pushed-down count ships a row per store and a page its limit; today each store ships every match.
 	for name, pushed := range map[string]int{"count-lines": n, "page": 10 * n} {

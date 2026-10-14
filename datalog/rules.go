@@ -248,6 +248,9 @@ func checkNoAggregates(where string, body Body) error {
 // knownRelation reports whether a relation name resolves to something the evaluator can read: an EDB
 // fact relation, a built-in (reaches or a string filter), or a rule-defined IDB relation.
 func (b *Base) knownRelation(rel string) bool {
+	if isPushed(rel) {
+		return true
+	}
 	if _, ok := b.reg.Predicate(rel); ok {
 		return true
 	}

@@ -99,6 +99,19 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   memory plans as before and the work baselines don't move. A Federation's pattern is indexed only
   when every member serving it is. `agreeFederated`'s stores index only the first argument, so the
   corpus runs the reordering; `TestStoresExercise`'s `callees-with-attr` is its acceptance case.
+- **A `PushSource` evaluates a conjunction of a body's base literals** (`push.go`, `ns/push.go`, #237).
+  `pushConjunctions` runs after `plan`, in the planned SemiNaive only, and replaces each group the
+  Source's `Pushes` accepts with one literal over `\x00p:{…}` whose arguments are the group's
+  variables (`run.pushed` holds the group). A group starts at a pushable literal binding nothing bound
+  before it, and takes each later literal sharing a variable with it and none with a literal outside it
+  before its place, so constants are its only inputs; comparisons over its variables go along when the
+  store takes them and stay in the body. `extendPushed` unifies every row's tuples with the literals as
+  written, so a sloppy row drops and witnesses splice per literal at its `at` (`parts`). Rows are
+  charged with `readOne` and kept in the lookup tiers under `pushKey`. A semi-naive round that binds a
+  group (`deltaFirst`) solves it literal by literal (`solveUnpushed`); `scanSize` sizes a pushed
+  literal 0 so a round keeps starting from it. A Federation pushes only to a lone member (#238). The
+  corpus runs every program over `pushing` (`agreePushed`), alternating a store that refuses
+  comparisons, and `pushedPrograms` is its control.
 - **`Report.Cold` reruns the query when the Eval was warm** (`coldCost`, #147): it reused a derived
   relation, answered a lookup from an earlier Eval's (`SourceReport.Kept`, #212), or probed a held
   relation a fresh Base would have looked up. The rerun is a copy with no derived or lookup cache, no

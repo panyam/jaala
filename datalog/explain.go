@@ -43,6 +43,9 @@ type Report struct {
 	Lookups int64 `json:"lookups,omitempty"`
 	Batches int64 `json:"batches,omitempty"`
 	Fetched int64 `json:"fetched,omitempty"`
+	// Pushes are the calls to the Source's Push (ns.PushSource, #237), each a conjunction of several
+	// relations and another round trip; Fetched counts the tuples of the rows they returned.
+	Pushes int64 `json:"pushes,omitempty"`
 	// Cold is what the Eval would have cost on a Base that kept nothing from earlier queries. Unset
 	// when the Eval failed.
 	Cold *ColdReport `json:"cold,omitempty"`
@@ -70,6 +73,7 @@ type ColdReport struct {
 	Lookups int64 `json:"lookups,omitempty"`
 	Batches int64 `json:"batches,omitempty"`
 	Fetched int64 `json:"fetched,omitempty"`
+	Pushes  int64 `json:"pushes,omitempty"`
 	// Error is why the cold run stopped, such as the Eval's Budget, when it did.
 	Error string `json:"error,omitempty"`
 }
@@ -143,6 +147,9 @@ type SourceReport struct {
 	Fetched int64 `json:"fetched,omitempty"`
 	Hits    int64 `json:"hits,omitempty"`
 	Kept    int64 `json:"kept,omitempty"`
+	// Pushes are the pushed conjunctions it was part of (#237); a conjunction answered from what was
+	// kept counts in Hits or Kept as a lookup does, and its tuples of their rows in Fetched.
+	Pushes int64 `json:"pushes,omitempty"`
 }
 
 // An IndexReport is one index of a base relation the Eval probed.
@@ -170,6 +177,8 @@ type explainer struct {
 	// reads or builds itself, while planning or solving, shows as its own.
 	cachedTuples  map[string]bool
 	cachedIndexes map[idxKey]bool
+	// pushes counts the calls to the Source's Push, which each name several relations (#237).
+	pushes int64
 	// quiet is set while prefetch runs a body's prefix again, whose literals were reached already: its
 	// work still counts against the body, but no literal counts it as reached or passed.
 	quiet bool
@@ -328,9 +337,10 @@ func (e *explainer) finish(b *Base, rows int, err error, budget int64) {
 			r.Fetched += int64(s.Tuples)
 		}
 	}
+	r.Pushes = e.pushes
 	r.Relations = e.relations(b)
 	if err == nil {
-		r.Cold = &ColdReport{Work: r.Work, Lookups: r.Lookups, Batches: r.Batches, Fetched: cold}
+		r.Cold = &ColdReport{Work: r.Work, Lookups: r.Lookups, Batches: r.Batches, Fetched: cold, Pushes: r.Pushes}
 	}
 }
 
@@ -342,7 +352,7 @@ func (e *explainer) warm(b *Base) bool {
 	if len(e.held) > 0 {
 		return true
 	}
-	if b.looker == nil {
+	if b.looker == nil && b.pusher == nil {
 		return false
 	}
 	for _, s := range e.sources {
@@ -477,12 +487,14 @@ func explainRelation(rel string) string {
 // ExplainName makes query text that holds the names rewrites give their relations and variables
 // readable: reach/bf is reach called with its first argument bound, demand:reach/bf the values demanded
 // of it, reach/bf+ what a semi-naive round added to it, prefix:0 a stored body prefix, reach:from1 and
-// reach:answer1 a factored walk, values:x a set-bound variable's values, and ?1.x a variable inlining
+// reach:answer1 a factored walk, pushed{edge(?a, ?b), edge(?b, ?c)} a conjunction the Source evaluated
+// (#237), values:x a set-bound variable's values, and ?1.x a variable inlining
 // renamed. Report uses it for every rule and literal it shows.
 func ExplainName(s string) string {
 	r := strings.NewReplacer(
 		magicPrefix, "demand:",
 		supPrefix, "prefix:",
+		pushPrefix, "pushed",
 		bindPrefix, "values:",
 		aggSep, ":",
 		deltaSep, "+",
@@ -518,7 +530,7 @@ func (r *Report) String() string {
 	if r.Error != "" {
 		fmt.Fprintf(&sb, "error: %s\n", r.Error)
 	}
-	if r.Lookups > 0 || r.Batches > 0 || r.Fetched > 0 {
+	if r.Lookups > 0 || r.Batches > 0 || r.Fetched > 0 || r.Pushes > 0 {
 		fmt.Fprintf(&sb, "fetched %d tuples from the source", r.Fetched)
 		if r.Lookups > 0 || r.Batches > 0 {
 			fmt.Fprintf(&sb, " in %d lookups", r.Lookups)
@@ -526,12 +538,18 @@ func (r *Report) String() string {
 		if r.Batches > 0 {
 			fmt.Fprintf(&sb, " and %d batches", r.Batches)
 		}
+		if r.Pushes > 0 {
+			fmt.Fprintf(&sb, ", %d pushed conjunctions", r.Pushes)
+		}
 		sb.WriteString("\n")
 	}
-	if c := r.Cold; c != nil && (c.Work != r.Work || c.Lookups != r.Lookups || c.Batches != r.Batches || c.Fetched != r.Fetched || c.Error != "") {
+	if c := r.Cold; c != nil && (c.Work != r.Work || c.Lookups != r.Lookups || c.Batches != r.Batches || c.Fetched != r.Fetched || c.Pushes != r.Pushes || c.Error != "") {
 		fmt.Fprintf(&sb, "cold: work %d, fetched %d tuples, %d lookups", c.Work, c.Fetched, c.Lookups)
 		if c.Batches > 0 {
 			fmt.Fprintf(&sb, ", %d batches", c.Batches)
+		}
+		if c.Pushes > 0 {
+			fmt.Fprintf(&sb, ", %d pushed conjunctions", c.Pushes)
 		}
 		if c.Error != "" {
 			fmt.Fprintf(&sb, ", error: %s", c.Error)
@@ -581,7 +599,10 @@ func (r *Report) String() string {
 			} else {
 				fmt.Fprintf(&sb, "  %s: %d tuples, %s", s.Relation, s.Tuples, how)
 			}
-			if s.Lookups > 0 || s.Batches > 0 || s.Hits > 0 || s.Kept > 0 {
+			if s.Pushes > 0 {
+				fmt.Fprintf(&sb, ", in %d pushed conjunctions", s.Pushes)
+			}
+			if s.Lookups > 0 || s.Batches > 0 || s.Hits > 0 || s.Kept > 0 || s.Pushes > 0 {
 				fmt.Fprintf(&sb, ", %d lookups", s.Lookups)
 				if s.Batches > 0 {
 					fmt.Fprintf(&sb, " and %d batches", s.Batches)
@@ -706,4 +727,32 @@ func maskLabels(b *Base, rel string, mask patternMask) []string {
 		}
 	}
 	return out
+}
+
+// explainPush records a pushed conjunction for each relation in g: a call to the Source that returned
+// rows, or one answered from what this Eval (hit) or an earlier one (kept) pushed.
+func (b *Base) explainPush(g *pushGroup, rows int, hit, kept bool) {
+	e := b.run.explain
+	if !hit && !kept {
+		e.pushes++
+	}
+	seen := map[string]bool{}
+	for _, lit := range g.lits {
+		rel := lit.Pos.Relation
+		s := e.readSource(rel, 0, false)
+		s.Fetched += int64(rows)
+		if seen[rel] {
+			continue
+		}
+		seen[rel] = true
+		switch {
+		case kept:
+			s.Kept++
+		case hit:
+			s.Hits++
+		default:
+			s.Pushes++
+		}
+	}
+	e.access("pushed")
 }

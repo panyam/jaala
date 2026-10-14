@@ -47,9 +47,9 @@ func (s SemiNaive) EvalTable(ctx context.Context, q Query, b *Base, opts ...Opti
 			b.run.batch = true // the planned order asks a batching Source ahead (see prefetch)
 			q = reuseDerived(b, withoutUnreached(q))
 			if b.witnessing() {
-				return plan(b, magic(b, q)) // inlining would remove a relation's node from the witness
+				return pushConjunctions(b, plan(b, magic(b, q))) // inlining would remove a relation's node from the witness
 			}
-			return plan(b, magic(b, unfold(b, q)))
+			return pushConjunctions(b, plan(b, magic(b, unfold(b, q))))
 		}
 	}
 	return evaluate(ctx, q, b, opts, rewrite, s.materialize)
@@ -284,6 +284,9 @@ func scanSize(b *Base, lit Literal) (int, error) {
 	}
 	if _, ok := b.reg.Predicate(lit.Pos.Relation); ok {
 		return math.MaxInt, nil
+	}
+	if isPushed(lit.Pos.Relation) {
+		return 0, nil // one call to the Source, kept for the run, so a round keeps starting from it (#237)
 	}
 	if _, ok := b.schemaOf(lit.Pos.Relation); ok {
 		if b.looksUp(lit.Pos.Relation) {

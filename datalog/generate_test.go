@@ -680,6 +680,9 @@ func (c genCase) check() (genOutcome, string) {
 	if diff := agreeFederated(q, b, want, werr, c.opts()); diff != "" {
 		return genDisagreed, diff
 	}
+	if diff := agreePushed(q, b, want, werr, c.opts()); diff != "" {
+		return genDisagreed, diff
+	}
 	return genAgreed, ""
 }
 
@@ -688,6 +691,9 @@ var lookedUpPrograms int
 
 // federatedPrograms counts those whose evaluation made a lookup through a Federation's members.
 var federatedPrograms int
+
+// pushedPrograms counts those whose planned evaluation pushed a conjunction to the Source (#237).
+var pushedPrograms int
 
 // batchedPrograms counts those whose planned evaluation asked a batching Source for a batch (#153).
 var batchedPrograms int
@@ -755,6 +761,36 @@ func agreeFederated(q Query, b *Base, want []Row, werr error, opts []Option) str
 	}
 	return diff
 }
+
+// agreePushed is agreeLookingUp over a store that also evaluates conjunctions (#237), and compares the
+// planned SemiNaive over it, the only evaluator that pushes, with Naive reading whole under
+// CanonicalCites too, so a pushed row's citations and witnesses are checked as well as its bindings.
+// Every other program's store takes no comparisons, so a group is pushed both with and without them.
+func agreePushed(q Query, b *Base, want []Row, werr error, opts []Option) string {
+	src := pushingAt(b.src)
+	pushedSeed++
+	src.noCompare = pushedSeed%2 == 0
+	lb := MustBase(b.reg, src)
+	if diff := agreeOver(q, b, lb, "pushed", want, werr, opts); diff != "" {
+		return diff
+	}
+	if src.pushes() > 0 {
+		pushedPrograms++
+	}
+	if werr != nil || anyRows(q) {
+		return ""
+	}
+	canon := append(opts[:len(opts):len(opts)], CanonicalCites(), Witnesses())
+	w, _ := Naive{}.Eval(bg, q, b, canon...)
+	g, err := SemiNaive{}.Eval(bg, q, MustBase(b.reg, pushingAt(b.src)), canon...)
+	if err != nil || !reflect.DeepEqual(w, g) {
+		return fmt.Sprintf("planned SemiNaive pushed cites differently under CanonicalCites on %v\n whole:  %v\n pushed: %v %v", q, w, g, err)
+	}
+	return ""
+}
+
+// pushedSeed alternates agreePushed's store between taking comparisons and refusing them.
+var pushedSeed int
 
 // firstIndexed is a looking store whose index covers a relation's first argument only.
 type firstIndexed struct{ *looking }
@@ -978,7 +1014,7 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 		first, seeds = int64(s), 1
 	}
 	compared, known, skipped, failed := map[string]int{}, map[int]int{}, 0, 0
-	lookedUpPrograms, federatedPrograms, batchedPrograms, unitAnswers, mixedAnswers = 0, 0, 0, 0, 0
+	lookedUpPrograms, federatedPrograms, batchedPrograms, pushedPrograms, unitAnswers, mixedAnswers = 0, 0, 0, 0, 0, 0
 	withUnits := 0
 	for seed := first; seed < first+int64(seeds); seed++ {
 		rnd := rand.New(rand.NewSource(seed))
@@ -1040,6 +1076,9 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 	}
 	if batchedPrograms == 0 {
 		t.Errorf("control: no program asked a batching Source for a batch")
+	}
+	if pushedPrograms == 0 {
+		t.Errorf("control: no program pushed a conjunction to the Source")
 	}
 	if unitAnswers < seeds/100 {
 		t.Errorf("control: %d answers held a unit over %d seeds: units aren't reaching the goals", unitAnswers, seeds)
