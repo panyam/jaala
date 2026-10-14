@@ -276,6 +276,9 @@ func (b *Base) applyRule(r Rule) (bool, error) {
 		return b.applyAggregate(r, pos, negs)
 	}
 	lits := deferComparisons(pos, b.reg)
+	if err := prefetchWalks(b, lits, r.Head.Relation); err != nil {
+		return false, err
+	}
 	if err := prefetch(b, lits, negs); err != nil {
 		return false, err
 	}

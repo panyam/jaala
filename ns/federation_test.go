@@ -506,3 +506,115 @@ func TestAPartitionedFederationPushesAcrossMembers(t *testing.T) {
 		t.Errorf("a partitioned federation pushes though a member doesn't serve edge")
 	}
 }
+
+// walkMem is a MemSource that walks a relation by its values' text, counting its walks.
+type walkMem struct {
+	*MemSource
+	walks  int
+	refuse bool
+}
+
+func (m *walkMem) Walks(string, int, int, []int) bool { return !m.refuse }
+
+func (m *walkMem) Walk(_ context.Context, w Walk) iter.Seq2[Tuple, error] {
+	m.walks++
+	var out []Tuple
+	seen := map[string]bool{}
+	queue := append([]Value(nil), w.Start...)
+	for len(queue) > 0 {
+		v := queue[0]
+		queue = queue[1:]
+		if seen[v.S] {
+			continue
+		}
+		seen[v.S] = true
+		for _, t := range m.Tuples(w.Relation) {
+			if t.Vals[w.From].S == v.S {
+				out = append(out, t)
+				queue = append(queue, t.Vals[w.To])
+			}
+		}
+	}
+	return func(yield func(Tuple, error) bool) {
+		for _, t := range out {
+			if !yield(t, nil) {
+				return
+			}
+		}
+	}
+}
+
+// A Federation walks across its members: a value leaving one goes on in the member Holds routes it
+// to, and back, each member walking a value once, so every fact the walk reaches comes back once,
+// cited to its member. A loose Holds costs walks, never facts.
+func TestAFederationWalksAcrossMembers(t *testing.T) {
+	next := func(m *MemSource, from, to string) {
+		m.Add("next", Tuple{Vals: []Value{S(from), S(to)}, Cites: []string{from + "-" + to}})
+	}
+	want := []string{"A:a1-a2", "A:a2-b1", "A:a3-a4", "B:b1-b2", "B:b2-a2", "B:b2-a3"}
+	for _, holds := range []bool{true, false} {
+		a := &walkMem{MemSource: NewMemSource().Declare("next", "src", "dst")}
+		b := &walkMem{MemSource: NewMemSource().Declare("next", "src", "dst")}
+		next(a.MemSource, "a1", "a2")
+		next(a.MemSource, "a2", "b1")
+		next(a.MemSource, "a3", "a4")
+		next(b.MemSource, "b1", "b2")
+		next(b.MemSource, "b2", "a3")
+		next(b.MemSource, "b2", "a2") // back to a value A already walked
+		members := []Member{{Name: "A", Source: a}, {Name: "B", Source: b}}
+		if holds {
+			members[0].Holds = HoldsPrefix("a", map[string][]int{"next": {0}})
+			members[1].Holds = HoldsPrefix("b", map[string][]int{"next": {0}})
+		}
+		f, err := NewFederation(members...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !f.Walks("next", 0, 1, nil) {
+			t.Fatalf("a federation of walking members doesn't walk")
+		}
+		var got []string
+		for tu, err := range f.Walk(context.Background(), Walk{Relation: "next", From: 0, To: 1, Start: []Value{S("a1")}}) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			got = append(got, strings.Join(tu.Cites, " "))
+		}
+		slices.Sort(got)
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("holds %v: walked %q, want %q", holds, got, want)
+		}
+		if holds && (a.walks != 2 || b.walks != 1) {
+			t.Errorf("A walked %d times and B %d, want twice (out and back) and once", a.walks, b.walks)
+		}
+		if !holds && a.walks+b.walks <= 3 {
+			t.Errorf("control: with no Holds, A walked %d times and B %d, want more", a.walks, b.walks)
+		}
+	}
+	plain := NewMemSource().Declare("next", "src", "dst")
+	f, _ := NewFederation(Member{Source: &walkMem{MemSource: plain}}, Member{Source: plain})
+	if f.Walks("next", 0, 1, nil) {
+		t.Errorf("a federation walks though a member doesn't")
+	}
+	f, _ = NewFederation(Member{Source: &walkMem{MemSource: plain}}, Member{Source: &walkMem{MemSource: plain, refuse: true}})
+	if f.Walks("next", 0, 1, nil) {
+		t.Errorf("a federation walks though a member refuses the walk")
+	}
+	// A leaf A reached itself, routed back from B, isn't walked again.
+	a := &walkMem{MemSource: NewMemSource().Declare("next", "src", "dst")}
+	b := &walkMem{MemSource: NewMemSource().Declare("next", "src", "dst")}
+	next(a.MemSource, "a1", "a9")
+	next(a.MemSource, "a1", "b1")
+	next(b.MemSource, "b1", "a9")
+	f, _ = NewFederation(Member{Source: a, Holds: HoldsPrefix("a", map[string][]int{"next": {0}})}, Member{Source: b, Holds: HoldsPrefix("b", map[string][]int{"next": {0}})})
+	n := 0
+	for _, err := range f.Walk(context.Background(), Walk{Relation: "next", From: 0, To: 1, Start: []Value{S("a1")}}) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		n++
+	}
+	if n != 3 || a.walks != 1 || b.walks != 1 {
+		t.Errorf("walked %d facts, A %d times and B %d, want 3 facts and one walk each: A reached a9 already", n, a.walks, b.walks)
+	}
+}

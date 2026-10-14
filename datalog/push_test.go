@@ -24,6 +24,9 @@ type pushing struct {
 	pushFail          error
 	pushed            []ns.Conjunction
 	yielded           int
+	noWalk            bool
+	walkFail          error
+	walked            []ns.Walk
 }
 
 func pushingAt(src ns.Source) *pushing { return &pushing{looking: lookingAt(src)} }
@@ -56,6 +59,86 @@ func (p *pushing) Push(_ context.Context, c ns.Conjunction) iter.Seq2[[]ns.Tuple
 			}
 		}
 	}
+}
+
+// Walks implements ns.WalkSource: a pushing store walks any relation, unless noWalk.
+func (p *pushing) Walks(string, int, int, []int) bool { return !p.noWalk }
+
+// Walk follows w over the store's facts, read as their types; a sloppy store also sends a fact no
+// walk reaches.
+func (p *pushing) Walk(_ context.Context, w ns.Walk) iter.Seq2[ns.Tuple, error] {
+	return func(yield func(ns.Tuple, error) bool) {
+		p.mu.Lock()
+		p.walked = append(p.walked, w)
+		fail := p.walkFail
+		p.mu.Unlock()
+		if fail != nil {
+			yield(ns.Tuple{}, fail)
+			return
+		}
+		sch, _ := p.Source.Schema(w.Relation)
+		all := p.Source.Tuples(w.Relation)
+		read := normalizeTuples(all, sch.Types)
+		facts := walkFacts(w, func(bound map[int]ns.Value) []ns.Tuple {
+			var out []ns.Tuple
+			for k, t := range read {
+				ok := true
+				for i, v := range bound {
+					ok = ok && i < len(t.Vals) && valueEq(t.Vals[i], normalizeTuples([]ns.Tuple{{Vals: []ns.Value{v}}}, sch.Types[min(i, len(sch.Types)):min(i+1, len(sch.Types))])[0].Vals[0])
+				}
+				if ok {
+					out = append(out, all[k])
+				}
+			}
+			return out
+		})
+		if p.sloppy && len(all) > 0 {
+			facts = append(facts, all[len(all)-1])
+		}
+		for _, t := range facts {
+			p.mu.Lock()
+			p.yielded++
+			p.mu.Unlock()
+			if !yield(t, nil) {
+				return
+			}
+		}
+	}
+}
+
+// walkFacts is a store's own answer to w: from each start value, and each To value of a fact it
+// returns, the facts lookup offers with that value at w.From and w.Bound's constants, each value
+// walked once by its text.
+func walkFacts(w ns.Walk, lookup func(bound map[int]ns.Value) []ns.Tuple) []ns.Tuple {
+	var out []ns.Tuple
+	seen := map[string]bool{}
+	queue := append([]ns.Value(nil), w.Start...)
+	for len(queue) > 0 {
+		v := queue[0]
+		queue = queue[1:]
+		if k := valueKey(v); seen[k] {
+			continue
+		} else {
+			seen[k] = true
+		}
+		bound := map[int]ns.Value{w.From: v}
+		for p, c := range w.Bound {
+			bound[p] = c
+		}
+		for _, t := range lookup(bound) {
+			out = append(out, t)
+			if w.To < len(t.Vals) {
+				queue = append(queue, t.Vals[w.To])
+			}
+		}
+	}
+	return out
+}
+
+func (p *pushing) walks() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.walked)
 }
 
 func (p *pushing) pushes() int {

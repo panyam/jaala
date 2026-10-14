@@ -47,9 +47,12 @@ func (s SemiNaive) EvalTable(ctx context.Context, q Query, b *Base, opts ...Opti
 			b.run.batch = true // the planned order asks a batching Source ahead (see prefetch)
 			q = reuseDerived(b, withoutUnreached(q))
 			if b.witnessing() {
-				return pushConjunctions(b, plan(b, magic(b, q))) // inlining would remove a relation's node from the witness
+				q = pushConjunctions(b, plan(b, magic(b, q))) // inlining would remove a relation's node from the witness
+			} else {
+				q = pushConjunctions(b, plan(b, magic(b, unfold(b, q))))
 			}
-			return pushConjunctions(b, plan(b, magic(b, unfold(b, q))))
+			findWalks(b, q)
+			return q
 		}
 	}
 	return evaluate(ctx, q, b, opts, rewrite, s.materialize)

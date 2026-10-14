@@ -780,6 +780,9 @@ func agreePushed(q Query, b *Base, want []Row, werr error, opts []Option) string
 	if src.pushes() > 0 {
 		pushedPrograms++
 	}
+	if diff := agreeWalked(b, func() (ns.Source, func() int) { p := pushingAt(b.src); return p, p.walks }); diff != "" {
+		return diff
+	}
 	if werr != nil || anyRows(q) {
 		return ""
 	}
@@ -788,6 +791,40 @@ func agreePushed(q Query, b *Base, want []Row, werr error, opts []Option) string
 	g, err := SemiNaive{}.Eval(bg, q, MustBase(b.reg, pushingAt(b.src)), canon...)
 	if err != nil || !reflect.DeepEqual(w, g) {
 		return fmt.Sprintf("planned SemiNaive pushed cites differently under CanonicalCites on %v\n whole:  %v\n pushed: %v %v", q, w, g, err)
+	}
+	return ""
+}
+
+// walkedPrograms counts the graphs agreeWalked walked (#239).
+var walkedPrograms int
+
+// agreeWalked runs a reach from the graph's first edge's source over a Source that walks (#239), the
+// shape a walk takes and the generated programs rarely do, and compares it with Naive reading whole,
+// its bindings and, under CanonicalCites, its witnesses. walking makes a fresh Source and a count of
+// the walks its stores made.
+func agreeWalked(b *Base, walking func() (ns.Source, func() int)) string {
+	edges := b.src.Tuples("edge")
+	if len(edges) == 0 || edges[0].Vals[0].Num != nil {
+		return ""
+	}
+	q, err := Parse(`reach(?a, ?b) :- edge(?a, ?b); reach(?a, ?c) :- reach(?a, ?b), edge(?b, ?c); reach(` + strconv.Quote(edges[0].Vals[0].S) + `, ?x) => ?x`)
+	if err != nil {
+		return err.Error()
+	}
+	src, _ := walking()
+	want, werr := Naive{}.Eval(bg, q, b)
+	if diff := agreeOver(q, b, MustBase(b.reg, src), "walked", want, werr, nil); diff != "" {
+		return diff
+	}
+	canon := []Option{CanonicalCites(), Witnesses()}
+	w, _ := Naive{}.Eval(bg, q, b, canon...)
+	fresh, walks := walking() // agreeOver's Naive filled src's Base with lookups, so nothing was left to walk
+	g, err := SemiNaive{}.Eval(bg, q, MustBase(b.reg, fresh), canon...)
+	if walks() > 0 {
+		walkedPrograms++
+	}
+	if err != nil || !reflect.DeepEqual(w, g) {
+		return fmt.Sprintf("planned SemiNaive walking cites differently under CanonicalCites on %v\n naive:  %v\n walked: %v %v", q, w, g, err)
 	}
 	return ""
 }
@@ -828,19 +865,36 @@ func agreePartitioned(q Query, b *Base, want []Row, werr error, opts []Option) s
 			mems[i].Add(rel, t)
 		}
 	}
-	stores := make([]*pushing, n)
-	members := make([]ns.Member, n)
-	for i := range members {
-		i := i
-		stores[i] = pushingAt(mems[i])
-		members[i] = ns.Member{Source: stores[i], Holds: func(rel string, bound map[int]ns.Value) bool {
-			v, ok := bound[0]
-			return !ok || deal(rel, v) == i
-		}}
+	federate := func() ([]*pushing, *ns.Federation, error) {
+		stores := make([]*pushing, n)
+		members := make([]ns.Member, n)
+		for i := range members {
+			i := i
+			stores[i] = pushingAt(mems[i])
+			members[i] = ns.Member{Source: stores[i], Holds: func(rel string, bound map[int]ns.Value) bool {
+				v, ok := bound[0]
+				return !ok || deal(rel, v) == i
+			}}
+		}
+		f, err := ns.NewPartitionedFederation(members...)
+		return stores, f, err
 	}
-	f, err := ns.NewPartitionedFederation(members...)
+	stores, f, err := federate()
 	if err != nil {
 		return err.Error()
+	}
+	walking := func() (ns.Source, func() int) {
+		stores, f, _ := federate()
+		return f, func() int {
+			n := 0
+			for _, st := range stores {
+				n += st.walks()
+			}
+			return n
+		}
+	}
+	if diff := agreeWalked(b, walking); diff != "" {
+		return diff
 	}
 	lb := MustBase(b.reg, f)
 	if diff := agreeOver(q, b, lb, "partitioned", want, werr, opts); diff != "" {
@@ -1092,7 +1146,7 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 		first, seeds = int64(s), 1
 	}
 	compared, known, skipped, failed := map[string]int{}, map[int]int{}, 0, 0
-	lookedUpPrograms, federatedPrograms, batchedPrograms, pushedPrograms, partitionedPrograms, unitAnswers, mixedAnswers = 0, 0, 0, 0, 0, 0, 0
+	lookedUpPrograms, federatedPrograms, batchedPrograms, pushedPrograms, partitionedPrograms, walkedPrograms, unitAnswers, mixedAnswers = 0, 0, 0, 0, 0, 0, 0, 0
 	withUnits := 0
 	for seed := first; seed < first+int64(seeds); seed++ {
 		rnd := rand.New(rand.NewSource(seed))
@@ -1157,6 +1211,9 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 	}
 	if pushedPrograms == 0 {
 		t.Errorf("control: no program pushed a conjunction to the Source")
+	}
+	if walkedPrograms == 0 {
+		t.Errorf("control: no program asked a store to walk a relation")
 	}
 	if partitionedPrograms == 0 {
 		t.Errorf("control: no program pushed a conjunction across a partitioned federation's members")
