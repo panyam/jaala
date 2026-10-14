@@ -25,8 +25,8 @@ Maintained by /checkpoint: one thread per branch, pruned when the branch merges.
 
 ## Across threads
 
-- Soufflé isn't installed on the Mac this repo was last worked from, so `./selfcheck.sh` skips its
-  Soufflé step there; CI's `souffle` job is the check to quote.
+- `make setup` installs Soufflé 2.5 (Homebrew on macOS), so `./selfcheck.sh` runs its Soufflé step
+  locally: 5000 seeds, 0 disagreements on 10a608e (2026-10-14).
 - Declaire's measurement decides what's next in jaala: #242 if lookup buckets are huge, #259 if a
   join over its partitioned stores shows lookups per literal per round, #263 if a store ships a
   whole relation for a literal it could filter, #260 if `bindArg`/`binding.clone` dominate (asked
