@@ -102,19 +102,39 @@ type SummarySource interface {
 
 // A Summary asks for a conjunction's matches grouped by the values of the variables in Group and in
 // Values. The engine reads Group as an aggregate's group and Values as the values it reduces; a count
-// of bindings needs neither, so a goal counting with no group asks for one row.
+// of bindings needs neither, so a goal counting with no group asks for one row. Extremes are variables
+// only min and max read (#252): rather than group by their values, a row reports, per unit, the
+// smallest and largest of its matches' numbers there (see Extreme), so a min over a column of distinct
+// measurements is a row per group, not per value. A store that can't asks to be sent them as Values,
+// by refusing a Summary with Extremes in Summarizes.
 type Summary struct {
-	Group  []int
-	Values []int
+	Group    []int
+	Values   []int
+	Extremes []int
+}
+
+// An Extreme is a summary row's numbers in one unit at one of its Extremes variables, each value read
+// as its argument's declared type: Unit is their unit ("" for none), Numbers how many matches hold a
+// number there, NaN whether one of those is NaN, and Min and Max the smallest and largest of the rest
+// by value, absent when every one is NaN. A match whose value isn't a number (text, absent) counts in
+// Matches only. A row has one Extreme per unit its numbers are in; a store may report a unit in
+// several, and the engine combines them.
+type Extreme struct {
+	Unit     string
+	Numbers  int
+	NaN      bool
+	Min, Max Value
 }
 
 // A SummaryRow is one row of a Summary: the values at its Group and Values variables, in their order,
-// the number of matches with them, and those matches' facts' citations.
+// the number of matches with them, those matches' facts' citations, and per Extremes variable, in
+// order, its numbers' extremes by unit.
 type SummaryRow struct {
-	Group   []Value
-	Values  []Value
-	Matches int
-	Cites   []string
+	Group    []Value
+	Values   []Value
+	Matches  int
+	Cites    []string
+	Extremes [][]Extreme
 }
 
 // A PushAtom is one literal of a Conjunction: a relation the Source serves, and an argument per

@@ -3,6 +3,7 @@ package datalog
 import (
 	"errors"
 	"fmt"
+	"math"
 	"reflect"
 	"slices"
 	"strings"
@@ -85,8 +86,8 @@ func TestACountAndAPageAreARowsPerStore(t *testing.T) {
 	}
 }
 
-// partValues is a part's values: 5 V, 5 A, 3 (no unit) twice, once stored as text, the text "n/a",
-// and 2 V, on parts p1 to
+// partValues is a part's values: 5 V, 5 A, 3 and 2 (no unit, 2 stored as text), the text "n/a", and
+// 2 V, on parts p1 to
 // p6, in a typed number column. (No NaN: reflect.DeepEqual can't compare one with itself.)
 func partValues() *ns.MemSource {
 	m := ns.NewMemSource().DeclareSchema("val", ns.Schema{Arity: 3, Labels: []string{"part", "kind", "v"}, Types: []ns.ArgType{{}, {}, {Type: ns.TypeNumber}}})
@@ -96,7 +97,7 @@ func partValues() *ns.MemSource {
 	add("p1", "volt", ns.NU(5, "V"))
 	add("p2", "volt", ns.NU(5, "A"))
 	add("p3", "plain", ns.N(3))
-	add("p4", "plain", ns.S("3")) // a number stored as text, read as the number
+	add("p4", "plain", ns.S("2")) // a number stored as text, read as the number
 	add("p5", "plain", ns.S("n/a"))
 	add("p6", "odd", ns.NU(2, "V"))
 	return m
@@ -113,6 +114,8 @@ func TestASummaryKeepsTheAggregateRules(t *testing.T) {
 		`val(?p, "plain", ?v), ?v > 2 => count(?p), sum(?v)`,
 		`val(?p, "plain", ?v), ?v > 2 => count(?p)`,
 		`val(?p, ?k, ?v) => ?k, count(?p) having count(?p) > 1`,
+		`val(?p, "plain", ?v), ?v > 2 => min(?v)`,
+		`val(?p, "plain", ?v) => sum(?v), min(?v)`,
 	}
 	for _, text := range questions {
 		q := mustParse(t, text)
@@ -248,5 +251,67 @@ func TestAddTimesSumsAsRepeatedAdds(t *testing.T) {
 	adds.add(-1)
 	if times.value() != adds.value() || adds.value() == 0 {
 		t.Errorf("addTimes gave %v, three adds %v, want the same nonzero error", times.value(), adds.value())
+	}
+}
+
+// A min and max a store reduces is a row per group and unit rather than one per value (#252), and
+// answers as in memory, mixed units included. control: a store that can't is asked for the values.
+func TestExtremesAreARowPerGroup(t *testing.T) {
+	q := mustParse(t, `val(?p, ?k, ?v) => ?k, min(?v), max(?v)`)
+	want, err := both(q, baseFor(std(partValues())))
+	if err != nil || len(want) != 3 {
+		t.Fatalf("in memory: %v %v", want, err)
+	}
+	for _, noExtremes := range []bool{false, true} {
+		src := pushingAt(partValues())
+		src.noExtremes = noExtremes
+		got, err := SemiNaive{}.Eval(bg, q, MustBase(std(partValues()), src))
+		if err != nil || !reflect.DeepEqual(got, want) {
+			t.Errorf("noExtremes %v: %v %v, in memory %v", noExtremes, got, err, want)
+		}
+		if len(src.summarized) == 0 {
+			t.Errorf("noExtremes %v: the store was never asked for a summary", noExtremes)
+			continue
+		}
+		s := src.summarized[len(src.summarized)-1]
+		switch {
+		case !noExtremes && (len(s.Extremes) != 1 || len(s.Values) != 0 || src.yielded != 3):
+			t.Errorf("asked %+v and got %d rows, want ?v's extremes and a row per kind", s, src.yielded)
+		case noExtremes && (len(s.Extremes) != 0 || len(s.Values) != 1 || src.yielded <= 3):
+			t.Errorf("control: refusing extremes, asked %+v and got %d rows, want ?v's values, a row per value", s, src.yielded)
+		}
+	}
+}
+
+// A NaN among a min's numbers makes it NaN, reduced in the store as in memory.
+func TestExtremesKeepNaN(t *testing.T) {
+	m := ns.NewMemSource().Declare("w", "n", "v")
+	m.Add("w", ns.Tuple{Vals: []ns.Value{ns.S("a"), ns.N(2)}})
+	m.Add("w", ns.Tuple{Vals: []ns.Value{ns.S("b"), ns.N(math.NaN())}})
+	q := mustParse(t, `w(?n, ?v) => min(?v), max(?v)`)
+	want, _ := Naive{}.Eval(bg, q, baseFor(std(m)))
+	src := pushingAt(m)
+	got, err := SemiNaive{}.Eval(bg, q, MustBase(std(m), src))
+	if err != nil || len(got) != 1 || len(src.summarized) != 1 || len(src.summarized[0].Extremes) != 1 {
+		t.Fatalf("%v %v, summaries %+v", got, err, src.summarized)
+	}
+	again, err := SemiNaive{}.Eval(bg, q, MustBase(std(m), src)) // a new Base: the store reduces again
+	if err != nil || len(src.summarized) != 2 {
+		t.Fatalf("asked again: %v, %d summaries", err, len(src.summarized))
+	}
+	b := MustBase(std(m), src)
+	if _, err := (SemiNaive{}).Eval(bg, q, b); err != nil {
+		t.Fatal(err)
+	}
+	kept, err := SemiNaive{}.Eval(bg, q, b) // the same Base: read back from what it kept
+	if err != nil || len(src.summarized) != 3 {
+		t.Fatalf("asked on the same Base: %v, %d summaries, want the third kept", err, len(src.summarized))
+	}
+	for _, rows := range [][]Row{got, again, kept} {
+		for _, col := range []Var{"min(v)", "max(v)"} {
+			if w, g := want[0].Bind[col], rows[0].Bind[col]; !math.IsNaN(*w.Num) || g.Num == nil || !math.IsNaN(*g.Num) {
+				t.Errorf("%s: in memory %v, reduced %v, want NaN both", col, w, g)
+			}
+		}
 	}
 }
