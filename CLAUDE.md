@@ -582,10 +582,11 @@ charged to the budget, from declaire#211's measurement); it stays open for Decla
 `mission_store_pushdown` (#235), epic #213's second half: a store answers the part of a question it
 can evaluate (a conjunction, a walk, an aggregate, a page) and jaala combines the results, measured
 by the same benchmark's `shipped` column and its questions `two-hops-in-repo`, `count-lines`, `page`
-and `self-loops` (#236). #237 (`ns.PushSource`, v0.1.46), #238 (`NewPartitionedFederation`,
-v0.1.47) and #239 (`ns.WalkSource`, v0.1.48) are closed, so two hops within a repo is one call and
-`deep-walk` one call at any store count; #240 (aggregates), #241 (pages), #246 (a group bound partway
-through a body, batched) and #250 (a walk whose step is several literals) remain. jaala's
+and `self-loops` (#236). All eleven of its jaala tickets are closed (#236 to #241, #246, #250, #252 to
+#254, released by v0.1.50): a conjunction, a walk, a count, a page, a batch of bindings and a walked
+step each go to a store, and every jaala line of its "Done when" holds. Like #219 it stays open for
+Declaire's run (`bench -time` on a federated view); #259, a batch of bindings across a partitioned
+federation's members, is `waiting`. jaala's
 earlier four are closed: `mission_selfcheck` (#86, at v0.1.29) left `./selfcheck.sh` as the check to
 run on `main` after every merge and before every tag; `mission_docsite` (#104) left the docs site
 with every example run by the engine; `mission_aggregate_answers` (#172, at v0.1.42) left Soufflé
@@ -597,6 +598,13 @@ priority and a mission link when filed, or `waiting` with the trigger that would
 Create the branch before the first commit (`git branch --show-current` says so). #200's work was
 committed on local `main`, so `git reset --soft main` to squash it did nothing and the PR opened
 with WIP commits. Squash against `origin/main`, never a local name that may have moved.
+
+Stacked PRs (each branched off the one below, its base that branch) review and merge in order, and
+GitHub retargets the next to `main` when its base merges; confirm each merge commit is an ancestor of
+`origin/main` before deleting branches. Run each branch's `./selfcheck.sh` in a detached worktree
+(`git worktree add --detach <dir> <branch>`) so the checkout stays free for the next branch, and
+remove the worktree after. A selfcheck run on the working tree while editing it tests half-written
+code.
 
 Pushing a branch can get a PR opened for it under the owner's account (#168 was), titled and
 bodied from the commit. Check `gh pr list --head <branch>` before `gh pr create`, and edit that PR
