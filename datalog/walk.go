@@ -1,6 +1,7 @@
 package datalog
 
 import (
+	"fmt"
 	"slices"
 
 	"github.com/panyam/jaala/ns"
@@ -28,7 +29,7 @@ type walkStep struct {
 // findWalks records, by head relation, the walks q's recursive rules make (see walkStep) that the
 // Source walks.
 func findWalks(b *Base, q Query) {
-	if b.walker == nil || b.run == nil || !b.run.batch {
+	if b.walker == nil && b.stepWalker == nil || b.run == nil || !b.run.batch {
 		return
 	}
 	for _, r := range q.Rules {
@@ -37,6 +38,16 @@ func findWalks(b *Base, q Query) {
 				continue
 			}
 			for _, lit := range r.Body.Literals {
+				if s, ok := b.stepWalkIn(&r.Head, rec.Pos, lit); ok {
+					if b.run.stepWalks == nil {
+						b.run.stepWalks = map[string][]stepWalk{}
+					}
+					b.run.stepWalks[r.Head.Relation] = append(b.run.stepWalks[r.Head.Relation], s)
+					continue
+				}
+				if b.walker == nil {
+					continue
+				}
 				if s, ok := b.walkIn(&r.Head, rec.Pos, lit); ok && !slices.ContainsFunc(b.run.walks[r.Head.Relation], s.same) {
 					if b.run.walks == nil {
 						b.run.walks = map[string][]walkStep{}
@@ -135,11 +146,14 @@ func (s walkStep) matches(atom *Atom) bool {
 // the literals before it bind it to that no Eval has looked up, in one call per call site, and keeps
 // what each reached value would have looked up. A Volatile predicate stops it, as it stops prefetch.
 func prefetchWalks(b *Base, lits []Literal, head string) error {
-	if b.run == nil || b.walker == nil {
+	if b.run == nil {
 		return nil
 	}
+	if err := prefetchStepWalks(b, lits, head); err != nil {
+		return err
+	}
 	steps := b.run.walks[head]
-	if len(steps) == 0 {
+	if b.walker == nil || len(steps) == 0 {
 		return nil
 	}
 	for i, lit := range lits {
@@ -284,4 +298,219 @@ func (s walkStep) keeps(t ns.Tuple) bool {
 		}
 	}
 	return true
+}
+
+// A stepWalk is a pushed group a recursive relation's bodies walk (#250): the group's conjunction, by
+// its key, whose variable in each round binds to the last round's matches' values at out.
+type stepWalk struct {
+	key     string
+	in, out int
+}
+
+// stepWalkIn is the walk lit makes in a rule with head and recursive call rec when lit is a pushed
+// group: rec's column j is the group's variable in and head's column j its variable out, and the
+// Source walks the group between them.
+func (b *Base) stepWalkIn(head, rec *Atom, lit Literal) (stepWalk, bool) {
+	if b.stepWalker == nil || lit.Pos == nil || !isPushed(lit.Pos.Relation) {
+		return stepWalk{}, false
+	}
+	g := b.run.pushed[lit.Pos.Relation]
+	c, nums := g.numbered(nil)
+	for j := range rec.Args {
+		if j >= len(head.Args) {
+			break
+		}
+		in, out := nums[rec.Args[j].Var], nums[head.Args[j].Var]
+		if in == 0 || out == 0 || in == out {
+			continue
+		}
+		if b.stepWalker.WalksConjunction(c, in, out) {
+			return stepWalk{key: pushKey(c), in: in, out: out}, true
+		}
+	}
+	return stepWalk{}, false
+}
+
+// prefetchStepWalks walks, for each pushed group in lits that a step walk of head answers, from the
+// values the literals before it bind its in variable to (and nothing else of it) that no Eval has kept,
+// in one call per call site (#250), and keeps what each reached value's round would have pushed.
+func prefetchStepWalks(b *Base, lits []Literal, head string) error {
+	walks := b.run.stepWalks[head]
+	if b.stepWalker == nil || len(walks) == 0 {
+		return nil
+	}
+	for i, lit := range lits {
+		atom := lit.Pos
+		if atom == nil {
+			continue
+		}
+		if bi, ok := b.reg.Predicate(atom.Relation); ok {
+			if bi.Volatile {
+				return nil
+			}
+			continue
+		}
+		if i == 0 || !isPushed(atom.Relation) {
+			continue
+		}
+		g := b.run.pushed[atom.Relation]
+		c, nums := g.numbered(nil)
+		k := slices.IndexFunc(walks, func(s stepWalk) bool { return s.key == pushKey(c) })
+		if k < 0 {
+			continue
+		}
+		s := walks[k]
+		var inVar Var
+		for v, n := range nums {
+			if n == s.in {
+				inVar = v
+			}
+		}
+		starts, err := stepStarts(b, lits[:i], g, inVar)
+		if err != nil {
+			return err
+		}
+		if len(starts) == 0 {
+			continue
+		}
+		if err := b.run.explain.at(i, func() error { return b.walkStep(g, c, s, inVar, starts) }); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// stepStarts solves prefix and collects the values it binds g's variable in to, when that is the only
+// one of g's variables it binds, that no Eval has kept g's push for.
+func stepStarts(b *Base, prefix []Literal, g *pushGroup, in Var) ([]ns.Value, error) {
+	e := b.run.explain
+	if e != nil {
+		e.quiet = true
+		defer func() { e.quiet = false }()
+	}
+	var starts []ns.Value
+	asked := map[string]bool{}
+	err := solve(prefix, 0, newBinding(), b, func(bnd *binding) error {
+		v, ok := bnd.vals[in]
+		if !ok {
+			return nil
+		}
+		for _, lit := range g.lits {
+			for _, t := range lit.Pos.Args {
+				if _, bound := bnd.vals[t.Var]; bound && t.Var != in && t.Var != "" && t.Var != "_" {
+					return nil
+				}
+			}
+		}
+		only := newBinding()
+		only.vals[in] = v
+		key := pushKey(g.conjunction(only))
+		if _, done := b.run.looked[key]; done || asked[key] {
+			return nil
+		}
+		if _, kept := b.lookups.get(key); kept {
+			return nil
+		}
+		asked[key] = true
+		starts = append(starts, v)
+		return nil
+	})
+	return starts, err
+}
+
+// walkStep asks the Source for s's walk of g from starts and keeps, for each value it reached, the
+// rows pushing g with that value as its in variable would have returned. A value is reached when it
+// is a start value, or the value at s.out of a row for a reached value that matches g's literals, so
+// a row the Source sent that the walk doesn't reach is never filed as a value's whole answer.
+func (b *Base) walkStep(g *pushGroup, c ns.Conjunction, s stepWalk, in Var, starts []ns.Value) error {
+	if err := b.countWork(); err != nil {
+		return err
+	}
+	r := b.run
+	types := make([][]ns.ArgType, len(g.lits))
+	for i, lit := range g.lits {
+		types[i] = b.argTypesOf(lit.Pos.Relation)
+	}
+	var out Var
+	_, nums := g.numbered(nil)
+	for v, n := range nums {
+		if n == s.out {
+			out = v
+		}
+	}
+	ctx := r.context()
+	byIn := map[string][][]ns.Tuple{}
+	fetched := 0
+	for row, err := range b.stepWalker.WalkConjunction(ctx, c, s.in, s.out, starts) {
+		if err != nil {
+			return pushErr(ctx, g.text, err)
+		}
+		if err := r.readOne(); err != nil {
+			return err
+		}
+		if len(row) != len(g.lits) {
+			return fmt.Errorf("query: pushing %s: a row of %d tuples for %d literals", g.text, len(row), len(g.lits))
+		}
+		read := make([]ns.Tuple, len(row))
+		for i, t := range row {
+			if want := len(g.lits[i].Pos.Args); len(t.Vals) != want {
+				return fmt.Errorf("query: pushing %s: a row's %s tuple has %d values, want %d", g.text, g.lits[i].Pos.Relation, len(t.Vals), want)
+			}
+			read[i] = normalizeTuples([]ns.Tuple{t}, types[i])[0]
+		}
+		next, ok := newBinding(), true
+		for i, lit := range g.lits {
+			if next, ok = unify(lit.Pos.Args, read[i], next); !ok {
+				break
+			}
+		}
+		if !ok {
+			continue // not a match: neither a value's answer nor a step to follow
+		}
+		k := valueKey(next.vals[in])
+		byIn[k] = append(byIn[k], read)
+		fetched++
+	}
+	seen := map[string]bool{}
+	queue := append([]ns.Value(nil), starts...)
+	for len(queue) > 0 {
+		v := queue[0]
+		queue = queue[1:]
+		k := valueKey(v)
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		var rows []ns.Tuple
+		for _, row := range byIn[k] {
+			rows = append(rows, row...)
+			next, ok := newBinding(), true
+			for i, lit := range g.lits {
+				if next, ok = unify(lit.Pos.Args, row[i], next); !ok {
+					break
+				}
+			}
+			if ok {
+				queue = append(queue, next.vals[out])
+			}
+		}
+		only := newBinding()
+		only.vals[in] = v
+		b.keepLookup(pushKey(g.conjunction(only)), rows)
+	}
+	if r.explain != nil {
+		e := r.explain
+		e.walks++
+		seenRel := map[string]bool{}
+		for _, lit := range g.lits {
+			rs := e.readSource(lit.Pos.Relation, 0, false)
+			rs.Fetched += int64(fetched)
+			if !seenRel[lit.Pos.Relation] {
+				seenRel[lit.Pos.Relation] = true
+				rs.Walks++
+			}
+		}
+		e.access("walked")
+	}
+	return nil
 }

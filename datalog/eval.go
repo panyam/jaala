@@ -71,6 +71,9 @@ type Base struct {
 	pusher ns.PushSource
 	// walker is the Source when it follows a relation from value to value itself (ns.WalkSource, #239).
 	walker ns.WalkSource
+	// stepWalker is the Source when it follows a step of several literals itself
+	// (ns.ConjunctionWalkSource, #250).
+	stepWalker ns.ConjunctionWalkSource
 	// summarizer is the Source when it reduces a conjunction's matches itself (ns.SummarySource, #240).
 	summarizer ns.SummarySource
 	// run is one Eval's own state (its context and budget), set on that Eval's copy of the Base and
@@ -127,8 +130,9 @@ func NewBase(v *ns.Vocabulary, src ns.Source) (*Base, error) {
 	indexed, _ := src.(ns.IndexedLookups)
 	pusher, _ := src.(ns.PushSource)
 	walker, _ := src.(ns.WalkSource)
+	stepWalker, _ := src.(ns.ConjunctionWalkSource)
 	summarizer, _ := src.(ns.SummarySource)
-	return &Base{src: src, reg: v, looker: looker, lookRels: lookRels, indexed: indexed, pusher: pusher, walker: walker, summarizer: summarizer, edb: newEDBCache(), derived: newDerivedCache(), lookups: newLookupCache(), work: new(int64)}, nil
+	return &Base{src: src, reg: v, looker: looker, lookRels: lookRels, indexed: indexed, pusher: pusher, walker: walker, stepWalker: stepWalker, summarizer: summarizer, edb: newEDBCache(), derived: newDerivedCache(), lookups: newLookupCache(), work: new(int64)}, nil
 }
 
 // MustBase is NewBase for a Source known to match its vocabulary, such as a test fixture. It panics

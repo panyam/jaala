@@ -34,6 +34,8 @@ type pushing struct {
 	summarized        []ns.Summary
 	pagedAfter        [][]ns.Value
 	noInputs          bool // refuses a conjunction with Inputs, as a store before #246
+	noStepWalk        bool // refuses to walk a conjunction, as a store before #250
+	stepWalks         int
 }
 
 func pushingAt(src ns.Source) *pushing { return &pushing{looking: lookingAt(src)} }
@@ -153,6 +155,62 @@ func walkFacts(w ns.Walk, lookup func(bound map[int]ns.Value) []ns.Tuple) []ns.T
 		}
 	}
 	return out
+}
+
+// WalksConjunction implements ns.ConjunctionWalkSource, unless noStepWalk.
+func (p *pushing) WalksConjunction(ns.Conjunction, int, int) bool { return !p.noStepWalk }
+
+// WalkConjunction follows c from in to out over the store's facts: from each value reached, the
+// matches of c with that value at in, by its own join. A sloppy store also sends a match no walk
+// reaches.
+func (p *pushing) WalkConjunction(_ context.Context, c ns.Conjunction, in, out int, start []ns.Value) iter.Seq2[[]ns.Tuple, error] {
+	return func(yield func([]ns.Tuple, error) bool) {
+		p.mu.Lock()
+		p.stepWalks++
+		fail := p.walkFail
+		p.mu.Unlock()
+		if fail != nil {
+			yield(nil, fail)
+			return
+		}
+		schema := func(rel string) ns.Schema { sc, _ := p.Source.Schema(rel); return sc }
+		all := func(rel string, _ map[int]ns.Value) []ns.Tuple { return p.Source.Tuples(rel) }
+		var rows [][]ns.Tuple
+		seen := map[string]bool{}
+		queue := append([]ns.Value(nil), start...)
+		for len(queue) > 0 {
+			v := queue[0]
+			queue = queue[1:]
+			if k := valueKey(v); seen[k] {
+				continue
+			} else {
+				seen[k] = true
+			}
+			bound := c
+			bound.Inputs, bound.Bindings = []int{in}, [][]ns.Value{{v}}
+			for _, row := range forBindings(bound, schema, evalConjunction(c, schema, all, false)) {
+				rows = append(rows, row)
+				queue = append(queue, rowValues(c, schema, row)[out])
+			}
+		}
+		if every := evalConjunction(c, schema, all, false); p.sloppy && len(every) > 0 {
+			rows = append(rows, every[len(every)-1]) // a match no walk may reach, alone
+			bad := make([]ns.Tuple, len(c.Atoms))    // and a row whose join doesn't hold, from the first start
+			for k, a := range c.Atoms {
+				ts := p.Source.Tuples(a.Relation)
+				bad[k] = ts[map[bool]int{true: 0, false: len(ts) - 1}[k == 0]]
+			}
+			rows = append(rows, bad)
+		}
+		for _, row := range rows {
+			p.mu.Lock()
+			p.yielded++
+			p.mu.Unlock()
+			if !yield(row, nil) {
+				return
+			}
+		}
+	}
 }
 
 func (p *pushing) walks() int {
@@ -551,6 +609,7 @@ func TestABoundGroupIsSolvedLiteralByLiteral(t *testing.T) {
 			w, _ := Naive{}.Eval(bg, q, baseFor(std(chain)), opts...)
 			src := pushingAt(chain)
 			src.noInputs = noInputs
+			src.noStepWalk = true // the rounds' own paths, not a walk of the whole step (#250)
 			var r Report
 			got, err := SemiNaive{}.Eval(bg, q, MustBase(std(chain), src), append(opts, Explain(&r))...)
 			if err != nil || !reflect.DeepEqual(got, w) {

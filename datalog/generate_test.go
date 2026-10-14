@@ -789,7 +789,15 @@ func agreePushed(q Query, b *Base, want []Row, werr error, opts []Option) string
 	if src.summaries > 0 {
 		summarizedPrograms++
 	}
-	if diff := agreeWalked(b, func() (ns.Source, func() int) { p := pushingAt(b.src); return p, p.walks }); diff != "" {
+	if diff := agreeWalked(b, func() (ns.Source, func() int) {
+		p := pushingAt(b.src)
+		return p, func() int {
+			if p.stepWalks > 0 {
+				stepWalkedPrograms++
+			}
+			return p.walks() + p.stepWalks
+		}
+	}); diff != "" {
 		return diff
 	}
 	if diff := agreeGoals(b, func() (ns.Source, func() (int, int)) {
@@ -871,6 +879,9 @@ func agreeGoals(b *Base, pushing func() (ns.Source, func() (int, int))) string {
 	return ""
 }
 
+// stepWalkedPrograms counts the walks agreeWalked made of a step of two literals (#250).
+var stepWalkedPrograms int
+
 // walkedPrograms counts the graphs agreeWalked walked (#239).
 var walkedPrograms int
 
@@ -883,7 +894,22 @@ func agreeWalked(b *Base, walking func() (ns.Source, func() int)) string {
 	if len(edges) == 0 || edges[0].Vals[0].Num != nil {
 		return ""
 	}
-	q, err := Parse(`reach(?a, ?b) :- edge(?a, ?b); reach(?a, ?c) :- reach(?a, ?b), edge(?b, ?c); reach(` + strconv.Quote(edges[0].Vals[0].S) + `, ?x) => ?x`)
+	from := strconv.Quote(edges[0].Vals[0].S)
+	for _, text := range []string{
+		`reach(?a, ?b) :- edge(?a, ?b); reach(?a, ?c) :- reach(?a, ?b), edge(?b, ?c); reach(` + from + `, ?x) => ?x`,
+		// two hops a step, a walk of a conjunction (#250)
+		`hop2(?a, ?c) :- edge(?a, ?m), edge(?m, ?c); hop2(?a, ?c) :- hop2(?a, ?b), edge(?b, ?m), edge(?m, ?c); hop2(` + from + `, ?x) => ?x`,
+	} {
+		if diff := agreeWalkedOn(b, text, walking); diff != "" {
+			return diff
+		}
+	}
+	return ""
+}
+
+// agreeWalkedOn is agreeWalked for one program.
+func agreeWalkedOn(b *Base, text string, walking func() (ns.Source, func() int)) string {
+	q, err := Parse(text)
 	if err != nil {
 		return err.Error()
 	}
@@ -1236,7 +1262,7 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 	}
 	compared, known, skipped, failed := map[string]int{}, map[int]int{}, 0, 0
 	lookedUpPrograms, federatedPrograms, batchedPrograms, pushedPrograms, partitionedPrograms, walkedPrograms, unitAnswers, mixedAnswers = 0, 0, 0, 0, 0, 0, 0, 0
-	pagedPrograms, summarizedPrograms, batchPushedPrograms = 0, 0, 0
+	pagedPrograms, summarizedPrograms, batchPushedPrograms, stepWalkedPrograms = 0, 0, 0, 0
 	withUnits := 0
 	for seed := first; seed < first+int64(seeds); seed++ {
 		rnd := rand.New(rand.NewSource(seed))
@@ -1301,6 +1327,9 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 	}
 	if pushedPrograms == 0 {
 		t.Errorf("control: no program pushed a conjunction to the Source")
+	}
+	if stepWalkedPrograms == 0 {
+		t.Errorf("control: no graph's walk of a two-literal step was walked by the store")
 	}
 	if batchPushedPrograms == 0 {
 		t.Errorf("control: no program pushed a group for a batch of bindings")

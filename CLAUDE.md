@@ -147,7 +147,12 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   plus the literal's constants) into one `Walk` from the values no tier holds. `walk` files each value
   it reaches itself (a BFS from the starts through facts matching the constants) as that value's
   complete lookup, so a stray fact is never a whole answer, and the fixpoint runs unchanged. A
-  Federation walks across members, each walking a value once (`walkKey`). The corpus's programs
+  Federation walks across members, each walking a value once (`walkKey`). A step of several literals
+  is walked through `ns.ConjunctionWalkSource` (#250): `stepWalkIn` finds a recursive rule whose
+  pushed group reads the recursive column as `in` and writes the head's as `out`; `walkStep` files
+  each reached value's rows under `pushKey(g.conjunction(bnd))`, #246's batch key, after unifying
+  each row with the group so a non-match is never followed. A demand rewrite that splits the step
+  into a supplementary prefix leaves no single group to walk. The corpus's programs
   rarely walk, so `agreeWalked` runs a fixed reach from each graph's first edge over a walking store
   and over the partitioned federation, on a fresh Base (Naive's lookups would leave nothing to walk);
   `walkedPrograms` is its control.
