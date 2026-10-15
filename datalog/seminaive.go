@@ -46,11 +46,14 @@ func (s SemiNaive) EvalTable(ctx context.Context, q Query, b *Base, opts ...Opti
 		rewrite = func(b *Base, q Query) Query {
 			b.run.batch = true // the planned order asks a batching Source ahead (see prefetch)
 			q = reuseDerived(b, withoutUnreached(q))
-			if b.witnessing() {
-				q = pushConjunctions(b, plan(b, magic(b, q))) // inlining would remove a relation's node from the witness
-			} else {
-				q = pushConjunctions(b, plan(b, magic(b, unfold(b, q))))
+			if !b.witnessing() {
+				q = unfold(b, q) // inlining would remove a relation's node from the witness
 			}
+			// Before magic, which plans the goal. A demand rule reading one of these reads it whole in the
+			// fixpoint, before the goal runs, and streamFirst then finds it held.
+			b.run.streamable = streamable(b, q)
+			q = magic(b, q)
+			q = pushConjunctions(b, plan(b, q))
 			findWalks(b, q)
 			return q
 		}

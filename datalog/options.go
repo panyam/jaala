@@ -130,6 +130,10 @@ type evalRun struct {
 	// batch sets prefetch asking a batching Source for a body's lookups ahead of solving it (#153),
 	// which only the planned SemiNaive does.
 	batch bool
+	// streamable are the base relations only the goal reads, which its first literal may stream rather
+	// than read whole (#264), and stream is that literal while the goal is solved (see streamFirst).
+	streamable map[string]bool
+	stream     *Atom
 }
 
 // ctxCheckEvery is how many units of work pass between checks of the context. Checking on every

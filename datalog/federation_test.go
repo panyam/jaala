@@ -163,6 +163,10 @@ func TestAHeldRelationAFederationNeverLooksUpIsNotWarm(t *testing.T) {
 	members[1].Source = counted
 	f := federate(t, members...)
 	b := MustBase(std(f), f)
+	// A rule reads edge first: a goal alone would stream it and keep nothing (#264).
+	if _, err := (SemiNaive{}).Eval(bg, mustParse(t, `r(?y) :- edge(?x, ?y); r(?y) :- edge(?y, ?x); r(?y) => ?y`), b); err != nil {
+		t.Fatal(err)
+	}
 	q := mustParse(t, `edge("n1", ?y) => ?y`)
 	var r Report
 	for range 2 {

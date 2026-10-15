@@ -106,8 +106,8 @@ type LiteralReport struct {
 	Literal string `json:"literal"`
 	// Access says how it was read, each way it was: "index (from)" for a base relation probed on its
 	// from argument, "scan", "derived index (to)", "derived scan", "generator", "filter",
-	// "comparison", "lookup (from)" for a call the Source looked up (ns.LookupSource), or "not" over
-	// one of those.
+	// "comparison", "lookup (from)" for a call the Source looked up (ns.LookupSource), "stream" for a
+	// goal's relation solved as its Source streamed it (#264), or "not" over one of those.
 	Access []string `json:"access,omitempty"`
 	// Reached is how often solving got to it, Passed how many bindings it passed on (for a `not`,
 	// the ones it let through), and Work the candidates it examined.
@@ -683,6 +683,15 @@ func (b *Base) explainEDB(atom *Atom, rows []ns.Tuple, bnd *binding) {
 	on := maskLabels(b, atom.Relation, mask)
 	e.probe(atom.Relation, on, !e.cachedIndexes[idxKey{rel: atom.Relation, mask: mask}])
 	e.access("index (" + strings.Join(on, ", ") + ")")
+}
+
+// explainStream records atom's relation streamed into the goal (#264), as one scan whose tuples
+// streamEDB adds as they arrive.
+func (b *Base) explainStream(atom *Atom) {
+	e := b.run.explain
+	s := e.readSource(atom.Relation, 0, false)
+	s.Scans++
+	e.access("stream")
 }
 
 // explainLookup records a call the Source looked up for atom, fetching tuples.

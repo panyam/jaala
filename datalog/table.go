@@ -107,6 +107,7 @@ func answerGoal(b *Base, pos, negs []Literal, having []Compare, sel, cols []Term
 			if err := prefetch(b, lits, negs); err != nil {
 				return nil, err
 			}
+			streamFirst(b, lits, false)
 			err := solve(lits, 0, newBinding(), b, func(bnd *binding) error {
 				ok, err := passesNegations(bnd, negs, b)
 				if ok {
@@ -114,6 +115,7 @@ func answerGoal(b *Base, pos, negs []Literal, having []Compare, sel, cols []Term
 				}
 				return err
 			})
+			b.run.stream = nil
 			if err != nil {
 				return nil, err
 			}
@@ -178,7 +180,9 @@ func answerGoal(b *Base, pos, negs []Literal, having []Compare, sel, cols []Term
 					return nil, err
 				}
 			}
+			streamFirst(b, lits, p.stopAt > 0)
 			err := solve(lits, 0, newBinding(), b, emit)
+			b.run.stream = nil
 			if err != nil && !errors.Is(err, errEnough) {
 				return nil, err
 			}
