@@ -1,6 +1,7 @@
 package datalog
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -96,6 +97,32 @@ func TestDemandDoesNotMakeAComputingRuleRecursive(t *testing.T) {
 		if err != nil || len(rows) != 1 {
 			t.Errorf("%d options: %v, %v; want R1's resistance", len(opts), rows, err)
 		}
+	}
+}
+
+// A function runs backwards only for what nothing else in its body binds (#273). Demanded, r's ?z is
+// bound when its body runs, and the plan puts num.mul(?e, 0, ?z) first, whose mode from its second
+// argument and its result is satisfied: solving ?e * 0 = 0 for ?e answers nothing, where the product
+// of the ?e that num.add computes is 0. The call waits for num.add, as Naive's written order has it.
+func TestAFunctionWaitsForWhatItWouldSolveFor(t *testing.T) {
+	src := ns.NewMemSource().Declare("weight", "n", "w")
+	for i, w := range []float64{9, 4, 0} {
+		src.Add("weight", ns.Tuple{Vals: []ns.Value{ns.S(fmt.Sprintf("v%d", i)), ns.N(w)}})
+	}
+	q := `r(?z, ?n) :- weight(?n, ?w), ?z = (?w + 4) * 0; weight(?m, ?v), r(?v, ?m) => ?m`
+	rows, err := both(mustParse(t, q), baseFor(std(src)))
+	if err != nil || col(rows, "m") != "v2" {
+		t.Fatalf("%v, %v; want v2, whose weight is 0", col(rows, "m"), err)
+	}
+	_, r := reported(t, src, q)
+	var ran string
+	for _, b := range r.Rules {
+		if b.Relation == "r" {
+			ran = b.Ran
+		}
+	}
+	if i, j := strings.Index(ran, "num.mul("), strings.Index(ran, "num.add("); i < 0 || j < 0 || i > j {
+		t.Errorf("control: r ran as %q, so num.mul doesn't come first and this proves nothing", ran)
 	}
 }
 
