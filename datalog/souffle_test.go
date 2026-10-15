@@ -240,8 +240,18 @@ func slot(rel string, i int) string { return fmt.Sprintf("%s#%d", rel, i) }
 // constrain adds a body's literals: each atom's arguments to its relation's columns, and each
 // comparison's sides to each other. scope names the body's variables apart from other bodies'.
 func (u *sTypes) constrain(scope string, b Body) {
-	term := func(t Term, node string) {
+	var term func(t Term, node string)
+	term = func(t Term, node string) {
 		switch {
+		case t.Expr != nil:
+			// Arithmetic (#209) is over numbers, and so is what it computes.
+			u.set(node, sNumber)
+			if e := t.Expr; e.Op == "/" || (e.Op == "call" && souffleOps[e.Func] == "") {
+				u.err = unsupported("%s", e)
+			}
+			for i, a := range t.Expr.Args {
+				term(a, fmt.Sprintf("%s.%d", node, i))
+			}
 		case t.Const != nil && t.Const.Num != nil:
 			u.set(node, sNumber)
 		case t.Const != nil:
@@ -533,8 +543,9 @@ func keyKinds(keys []Var, vk map[Var]sKind) []sKind {
 	return out
 }
 
-// namedBody is body with every _ in a positive atom given a fresh variable, and the body's positive
-// variables in first-seen order with their types: one tuple per binding.
+// namedBody is body with every _ in a positive atom given a fresh variable, and the variables its
+// positive atoms and its computations bind, in first-seen order with their types: one tuple per
+// binding.
 func (tr *souffler) namedBody(body Body, vk map[Var]sKind) (Body, []Var, []sKind) {
 	out := Body{Literals: make([]Literal, len(body.Literals))}
 	var cols []Var
@@ -547,6 +558,16 @@ func (tr *souffler) namedBody(body Body, vk map[Var]sKind) (Body, []Var, []sKind
 			seen[l.Agg.Result] = true
 			cols = append(cols, l.Agg.Result)
 			kinds = append(kinds, vk[l.Agg.Result])
+		}
+		if c := l.Compare; c != nil && c.Op == "=" {
+			// ?y = expr binds ?y (#209), so it is a column too.
+			for _, t := range []Term{c.Left, c.Right} {
+				if t.Var != "" && t.Var != "_" && !seen[t.Var] && (c.Left.Expr != nil || c.Right.Expr != nil) {
+					seen[t.Var] = true
+					cols = append(cols, t.Var)
+					kinds = append(kinds, vk[t.Var])
+				}
+			}
 		}
 		if l.Pos == nil {
 			continue
@@ -738,6 +759,10 @@ func (tr *souffler) body(b Body, vk map[Var]sKind) string {
 					}
 				}
 			}
+			// num.* gives absent no result, where Soufflé would compute with the sentinel.
+			for _, v := range exprVars(c.Left, exprVars(c.Right, nil)) {
+				out = append(out, souffleVar(v)+" != "+souffleAbsent)
+			}
 		}
 	}
 	return strings.Join(out, ", ")
@@ -831,8 +856,36 @@ func (tr *souffler) having(hs []Compare, sel []Term, aggs souffleAggs) ([]string
 
 func souffleVar(v Var) string { return "V_" + string(v) }
 
+// exprVars appends the variables inside an expression to out.
+func exprVars(t Term, out []Var) []Var {
+	if t.Expr == nil {
+		return out
+	}
+	for _, a := range t.Expr.Args {
+		if a.Expr != nil {
+			out = exprVars(a, out)
+		} else if a.Var != "" && a.Var != "_" && !slices.Contains(out, a.Var) {
+			out = append(out, a.Var)
+		}
+	}
+	return out
+}
+
+// souffleOps writes the num.* functions an expression may call as Soufflé's operators.
+var souffleOps = map[string]string{"num.add": "+", "num.sub": "-", "num.mul": "*", "num.neg": "neg"}
+
 func souffleTerm(t Term) string {
 	switch {
+	case t.Expr != nil:
+		e := t.Expr
+		op := e.Op
+		if op == "call" {
+			op = souffleOps[e.Func]
+		}
+		if op == "neg" {
+			return "(-" + souffleTerm(e.Args[0]) + ")"
+		}
+		return "(" + souffleTerm(e.Args[0]) + " " + op + " " + souffleTerm(e.Args[1]) + ")"
 	case t.Const != nil:
 		return souffleConst(*t.Const)
 	case t.Var == "_" || t.Var == "":
@@ -1193,7 +1246,7 @@ func TestSouffleAgreesWithNaive(t *testing.T) {
 	}
 	t.Logf("%d seeds\n compared with Soufflé: %s\n skipped: %s\n mixed units left off for Soufflé: %d\n disagreements: %d", seeds, strings.Join(counts, ", "), strings.Join(reasons, ", "), run.unitless, len(run.diffs))
 	if seeds >= 50 {
-		for _, s := range []string{"program", "recursion", "negation", "head aggregate", "goal aggregate", "bound goal"} {
+		for _, s := range []string{"program", "recursion", "negation", "head aggregate", "goal aggregate", "bound goal", "arithmetic"} {
 			if run.compared[s] == 0 {
 				t.Errorf("control: no %s program was compared with Soufflé", s)
 			}
@@ -1227,11 +1280,12 @@ func TestSouffleCatchesAWrongTranslation(t *testing.T) {
 func corpusCase(seed int64) (genCase, bool) {
 	rnd := rand.New(rand.NewSource(seed))
 	facts := genGraph(rnd)
+	g := newGenerator(rnd, facts)
 	mixed := facts.mixedUnits()
 	if mixed {
 		facts.units = nil
 	}
-	return genCase{prog: (&generator{rnd: rnd, nodes: facts.n}).program(), facts: facts}, mixed
+	return genCase{prog: g.program(), facts: facts}, mixed
 }
 
 // The translation, checked without Soufflé so CI's main job covers it: a rule, negation and a
@@ -1307,6 +1361,15 @@ func TestSouffleTranslation(t *testing.T) {
 		{`weight(_, ?w) => min(?w) having min(?w) < 5`, nil, []string{
 			"p_answer(A1_0) :- p_agg1_0(A1_0), A1_0 < 5, A1_0 != -999999.",
 		}},
+		// Arithmetic is Soufflé's (#209), and a variable it reads refuses souffleAbsent, which num.*
+		// computes nothing from; a computed ?y is a column of the bindings an aggregate reads.
+		{`weight(?n, ?w), ?y = (?w + 1) * num.sub(?w, 2), -?w < ?y => ?n, ?y`, nil, []string{
+			"V_y = ((V_w + 1) * (V_w - 2)), V_w != -999999,",
+			"(-V_w) < V_y, V_y != -999999, V_w != -999999.",
+		}},
+		{`weight(?n, ?w), ?y = ?w * 2 => sum(?y)`, nil, []string{
+			"p_all1(V_n, V_w, V_y) :- p_weight(V_n, V_w), V_y = (V_w * 2), V_w != -999999.",
+		}},
 	} {
 		got, err := tr(c.text, c.bind)
 		if err != nil {
@@ -1327,6 +1390,8 @@ func TestSouffleTranslation(t *testing.T) {
 		{`r(?a, ?b, ?a) :- edge(?a, _), weight(_, ?b); r(?x, ?y, ?y) => ?x`, "a value is used as both a symbol and a number"},
 
 		{`node(?n) => ?n limit 1 offset 1`, "offset"},
+		{`weight(?n, ?w), ?w / 2 < 3 => ?n`, "?w / 2"},
+		{`weight(?n, ?w), num.div(?w, 2) < 3 => ?n`, "num.div(?w, 2)"},
 	} {
 		_, err := tr(c.text, nil)
 		var u souffleUnsupported

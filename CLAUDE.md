@@ -335,7 +335,12 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   units (#192), half all in volts and half a mix of volts, amps and none (`genUnits`, drawn from a
   source seeded by the graph so a seed's program is unchanged). Soufflé has no units, so
   `corpusCase` compares a mixed seed with its units left off, and a single unit as it is (answers
-  compare by text).
+  compare by text). A unitless graph's programs write arithmetic now and then (#209: `+ - *`,
+  negation, `num.add(…)`, in comparisons and as `?y = expr`, sometimes before its binders, never in a
+  recursive rule), drawn from a stream of its own (`generator.arith`, from `newGenerator`, which reads
+  the units before `corpusCase` drops them) so other seeds' programs don't move. A computed `?y` is
+  what a head or the goal reads more often than not: a filter alone hid a wrong `num.add` at 5000
+  seeds.
 - **Naive is checked against Soufflé** (`souffle_test.go`, #23). The translator is test code, from
   the parsed `Query` and its bound values to a Soufflé program whose relations carry a per-program
   prefix, so a batch of 200 programs is one souffle run (batches run in parallel). Types come from
@@ -345,8 +350,10 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   body is two aggregates and nothing else. A variable bound to one value is a constant, as
   `bindGoal` makes it (not a group key), and an aggregate goal with no group column writes jaala's
   row over nothing explicitly. `order by` and `limit` are applied in Go with jaala's own order. A
-  program outside the fragment (`list`, a rule head `sum`/`min`/`max` with no group column) is
-  counted by reason, never dropped. `TestSouffleCatchesAWrongTranslation` drops negation on purpose
+  program outside the fragment (`list`, a rule head `sum`/`min`/`max` with no group column, a
+  division, since Soufflé's numbers are integers) is counted by reason, never dropped. An expression
+  is Soufflé arithmetic, every variable it reads refusing `souffleAbsent` (num.* computes nothing
+  from absent), and `?y = expr` makes `?y` a column of an aggregate's helper relation. `TestSouffleCatchesAWrongTranslation` drops negation on purpose
   and requires a shrunk disagreement. `make setup` installs Soufflé 2.5, CI's version: Homebrew's
   bottle on macOS (arm64 included), CI's release `.deb` on Ubuntu x86_64. Without it on `PATH`,
   `./selfcheck.sh` prints "could not run".

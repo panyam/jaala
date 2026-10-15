@@ -233,6 +233,25 @@ type generator struct {
 	rels   []genRel
 	vars   int
 	shapes map[string]bool
+	// arith draws the expressions a numeric comparison writes (#209), from a stream of its own so a
+	// seed's program is what it was before them, wherever none is written. Nil for a graph whose
+	// weights carry units: V times V is 25 V^2, which Soufflé, comparing by text, reads as 25.
+	arith *rand.Rand
+	// recursive is set while a recursive rule's body is drawn, which writes no expression: a computing
+	// rule that reaches itself is refused (#207).
+	recursive bool
+}
+
+// newGenerator draws a program for facts from rnd. Arithmetic depends on the graph's units as drawn,
+// before corpusCase drops mixed ones, so the corpus and the Soufflé step generate one program.
+func newGenerator(rnd *rand.Rand, facts genFacts) *generator {
+	g := &generator{rnd: rnd, nodes: facts.n}
+	if facts.units == nil {
+		h := fnv.New64a()
+		fmt.Fprint(h, "arith", facts.n, facts.edges, facts.weights)
+		g.arith = rand.New(rand.NewSource(int64(h.Sum64())))
+	}
+	return g
 }
 
 func (g *generator) chance(p float64) bool { return g.rnd.Float64() < p }
@@ -255,9 +274,10 @@ func (g *generator) fresh() string {
 // Literals are added in an order Naive can run as written: a comparison or a negation only reads
 // variables already bound.
 type genBody struct {
-	lits    []genLit
-	bound   map[genType][]string
-	results map[string]bool // what a body aggregate binds
+	lits     []genLit
+	bound    map[genType][]string
+	results  map[string]bool // what a body aggregate binds
+	computed []string        // what ?y = expr binds (#209), which a head or the goal reads now and then
 }
 
 func newBody() *genBody { return &genBody{bound: map[genType][]string{}} }
@@ -314,7 +334,11 @@ func (g *generator) atom(b *genBody, r genRel, neg bool) {
 // binding makes sure a variable of type t is bound, adding node(?x) or weight(?n, ?w) when none is.
 func (g *generator) binding(b *genBody, t genType) string {
 	if vars := b.bound[t]; len(vars) > 0 {
-		return vars[g.pick(len(vars))]
+		v := vars[g.pick(len(vars))]
+		if t == genNum {
+			v = g.computed(b, v)
+		}
+		return v
 	}
 	v := g.fresh()
 	if t == genNode {
@@ -347,7 +371,83 @@ func (g *generator) compare(b *genBody) {
 	if t == genNum {
 		ops = []string{"=", "!=", "<", "<=", ">", ">="}
 	}
-	b.lits = append(b.lits, genLit{args: []string{l, r}, op: ops[g.pick(len(ops))]})
+	op := ops[g.pick(len(ops))]
+	if t == genNum && g.arith != nil && !g.recursive && g.arith.Float64() < 0.4 {
+		l = g.expression(vars, l)
+		g.shapes["arithmetic"] = true
+		if g.arith.Float64() < 0.5 {
+			// ?y = expr computes into a fresh variable, which the rest of the body can read.
+			g.computeInto(b, l)
+			return
+		}
+		g.place(b, genLit{args: []string{l, r}, op: op})
+		return
+	}
+	b.lits = append(b.lits, genLit{args: []string{l, r}, op: op})
+}
+
+// computeInto adds ?y = e for a fresh ?y, which the rest of the body can read.
+func (g *generator) computeInto(b *genBody, e string) {
+	y := g.fresh()
+	g.place(b, genLit{args: []string{y, e}, op: "="})
+	b.bound[genNum] = append(b.bound[genNum], y)
+	b.computed = append(b.computed, y)
+}
+
+// place adds a computing literal at the end, or now and then earlier, before what binds its
+// operands: every evaluator holds it until they're bound (deferComparisons, #5), and the planner
+// orders it by its modes.
+func (g *generator) place(b *genBody, l genLit) {
+	i := len(b.lits)
+	if g.arith.Float64() < 0.3 {
+		i = g.arith.Intn(len(b.lits) + 1)
+	}
+	b.lits = slices.Insert(b.lits, i, l)
+}
+
+// compute adds a computed number to a body that binds one, now and then, so a head or the goal can
+// show what arithmetic answers rather than only what it filters.
+func (g *generator) compute(b *genBody) {
+	if vars := b.bound[genNum]; g.arith != nil && !g.recursive && len(vars) > 0 && g.arith.Float64() < 0.15 {
+		g.computeInto(b, g.expression(vars, vars[g.arith.Intn(len(vars))]))
+		g.shapes["arithmetic"] = true
+	}
+}
+
+// computed is a computed variable of b, now and then, to read in place of v.
+func (g *generator) computed(b *genBody, v string) string {
+	if len(b.computed) > 0 && g.arith != nil && g.arith.Float64() < 0.6 {
+		return b.computed[g.arith.Intn(len(b.computed))]
+	}
+	return v
+}
+
+// expression writes arithmetic over v and the number variables vars (#209): a sum, a difference, a
+// product, a negation or a function call, nested now and then. No division: Soufflé's numbers are
+// integers.
+func (g *generator) expression(vars []string, v string) string {
+	operand := func() string {
+		if g.arith.Float64() < 0.5 {
+			return vars[g.arith.Intn(len(vars))]
+		}
+		return strconv.Itoa(g.arith.Intn(5))
+	}
+	var e string
+	switch g.arith.Intn(6) {
+	case 0:
+		e = v + " + " + operand()
+	case 1:
+		e = v + " - " + operand()
+	case 2:
+		e = v + " * " + operand()
+	case 3:
+		e = "-" + v
+	case 4:
+		e = "num.add(" + v + ", " + operand() + ")"
+	default:
+		e = "(" + v + " + " + operand() + ") * " + operand()
+	}
+	return e
 }
 
 // readable is what a body in layer may read: the graph and lower layers always, its own layer only
@@ -391,6 +491,7 @@ func (g *generator) body(layer int, recursive bool) *genBody {
 	if g.chance(0.3) {
 		g.compare(b)
 	}
+	g.compute(b)
 	return b
 }
 
@@ -440,7 +541,9 @@ func (g *generator) bodyAggregate(b *genBody, layer int) {
 }
 
 func (g *generator) rule(r genRel, recursive bool) genRule {
+	g.recursive = recursive
 	b := g.body(r.layer, recursive)
+	g.recursive = false
 	args := make([]string, len(r.cols))
 	for i, t := range r.cols {
 		if g.chance(0.05) {
@@ -565,6 +668,7 @@ func (g *generator) goal() genGoal {
 	if g.chance(0.2) {
 		g.compare(b)
 	}
+	g.compute(b)
 	goal := genGoal{}
 	if g.chance(0.35) {
 		g.shapes["goal aggregate"] = true
@@ -586,6 +690,9 @@ func (g *generator) goal() genGoal {
 			if len(goal.sel) == 0 || (g.chance(0.5) && !slices.Contains(goal.sel, v)) {
 				goal.sel = append(goal.sel, v)
 			}
+		}
+		if y := g.computed(b, ""); y != "" && !slices.Contains(goal.sel, y) {
+			goal.sel = append(goal.sel, y)
 		}
 	}
 	goal.body = b.lits
@@ -1315,7 +1422,7 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 	for seed := first; seed < first+int64(seeds); seed++ {
 		rnd := rand.New(rand.NewSource(seed))
 		facts := genGraph(rnd)
-		prog := (&generator{rnd: rnd, nodes: facts.n}).program()
+		prog := newGenerator(rnd, facts).program()
 		if facts.units != nil {
 			withUnits++
 		}
@@ -1349,7 +1456,7 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 			}
 		}
 	}
-	shapes := []string{"program", "recursion", "negation", "head aggregate", "goal aggregate", "body aggregate", "bound goal", "set-bound goal"}
+	shapes := []string{"program", "recursion", "negation", "head aggregate", "goal aggregate", "body aggregate", "bound goal", "set-bound goal", "arithmetic"}
 	var counts, issues []string
 	for _, sh := range shapes {
 		counts = append(counts, fmt.Sprintf("%s %d/%d", sh, compared[sh+"/plain"], compared[sh+"/witnessed"]))
@@ -1363,6 +1470,9 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 		seeds, strings.Join(counts, ", "), skipped, strings.Join(issues, ", "), withUnits, unitAnswers, mixedAnswers)
 	if seeds < 50 {
 		return
+	}
+	if compared["arithmetic/plain"] == 0 || compared["arithmetic/witnessed"] == 0 {
+		t.Errorf("control: no program computed with arithmetic (#209)")
 	}
 	if lookedUpPrograms == 0 {
 		t.Errorf("control: no program made a lookup through a Source answering them")
@@ -1428,7 +1538,7 @@ func TestASeedGeneratesOneProgram(t *testing.T) {
 	gen := func(seed int64) string {
 		rnd := rand.New(rand.NewSource(seed))
 		facts := genGraph(rnd)
-		p := (&generator{rnd: rnd, nodes: facts.n}).program()
+		p := newGenerator(rnd, facts).program()
 		return fmt.Sprintf("%s\n bind: %v\n facts: %s", p, p.goal.bind, facts)
 	}
 	aggregates := 0
@@ -1465,7 +1575,7 @@ func TestShrinkReachesTheSmallestFailingCase(t *testing.T) {
 	for seed := int64(1); seed <= 40; seed++ {
 		rnd := rand.New(rand.NewSource(seed))
 		facts := genGraph(rnd)
-		c := genCase{prog: (&generator{rnd: rnd, nodes: facts.n}).program(), facts: facts, witnessed: true}
+		c := genCase{prog: newGenerator(rnd, facts).program(), facts: facts, witnessed: true}
 		if ok, _ := negates(c); !ok || len(c.prog.rules) < 3 || len(c.facts.edges) == 0 {
 			continue
 		}
@@ -1515,7 +1625,7 @@ func TestBrokenProgramsFailTheSameWay(t *testing.T) {
 	for seed := int64(1); seed <= int64(seeds); seed++ {
 		rnd := rand.New(rand.NewSource(seed))
 		facts := genGraph(rnd)
-		prog := (&generator{rnd: rnd, nodes: facts.n}).program()
+		prog := newGenerator(rnd, facts).program()
 		for _, broken := range breakProgram(prog, rnd) {
 			q, err := Parse(broken.String())
 			if err != nil {
