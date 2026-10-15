@@ -44,7 +44,7 @@ type idbTuple struct {
 // no new conn tuple appears — which is where a chain U1-N1-U2-N2-U3 closes up so conn(U1,U3) exists
 // even though U1 and U3 share no net directly. See stratify for the strata assignment.
 func (Naive) materialize(b *Base, rules []Rule) error {
-	byHead, strata, err := b.checkRules(rules)
+	byHead, strata, err := b.strataOf(rules)
 	if err != nil {
 		return err
 	}
@@ -88,6 +88,18 @@ func (Naive) materialize(b *Base, rules []Rule) error {
 // check here reads the rules and the relation vocabulary, never a row, so a broken rule set can be
 // rejected where the rule is built rather than where it first runs.
 func (b *Base) checkRules(rules []Rule) (map[string][]Rule, [][]string, error) {
+	return b.checkRulesAs(rules, true)
+}
+
+// strataOf is checkRules for an evaluator's fixpoint, whose rules evaluate checked as linked, and may
+// be the demand rewrite's. It leaves out checkComputedRecursion, which reads the program's own
+// recursion: demand's cycles, a call's demand read from the call before it, make a rule that
+// computes look recursive in a program that isn't (#266).
+func (b *Base) strataOf(rules []Rule) (map[string][]Rule, [][]string, error) {
+	return b.checkRulesAs(rules, false)
+}
+
+func (b *Base) checkRulesAs(rules []Rule, linked bool) (map[string][]Rule, [][]string, error) {
 	byHead := map[string][]Rule{}
 	for _, r := range rules {
 		rel := r.Head.Relation
@@ -114,8 +126,10 @@ func (b *Base) checkRules(rules []Rule) (map[string][]Rule, [][]string, error) {
 			return nil, nil, err
 		}
 	}
-	if err := checkComputedRecursion(rules); err != nil {
-		return nil, nil, err
+	if linked {
+		if err := checkComputedRecursion(rules); err != nil {
+			return nil, nil, err
+		}
 	}
 	strata, err := stratify(rules, b.idbArity)
 	if err != nil {

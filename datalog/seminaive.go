@@ -83,7 +83,7 @@ const deltaSep = "\x00delta"
 // indexing and negation are untouched: a variant is the rule with one atom renamed. Negation never
 // reads the stratum's own relations (stratification forbids it), so only positive atoms vary.
 func (s SemiNaive) materialize(b *Base, rules []Rule) error {
-	byHead, strata, err := b.checkRules(rules)
+	byHead, strata, err := b.strataOf(rules)
 	if err != nil {
 		return err
 	}
