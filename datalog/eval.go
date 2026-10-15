@@ -727,12 +727,13 @@ func (b *binding) clone() *binding {
 // which the planner ranks by modes alone.
 func deferComparisons(lits []Literal, reg *ns.Vocabulary) []Literal {
 	bound := map[Var]bool{}
-	var rest []Literal
+	var rest, waiting []Literal
 	ready := func(l Literal) bool {
 		if l.computed && l.Pos != nil {
 			// A call an expression was written as waits for one of its function's modes (#5).
 			bi, ok := reg.Predicate(l.Pos.Relation)
-			return !ok || !bi.IsGenerator() || bi.Satisfied(boundFlags(l.Pos, bound)) && !awaitsBinder(l, rest, bound, reg)
+			return !ok || !bi.IsGenerator() || bi.Satisfied(boundFlags(l.Pos, bound)) && !awaitsBinder(l, rest, bound, reg) &&
+				!awaitsOperand(l, rest, bound, reg) && !awaitsOperand(l, waiting, bound, reg)
 		}
 		if l.Pos != nil {
 			// A filter waits for its arguments as a comparison does (#215).
@@ -753,7 +754,6 @@ func deferComparisons(lits []Literal, reg *ns.Vocabulary) []Literal {
 		return true
 	}
 	out := make([]Literal, 0, len(lits))
-	var waiting []Literal
 	for i, lit := range lits {
 		rest = lits[i+1:]
 		if !ready(lit) {
@@ -767,7 +767,7 @@ func deferComparisons(lits []Literal, reg *ns.Vocabulary) []Literal {
 		bindAll(lit.Pos, bound)
 		for progress := true; progress; {
 			progress = false
-			still := waiting[:0]
+			var still []Literal // a new slice, since ready reads waiting
 			for _, w := range waiting {
 				if ready(w) {
 					out = append(out, w)
@@ -911,6 +911,34 @@ func awaitsBinder(lit Literal, rest []Literal, bound map[Var]bool, reg *ns.Vocab
 				if a.Var == t.Var {
 					return true
 				}
+			}
+		}
+	}
+	return false
+}
+
+// awaitsOperand reports whether a call an expression was written as would solve for a variable that
+// something among rest binds: a relation holding it, or another computed call whose result it is. A function run backwards answers less than forwards: num.mul
+// solving ?t * 0 = 0 for ?t has no single answer, so it gives none, where the forward product of the
+// ?t a later num.add computes is 0 (#273). So a call runs backwards only for what nothing else in the
+// body will bind, as Ohm's law finds a resistance no relation holds.
+func awaitsOperand(lit Literal, rest []Literal, bound map[Var]bool, reg *ns.Vocabulary) bool {
+	for _, t := range lit.Pos.Args {
+		if t.Var == "" || t.Var == "_" || bound[t.Var] {
+			continue
+		}
+		for _, o := range rest {
+			if o.Pos == nil || o.Pos == lit.Pos {
+				continue
+			}
+			args := o.Pos.Args
+			if o.computed {
+				args = args[len(args)-1:] // a computed call binds its result, and reads the rest
+			} else if _, ok := reg.Predicate(o.Pos.Relation); ok {
+				continue // a generator may itself wait for this call's result
+			}
+			if slices.ContainsFunc(args, func(a Term) bool { return a.Var == t.Var }) {
+				return true
 			}
 		}
 	}
