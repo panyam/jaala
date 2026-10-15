@@ -633,9 +633,10 @@ charged to the budget, from declaire#211's measurement); it stays open for Decla
 can evaluate (a conjunction, a walk, an aggregate, a page) and jaala combines the results, measured
 by the same benchmark's `shipped` column and its questions `two-hops-in-repo`, `count-lines`, `page`,
 `self-loops` (#236) and `attrs-of-reached` (q09r's shape, #268); `edges` is the unbound read no store
-filters, and `edges-budgeted` carries #233's stopped read. All thirteen of its jaala tickets are
+filters, and `edges-budgeted` carries #233's stopped read. All fourteen of its jaala tickets are
 closed (#236 to #241, #246, #250, #252 to #254 by v0.1.50; #263 and #268, from Declaire's first
-measurement and folding #259, by v0.1.52): a conjunction, a walk, a count, a page, a batch of
+measurement and folding #259, by v0.1.52; #270, a witnessed goal's bindings reaching what its rule
+calls, q09r's `http.route`, after v0.1.52): a conjunction, a walk, a count, a page, a batch of
 bindings (across a partitioned federation too), a walked step and a lone filtered literal each go to
 a store, and every jaala line of its "Done when" holds. Like #219 it stays open for Declaire's run
 (`bench -time` on a federated view). jaala's
@@ -653,10 +654,12 @@ with WIP commits. Squash against `origin/main`, never a local name that may have
 
 Stacked PRs (each branched off the one below, its base that branch) review and merge in order, and
 GitHub retargets the next to `main` when its base merges; confirm each merge commit is an ancestor of
-`origin/main` before deleting branches. Run each branch's `./selfcheck.sh` in a detached worktree
+`origin/main` before deleting branches. Merged first, the upper PR lands in the lower's branch, not
+`main` (#275 did): its issue stays open until the lower PR merges, and is closed by hand then. Run each branch's `./selfcheck.sh` in a detached worktree
 (`git worktree add --detach <dir> <branch>`) so the checkout stays free for the next branch, and
 remove the worktree after. A selfcheck run on the working tree while editing it tests half-written
-code.
+code. Run it in the background as `./selfcheck.sh > log 2>&1` with nothing after it: a trailing
+`; echo exit $?` made the task report 0 for a selfcheck that failed (#209's, which found #273).
 
 Pushing a branch can get a PR opened for it under the owner's account (#168 was), titled and
 bodied from the commit. Check `gh pr list --head <branch>` before `gh pr create`, and edit that PR
