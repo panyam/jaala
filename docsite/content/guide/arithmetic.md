@@ -25,6 +25,18 @@ and can call a function by name, in which case the function's last argument is i
 
 A division by zero, or a value that isn't a number, has no result, so that row has none rather than the query failing.
 
+## In the answer and in a rule's head
+
+An expression can be an answer column too, named as it's written without its `?`s, so `?i * ?r` answers a column `i * r` ([#206](https://github.com/panyam/jaala/issues/206)):
+
+{{ demo "demos/guide/arithmetic-projection.yaml" }}
+
+and a rule's head can compute an argument, as `?y = expr` in its body would:
+
+{{ demo "demos/guide/arithmetic-head.yaml" }}
+
+A column like `count(?n)` stays an aggregate, so a host's own function alone in a column is called through an expression around it, or by its dotted name.
+
 ## Functions written as rules
 
 A rule can be a function too. `power` below has no relation to read: its body computes `?p` from `?v` and `?i`, which it takes from its caller ([#208](https://github.com/panyam/jaala/issues/208)), so an expression calls it as `power(?v, ?i)` with the result filling its last argument:
@@ -60,5 +72,3 @@ A source still serves its values in base units, so `5mV` arrives as `0.005V`. A 
 A rule can't compute a value and feed it back into its own recursion, since `n(?m) :- n(?n), ?m = ?n + 1` never stops:
 
 {{ demo "demos/guide/arithmetic-recursion.yaml" }}
-
-Arithmetic in a rule's head or in the projection (`=> ?a * ?b`) is [#206](https://github.com/panyam/jaala/issues/206); compute into a variable in the body and project that.

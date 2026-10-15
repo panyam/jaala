@@ -580,11 +580,30 @@ func parseAtom(s string) (Atom, error) { return parseAtomArgs(s, parseTerm) }
 // parseHeadAtom parses a rule head, whose arguments may also be aggregates: degree(?n, count(?m)).
 func parseHeadAtom(s string) (Atom, error) {
 	return parseAtomArgs(s, func(a string) (Term, error) {
-		if a = strings.TrimSpace(a); a != "" && a[0] != '"' && strings.IndexByte(a, '(') >= 0 {
+		if a = strings.TrimSpace(a); a != "" && a[0] != '"' && strings.IndexByte(a, '(') >= 0 && !isExpression(a) {
 			return parseAggregate(a)
+		}
+		if isExpression(a) {
+			return parseOperand(a)
 		}
 		return parseTerm(a)
 	})
+}
+
+// isExpression reports whether a head argument or a projection column is arithmetic (#206) rather
+// than a term or an aggregate. A whole column name(...) with an undotted name is an aggregate's
+// syntax, so avg(?m) and count(0) still fail as aggregates; a dotted call, num.add(?r, 1), or an
+// operator over terms is arithmetic.
+func isExpression(s string) bool {
+	s = strings.TrimSpace(s)
+	if _, err := parseTerm(s); err == nil {
+		return false
+	}
+	t, err := parseOperand(s)
+	if err != nil || t.Expr == nil {
+		return false
+	}
+	return t.Expr.Op != "call" || strings.Contains(t.Expr.Func, ".")
 }
 
 func parseAtomArgs(s string, term func(string) (Term, error)) (Atom, error) {
@@ -676,8 +695,8 @@ func parseTerm(s string) (Term, error) {
 	}
 }
 
-// parseSelect parses the projection columns: each is a ?variable (a group key) or an aggregate
-// func(?variable), func in {count,min,max,sum}.
+// parseSelect parses the projection columns: each is a ?variable (a group key), an aggregate
+// func(?variable), func in {count,min,max,sum,list}, or arithmetic over variables (#206).
 func parseSelect(proj string) ([]Term, error) {
 	proj = strings.TrimSpace(proj)
 	if proj == "" {
@@ -699,6 +718,9 @@ func parseSelect(proj string) ([]Term, error) {
 }
 
 func parseSelItem(p string) (Term, error) {
+	if isExpression(p) {
+		return parseOperand(p)
+	}
 	if strings.IndexByte(p, '(') >= 0 {
 		return parseAggregate(p)
 	}

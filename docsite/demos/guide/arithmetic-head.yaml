@@ -1,0 +1,7 @@
+facts: |
+  res("R1", 1000ohm); res("R2", 20ohm)
+  cur("R1", 0.005A); cur("R2", 0.25A)
+query: |
+  dissipates(?p, ?i * ?i * ?r) :- res(?p, ?r), cur(?p, ?i);
+  dissipates(?p, ?w), ?w > 1W => ?p, ?w
+expect: [[R2, "1.25W"]]

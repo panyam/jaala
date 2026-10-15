@@ -115,6 +115,73 @@ func TestAnExpressionPrintsAsItParses(t *testing.T) {
 	}
 }
 
+// Arithmetic in a rule head or the projection (#206) computes into a column as ?y = expr in the body
+// would. A projected expression's column is its text without the ?s, in the answer and in Columns. A
+// head keeps its written text in a witness, whether the relation is inlined (one rule) or not (two).
+func TestArithmeticInAHeadOrTheProjection(t *testing.T) {
+	for _, c := range []struct {
+		name, q string
+		cols    []string
+		want    []string
+	}{
+		{"projected", `res(?p, ?r), cur(?p, ?i) => ?p, ?r * ?i`, []string{"p", "r * i"}, []string{"R1 2[V]", "R2 4.7[V]"}},
+		{"projected, with a call and a negation", `res(?p, ?r) => ?p, -?r, num.add(?r, 1ohm)`, []string{"p", "-r", "num.add(r, 1ohm)"}, []string{"R1 -1000[ohm] 1001[ohm]", "R2 -470[ohm] 471[ohm]"}},
+		{"projected beside an aggregate", `res(?p, ?r) => ?r * 2, count(?p)`, []string{"r * 2", "count(p)"}, []string{"940[ohm] 1", "2000[ohm] 1"}},
+		{"in a head", `v(?p, ?r * ?i) :- res(?p, ?r), cur(?p, ?i); v(?p, ?x) => ?p, ?x`, []string{"p", "x"}, []string{"R1 2[V]", "R2 4.7[V]"}},
+		{"in one of two rules", `v(?p, ?r * ?i) :- res(?p, ?r), cur(?p, ?i); v(?p, ?x) :- rail(?p, ?x); v(?p, ?x) => ?p, ?x`, []string{"p", "x"}, []string{"R1 2[V]", "R1 5[V]", "R2 3.3[V]", "R2 4.7[V]"}},
+		{"in a head and the projection", `v(?p, ?r * ?i) :- res(?p, ?r), cur(?p, ?i); v(?p, ?x) => ?p, ?x / 2`, []string{"p", "x / 2"}, []string{"R1 1[V]", "R2 2.35[V]"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			q := mustParse(t, c.q)
+			if got := q.Columns(); !reflect.DeepEqual(got, toVars(c.cols)) {
+				t.Errorf("Columns() = %q, want %q", got, c.cols)
+			}
+			if err := Validate(q, std(ohmsLaw())); err != nil {
+				t.Errorf("Validate: %v", err)
+			}
+			for _, extra := range [][]Option{nil, {Witnesses()}} {
+				rows, err := both(q, baseFor(std(ohmsLaw())), extra...)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := withUnits(rows, c.cols...); !reflect.DeepEqual(got, c.want) {
+					t.Errorf("%d extra options: %v, want %v", len(extra), got, c.want)
+				}
+				if extra != nil && strings.HasPrefix(c.q, "v(") {
+					if w := rows[0].Witness[0]; w.Relation != "v" || !strings.Contains(w.Rule, "v(?p, ?r * ?i) :- ") {
+						t.Errorf("witness %s by %q, want v's rule as written", w.Relation, w.Rule)
+					}
+				}
+			}
+		})
+	}
+	for _, c := range []struct{ q, want string }{
+		{`res(?p, ?r) => ?p, ?r * ?q`, `nothing binds what num.mul needs first`},
+		// ?q is unbound, so num.mul solves it from the column: v takes its caller's value (#200).
+		{`v(?p, ?r * ?q) :- res(?p, ?r); v(?p, ?x) => ?x`, `v's ?r * q is an input argument, and the call in the query doesn't bind it`},
+		{`res(?p, ?r) => ?p, avg(?r)`, `unknown aggregate "avg"`},
+	} {
+		if _, err := both(mustParse(t, c.q), baseFor(std(ohmsLaw()))); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: %v, want it to say %q", c.q, err, c.want)
+		}
+	}
+	// A computing head prints as it parses.
+	text := `v(?p, (?r + 1) * num.add(?i, 2)) :- res(?p, ?r), cur(?p, ?i)`
+	r := mustParse(t, text+`; v(?p, ?x) => ?x`).Rules[0]
+	again := mustParse(t, r.String()+`; v(?p, ?x) => ?x`).Rules[0]
+	if !reflect.DeepEqual(again.Head, r.Head) {
+		t.Errorf("%s printed as %s, which parses differently", text, r)
+	}
+}
+
+func toVars(ss []string) []Var {
+	out := make([]Var, len(ss))
+	for i, s := range ss {
+		out[i] = Var(s)
+	}
+	return out
+}
+
 const powerFn = `power(?v, ?i, ?p) :- ?p = ?v * ?i;`
 
 func TestARuleIsAFunctionAnExpressionCalls(t *testing.T) {
