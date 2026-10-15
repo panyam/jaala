@@ -503,7 +503,7 @@ A comparison needs both sides to have values, so a variable it compares has to a
 
 `query: … needs all arguments bound (a variable must appear in a relation before … tests it)`
 
-A test like `str.contains` needs every argument bound by the rest of the goal.
+A test like `str.contains` needs every argument bound by the rest of its body, in the goal or a rule. It's checked before anything runs, so it doesn't matter where in the body the test is written: `str.contains(?x, "R"), rail(?x, _)` runs the test once `rail` has bound `?x`.
 
 {{ demo "demos/errors/needs-all-arguments-bound.yaml" }}
 

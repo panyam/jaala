@@ -94,6 +94,9 @@ func ValidateBound(q Query, reg *ns.Vocabulary, vars ...Var) error {
 	if err := checkModes(b, "the query", q.Goal); err != nil {
 		return err
 	}
+	if err := checkFilters(b, q.Goal, nil); err != nil {
+		return err
+	}
 	_, negs := splitNegations(q.Goal.Literals)
 	if err := b.checkNegatedRelations(negs); err != nil {
 		return err
@@ -120,6 +123,9 @@ func validateWithoutVocabulary(q Query, reg *ns.Vocabulary, written Query, bind 
 	b := newValidationBase(reg)
 	b.inputRels = inputRelations(q.Rules, reg)
 	if _, _, err := b.checkRules(q.Rules); err != nil {
+		return err
+	}
+	if err := checkFilters(b, q.Goal, nil); err != nil {
 		return err
 	}
 	_, negs := splitNegations(q.Goal.Literals)

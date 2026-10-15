@@ -201,7 +201,10 @@ func (b *Base) validateRule(r Rule) error {
 			return fmt.Errorf("query: rule %q head variable ?%s is not bound by a positive body relation", r.Head.Relation, arg.Var)
 		}
 	}
-	return checkComparisonsFrom(r.Body, inputs)
+	if err := checkComparisonsFrom(r.Body, inputs); err != nil {
+		return err
+	}
+	return checkFilters(b, r.Body, inputs)
 }
 
 // checkComparisons refuses a comparison over a variable no positive literal of its body binds. Such a
