@@ -361,7 +361,7 @@ func (f *Federation) cite(i int, t Tuple) Tuple {
 // member storing it (#238). It pushes a conjunction across them: to each member Holds allows for the
 // first atom, asking for every prefix of its matches too (Conjunction.Partial), and continues each
 // prefix in the other members Holds allows for the next atom, so a join whose facts span members
-// costs a call per member asked rather than a call per literal.
+// costs a call per member asked rather than a call per literal, or per prefix leaving a member.
 //
 // The answer never depends on how precisely Holds routes: a prefix is continued in every other member
 // whose Holds allows the next atom, so a Holds that answers true when unsure costs calls, never
@@ -406,22 +406,17 @@ func (f *Federation) Pushes(c Conjunction) bool {
 			return false
 		}
 	}
-	for _, m := range f.members {
-		ps, ok := m.Source.(PushSource)
-		if !ok || !ps.Pushes(p) {
-			return false
-		}
-	}
-	return true
+	return f.membersPush(p)
 }
 
 // Push implements PushSource, citing each tuple to the member it came from. With one member it asks
 // that member. A page of one atom goes to each member whose Holds allows it, each answering its own
 // first rows, which hold the federation's (see Page). Partitioned, it asks each member whose Holds allows c's first atom for c with its
-// prefixes, yields that member's whole rows, and continues each prefix in the other members whose
-// Holds allows the next atom, by pushing the rest of c with the prefix's values as constants. With
-// Bindings, each goes only to the members whose Holds allows the first atom under its values, and
-// each of those is asked once for all of its bindings (#268). A
+// prefixes, yields that member's whole rows, and continues its prefixes in the other members whose
+// Holds allows the next atom: the rest of c once per member for all prefixes of as many atoms, their
+// values as its Bindings (continuePrefixes), or once per prefix with its values as constants to a
+// member that doesn't take Inputs. With Bindings, each goes only to the members whose Holds allows the
+// first atom under its values, and each of those is asked once for all of its bindings (#268). A
 // match is found once, through the member holding its first fact and then, at each fact held
 // elsewhere, the member holding it. A member's failure is wrapped with its name.
 func (f *Federation) Push(ctx context.Context, c Conjunction) iter.Seq2[[]Tuple, error] {
@@ -441,7 +436,7 @@ func (f *Federation) Push(ctx context.Context, c Conjunction) iter.Seq2[[]Tuple,
 			}
 			return
 		}
-		f.pushAcross(ctx, c, -1, nil, yield)
+		f.pushAcross(ctx, c, -1, yield)
 	}
 }
 
@@ -462,13 +457,13 @@ func (f *Federation) pushMember(ctx context.Context, i int, c Conjunction, prefi
 	return true
 }
 
-// pushAcross yields the rows for c, after prefix, from every member but except whose Holds allows c's
-// first atom, continuing their prefixes in the others (see Push).
-func (f *Federation) pushAcross(ctx context.Context, c Conjunction, except int, prefix []Tuple, yield func([]Tuple, error) bool) bool {
+// pushAcross yields the rows for c from every member but except whose Holds allows c's first atom
+// (under one of c's Bindings, when it has Inputs), continuing their prefixes in the others (see Push
+// and continuePrefixes).
+func (f *Federation) pushAcross(ctx context.Context, c Conjunction, except int, yield func([]Tuple, error) bool) bool {
 	p := c
 	p.Partial = true
-	first := c.Atoms[0]
-	for _, i := range f.serving[first.Relation] {
+	for _, i := range f.serving[c.Atoms[0].Relation] {
 		if i == except {
 			continue
 		}
@@ -476,7 +471,7 @@ func (f *Federation) pushAcross(ctx context.Context, c Conjunction, except int, 
 		if !ok {
 			continue
 		}
-		var partial [][]Tuple
+		var prefixes [][]Tuple
 		more := f.pushMember(ctx, i, q, nil, func(row []Tuple, err error) bool {
 			switch {
 			case err != nil:
@@ -484,22 +479,232 @@ func (f *Federation) pushAcross(ctx context.Context, c Conjunction, except int, 
 			case len(row) == 0 || len(row) > len(c.Atoms):
 				return yield(nil, fmt.Errorf("member %s: a row of %d tuples for %d atoms", f.name(i), len(row), len(c.Atoms)))
 			case len(row) < len(c.Atoms):
-				partial = append(partial, row)
+				prefixes = append(prefixes, row)
 				return true
 			}
-			return yield(append(prefix[:len(prefix):len(prefix)], row...), nil)
+			return yield(row, nil)
 		})
-		if !more {
+		if !more || !f.continuePrefixes(ctx, c, i, prefixes, yield) {
 			return false
 		}
-		for _, row := range partial {
-			next := append(prefix[:len(prefix):len(prefix)], row...)
-			if !f.pushAcross(ctx, c.after(row), i, next, yield) {
+	}
+	return true
+}
+
+// continuePrefixes continues prefixes, prefixes of c's matches member from returned, in the other
+// members, yielding each prefix and its continuation as one row. Prefixes of as many atoms share one
+// push of the rest of c (#268), whose Inputs are the variables they bind (and c's own Inputs still
+// free) and whose Bindings are their values, so a member is asked once for all of them; each row it
+// returns is joined back to every prefix with its values. A rest the members don't push with Inputs
+// is pushed once per prefix, with the prefix's values as constants.
+func (f *Federation) continuePrefixes(ctx context.Context, c Conjunction, from int, prefixes [][]Tuple, yield func([]Tuple, error) bool) bool {
+	byLen := map[int][][]Tuple{}
+	var lens []int
+	for _, p := range prefixes {
+		if _, ok := byLen[len(p)]; !ok {
+			lens = append(lens, len(p))
+		}
+		byLen[len(p)] = append(byLen[len(p)], p)
+	}
+	slices.Sort(lens)
+	for _, k := range lens {
+		group := byLen[k]
+		if rest, joined := f.restAfter(c, k, group); rest != nil {
+			more := f.pushAcross(ctx, *rest, from, func(row []Tuple, err error) bool {
+				if err != nil {
+					return yield(nil, err)
+				}
+				for _, p := range joined[f.keyOf(*rest, row)] {
+					if !yield(append(p[:len(p):len(p)], row...), nil) {
+						return false
+					}
+				}
+				return true
+			})
+			if !more {
+				return false
+			}
+			continue
+		}
+		for _, p := range group {
+			more := f.pushAcross(ctx, c.after(p), from, func(row []Tuple, err error) bool {
+				if err != nil {
+					return yield(nil, err)
+				}
+				return yield(append(p[:len(p):len(p)], row...), nil)
+			})
+			if !more {
 				return false
 			}
 		}
 	}
 	return true
+}
+
+// restAfter is c's atoms from k on, for prefixes of k atoms, as one conjunction with Inputs, and the
+// prefixes by the key (keyOf) of the values each binds those Inputs to, or nil when the members don't
+// push it so. A comparison reading a variable the rest's atoms don't goes no further: the engine checks
+// every row again. A prefix agreeing with none of c's Bindings is dropped, and one agreeing with
+// several is joined under each.
+func (f *Federation) restAfter(c Conjunction, k int, prefixes [][]Tuple) (*Conjunction, map[string][][]Tuple) {
+	type place struct{ atom, pos int }
+	first := func(atoms []PushAtom) map[int]place {
+		at := map[int]place{}
+		for ai, a := range atoms {
+			for pos, x := range a.Args {
+				if _, ok := at[x.Var]; x.Var > 0 && !ok {
+					at[x.Var] = place{ai, pos}
+				}
+			}
+		}
+		return at
+	}
+	rest := Conjunction{Atoms: slices.Clone(c.Atoms[k:])}
+	inPrefix, inRest := first(c.Atoms[:k]), first(rest.Atoms)
+	for n := range inRest {
+		if _, bound := inPrefix[n]; bound || slices.Contains(c.Inputs, n) {
+			rest.Inputs = append(rest.Inputs, n)
+		}
+	}
+	slices.Sort(rest.Inputs)
+	for _, cmp := range c.Compare {
+		_, l := inRest[cmp.Left.Var]
+		_, r := inRest[cmp.Right.Var]
+		if (cmp.Left.Var == 0 || l) && (cmp.Right.Var == 0 || r) {
+			rest.Compare = append(rest.Compare, cmp)
+		}
+	}
+	offered := rest
+	offered.Partial = true
+	if len(rest.Inputs) == 0 || !f.membersPush(offered) {
+		return nil, nil
+	}
+	typeOf := func(atoms []PushAtom, p place) ArgType {
+		s, _ := f.Schema(atoms[p.atom].Relation)
+		if p.pos < len(s.Types) {
+			return s.Types[p.pos]
+		}
+		return ArgType{}
+	}
+	joined := map[string][][]Tuple{}
+	for _, p := range prefixes {
+		var origs [][]Value // the values of c's Bindings agreeing with p, or one empty set when c has none
+		if len(c.Inputs) == 0 {
+			origs = [][]Value{nil}
+		}
+		for _, b := range c.Bindings {
+			agrees := true
+			for j, n := range c.Inputs {
+				if at, ok := inPrefix[n]; ok && j < len(b) {
+					t := typeOf(c.Atoms, at)
+					agrees = agrees && joinKey(p[at.atom].Vals[at.pos], t) == joinKey(b[j], t)
+				}
+			}
+			if agrees {
+				origs = append(origs, b)
+			}
+		}
+		seen := map[string]bool{}
+		for _, b := range origs {
+			vals := make([]Value, len(rest.Inputs))
+			for j, n := range rest.Inputs {
+				if at, ok := inPrefix[n]; ok {
+					vals[j] = p[at.atom].Vals[at.pos]
+				} else {
+					vals[j] = b[slices.Index(c.Inputs, n)]
+				}
+			}
+			key := f.bindingKey(rest, vals)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			if _, ok := joined[key]; !ok {
+				rest.Bindings = append(rest.Bindings, vals)
+			}
+			joined[key] = append(joined[key], p)
+		}
+	}
+	return &rest, joined
+}
+
+// membersPush reports whether every member pushes c.
+func (f *Federation) membersPush(c Conjunction) bool {
+	for _, m := range f.members {
+		ps, ok := m.Source.(PushSource)
+		if !ok || !ps.Pushes(c) {
+			return false
+		}
+	}
+	return true
+}
+
+// keyOf is the key of a row of c's matches at c's Inputs, each value read where the input first
+// appears in c's atoms, as bindingKey keys a binding.
+func (f *Federation) keyOf(c Conjunction, row []Tuple) string {
+	vals := make([]Value, len(c.Inputs))
+	for j, n := range c.Inputs {
+	find:
+		for ai, a := range c.Atoms {
+			for pos, x := range a.Args {
+				if x.Var == n {
+					vals[j] = row[ai].Vals[pos]
+					break find
+				}
+			}
+		}
+	}
+	return f.bindingKey(c, vals)
+}
+
+// bindingKey keys vals, a binding of c's Inputs, each as the argument where it first appears in c's
+// atoms reads it (joinKey).
+func (f *Federation) bindingKey(c Conjunction, vals []Value) string {
+	var sb strings.Builder
+	for j, n := range c.Inputs {
+		var at ArgType
+	find:
+		for _, a := range c.Atoms {
+			for pos, x := range a.Args {
+				if x.Var == n {
+					if s, _ := f.Schema(a.Relation); pos < len(s.Types) {
+						at = s.Types[pos]
+					}
+					break find
+				}
+			}
+		}
+		k := joinKey(vals[j], at)
+		fmt.Fprintf(&sb, "%d:%s", len(k), k)
+	}
+	return sb.String()
+}
+
+// joinKey keys v as an argument of type at reads it, the way a member compares it (see LookupSource):
+// a number by its value, text in a number argument by the number it spells, a number in a text
+// argument by its text, and -0 as 0. Units don't count, as they don't in equality.
+func joinKey(v Value, at ArgType) string {
+	num := func(n float64) string {
+		if n == 0 {
+			n = 0
+		}
+		return "\x00n" + ftoa(n)
+	}
+	switch {
+	case v.Absent:
+		return "\x00a"
+	case at.Type == TypeNumber:
+		if v.Num != nil {
+			return num(*v.Num)
+		}
+		if n, err := strconv.ParseFloat(v.S, 64); err == nil {
+			return num(n)
+		}
+	case at.Type == TypeString || at.Kind != "" || at.KindFrom != "":
+	case v.Num != nil:
+		return num(*v.Num)
+	}
+	return v.S
 }
 
 // routed is c for member i: c itself when its Holds allows c's first atom, or with Bindings, c with
@@ -799,17 +1004,15 @@ func (f *Federation) spanning(ctx context.Context, c Conjunction, yield func([]T
 		if !ok {
 			return
 		}
-		for _, row := range prefixes {
-			more := f.pushAcross(ctx, c.after(row), i, row, func(whole []Tuple, err error) bool {
-				if err != nil {
-					fail(err)
-					return false
-				}
-				return yield(whole)
-			})
-			if !more {
-				return
+		more := f.continuePrefixes(ctx, c, i, prefixes, func(whole []Tuple, err error) bool {
+			if err != nil {
+				fail(err)
+				return false
 			}
+			return yield(whole)
+		})
+		if !more {
+			return
 		}
 	}
 }
