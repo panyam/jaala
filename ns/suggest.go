@@ -2,6 +2,7 @@ package ns
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -56,6 +57,9 @@ func (v *Vocabulary) Hint(name string) string {
 	}
 	if s := v.suggest(name); s != "" {
 		return fmt.Sprintf(`; did you mean %q?`, s)
+	}
+	if mod, _ := splitPath(name); mod != "" && v.IsModule(mod) {
+		return fmt.Sprintf("; %q holds %s", mod, strings.Join(v.children(mod), ", "))
 	}
 	return ""
 }
@@ -196,7 +200,30 @@ func (v *Vocabulary) suggest(name string) string {
 	if best == "" && mod == "" {
 		return v.bySeparator(name)
 	}
+	if best == "" {
+		return byWord(leaf, cands)
+	}
 	return best
+}
+
+// byWord returns the one candidate whose last segment is a word of leaf, split at "_" and "-", or "":
+// `str.has_suffix` is str.suffix with a word another library spells it with (#276). Two such
+// candidates would be a guess, so neither is named.
+func byWord(leaf string, cands []string) string {
+	words := strings.FieldsFunc(leaf, func(r rune) bool { return r == '_' || r == '-' })
+	if len(words) < 2 {
+		return ""
+	}
+	found := ""
+	for _, p := range cands {
+		if _, l := splitPath(p); slices.Contains(words, l) {
+			if found != "" {
+				return ""
+			}
+			found = p
+		}
+	}
+	return found
 }
 
 // candidates is every member path a suggestion may name: base relations in the Source's order, then

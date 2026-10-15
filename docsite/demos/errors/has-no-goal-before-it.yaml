@@ -1,0 +1,3 @@
+fixture: "deps"
+query: "r(?p) :- package(?p). => ?p, count(?p)"
+expect_error: "has no goal before it; the goal goes first"

@@ -35,7 +35,7 @@ func Example_lookup() {
 	// deps.depends_on(a, b)
 	// Everything a package depends on, directly or through others.
 	// defined in deps.dl
-	// query: unknown relation "deps._step"
+	// query: unknown relation "deps._step"; "deps" holds depends_on
 }
 
 // Check reports a mistake in a module before any query runs, and a

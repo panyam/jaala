@@ -39,6 +39,18 @@ A rule has one `:-`, usually missing a `;` between two rules.
 
 {{ demo "demos/errors/has-more-than-one-q.yaml" }}
 
+`query: … has no goal before it; the goal goes first, as in …`
+
+A `=>` with columns after it and no goal before, as in `r(?p) :- package(?p). => ?p, count(?p)`. Write the goal before the `=>`: `r(?p) => ?p, count(?p)`. A goal alone after `=>`, as `=> r(?p)`, is read as the goal `r(?p)`.
+
+{{ demo "demos/errors/has-no-goal-before-it.yaml" }}
+
+`query: the rule for … holds …; end the rule with … or …, then write the goal`
+
+A rule's body runs into the goal's `=>`, because nothing ended the rule.
+
+{{ demo "demos/errors/the-rule-holds-arrow.yaml" }}
+
 `query: empty query`
 
 A query with no text at all, from a host that built one empty.
@@ -94,6 +106,10 @@ A string is missing its closing `"`.
 `query: bare identifier … — a term must be a ?variable, a "string", or a number`
 
 A term is a `?variable`, a quoted string or a number. A word without quotes is none of them.
+
+`query: bare identifier … — a term must be a ?variable, a "string", or a number; write ?… for a variable or … for text`
+
+The same, for a word that could be either: `api` is `?api` as a variable or `"api"` as text. jaala doesn't guess, since a constant read as a variable would match everything.
 
 {{ demo "demos/errors/bare-identifier.yaml" }}
 
@@ -297,7 +313,7 @@ jaala looks every name up in the vocabulary, and suggests a close one when a nam
 
 `query: unknown relation …`
 
-A name the vocabulary doesn't hold. When a close name exists, the message suggests it.
+A name the vocabulary doesn't hold. When a close name exists, the message suggests it, and so does a member of the module whose name is one word of the name written (`str.has_suffix` suggests `str.suffix`). With no suggestion, an unknown member of a module that exists lists what the module holds.
 
 {{ demo "demos/errors/unknown-relation-q-s.yaml" }}
 

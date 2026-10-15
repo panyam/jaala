@@ -1,0 +1,3 @@
+fixture: "deps"
+query: "r(?p) :- package(?p) => ?p"
+expect_error: "end the rule with \";\" or \".\", then write the goal"

@@ -2,6 +2,7 @@ package datalog
 
 import (
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -329,5 +330,83 @@ func TestCommentsRunToTheEndOfTheLineOutsideStrings(t *testing.T) {
 	q := mustParse(t, "# nodes named with a hash\nnode(?n), ?n = \"a#b\" # trailing\n=> ?n")
 	if len(q.Goal.Literals) != 2 || q.Goal.Literals[1].Compare.Right.Const.S != "a#b" || len(q.Select) != 1 {
 		t.Errorf("parsed %+v, want two literals keeping \"a#b\" and one column", q)
+	}
+}
+
+// The clause endings Datalog, Prolog and Soufflé write parse to the Query their jaala spelling does
+// (#276): "." ends a clause as ";" does, "?- body" and "=> body" ask a goal with every variable as a
+// column, and "!atom" is "not atom". The "." in str.suffix, "_test.go" and 1.5 is a control: a
+// splitter cutting at any dot changes those pairs.
+func TestAgentClauseFormsParseAsTheirJaalaSpelling(t *testing.T) {
+	for _, c := range []struct{ written, jaala string }{
+		// Declaire's agent exercise, 53 of its 131 failures (#276).
+		{"r(?u, ?l) :- edge(?u, ?l), not str.suffix(?u, \"_test.go\").\n=> r(?u, ?l)",
+			`r(?u, ?l) :- edge(?u, ?l), not str.suffix(?u, "_test.go"); r(?u, ?l)`},
+		{"r(?a) :- edge(?a, _).\nr(?a) :- edge(_, ?a).\n?- r(?a).", `r(?a) :- edge(?a, _); r(?a) :- edge(_, ?a); r(?a)`},
+		{`edge(?a, ?b), ?b > 1.5 => ?a.`, `edge(?a, ?b), ?b > 1.5 => ?a`},
+		{"r(?a) :- edge(?a, _). r(?a) :- node(?a); r(?a) => ?a.", `r(?a) :- edge(?a, _); r(?a) :- node(?a); r(?a) => ?a`},
+		{`edge(?a, ?b), !edge(?b, ?a) => ?a`, `edge(?a, ?b), not edge(?b, ?a) => ?a`},
+		{`edge(?a, ?b), ! edge(?b, ?a), ?a != ?b => ?a`, `edge(?a, ?b), not edge(?b, ?a), ?a != ?b => ?a`},
+		{`=> edge(?a, ?b), ?a != "x"`, `edge(?a, ?b), ?a != "x"`},
+		{`edge(?a, ?b) => ?a. # done.`, `edge(?a, ?b) => ?a`},
+		{"r(?a) :- edge(?a, _).\nr(?a).\n=> ?a, count(?a)", `r(?a) :- edge(?a, _); r(?a) => ?a, count(?a)`},
+	} {
+		got, err := Parse(c.written)
+		if err != nil {
+			t.Errorf("Parse(%q): %v", c.written, err)
+			continue
+		}
+		want := mustParse(t, c.jaala)
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("Parse(%q)\n = %+v\nwant %+v, as %q", c.written, got, want, c.jaala)
+		}
+	}
+}
+
+func TestAModuleBodyEndsItsRulesWithADot(t *testing.T) {
+	got, err := ParseRules("r(?a) :- edge(?a, _).\nr(?a) :- node(?a).")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, _ := ParseRules(`r(?a) :- edge(?a, _); r(?a) :- node(?a)`)
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ParseRules = %v, want %v", got, want)
+	}
+}
+
+// A written-elsewhere form that can't be read says what to write instead (#276). inf reads as a
+// number #163 refuses, so it gets no variable hint, and != is a comparison, never a negation.
+func TestAMisplacedArrowOrBareNameSaysWhatToWrite(t *testing.T) {
+	for text, want := range map[string]string{
+		"r(?a) :- edge(?a, _). => ?a, count(?a)": `query: "=> ?a, count(?a)" has no goal before it; the goal goes first, as in "edge(?a, ?b) => ?b, count(?a)"`,
+		"=> count(?a)":                           `query: "=> count(?a)" has no goal before it; the goal goes first, as in "edge(?a, ?b) => ?b, count(?a)"`,
+		"edge(?a, ?b) => ?a. => ?b":              `query: 2 goal clauses; a query asks one goal (rules use ":-", the goal does not)`,
+		"r(?a) :- edge(?a, _) => ?a":             `query: the rule for r holds "=>"; end the rule with ";" or ".", then write the goal`,
+		"edge(U, ?b) => ?b":                      `query: bare identifier "U" — a term must be a ?variable, a "string", or a number; write ?U for a variable or "U" for text`,
+		"weight(?n, inf) => ?n":                  `query: bare identifier "inf" — a term must be a ?variable, a "string", or a number`,
+		"edge(?a, ?b), !?a = ?b => ?a":           `query: malformed atom "?a = ?b" (want reln(args))`,
+	} {
+		if _, err := Parse(text); err == nil || err.Error() != want {
+			t.Errorf("Parse(%q) = %v\nwant %s", text, err, want)
+		}
+	}
+	q := mustParse(t, `edge(?a, ?b), ?a != ?b => ?a`)
+	if c := q.Goal.Literals[1].Compare; c == nil || c.Op != "!=" {
+		t.Errorf("?a != ?b parsed as %+v, want a comparison", q.Goal.Literals[1])
+	}
+}
+
+func TestAnAgentWrittenProgramAnswersAsItsJaalaSpelling(t *testing.T) {
+	got := eval(t, graph(), "r(?a, ?b) :- edge(?a, ?b), !edge(?b, ?a).\nr(?a, ?b) :- r(?a, ?m), edge(?m, ?b).\n?- r(?a, ?b).")
+	want := eval(t, graph(), `r(?a, ?b) :- edge(?a, ?b), not edge(?b, ?a); r(?a, ?b) :- r(?a, ?m), edge(?m, ?b); r(?a, ?b)`)
+	if g, w := cols(got, "a", "b"), cols(want, "a", "b"); !reflect.DeepEqual(g, w) || len(w) != 6 {
+		t.Errorf("rows = %v, want %v (6 pairs)", g, w)
+	}
+}
+
+func TestAnUnknownMemberWithAnExtraWordSuggestsTheMember(t *testing.T) {
+	err := evalErr(graph(), `edge(?a, ?b), str.has_suffix(?a, "x") => ?a`)
+	if err == nil || !strings.Contains(err.Error(), `unknown relation "str.has_suffix"; did you mean "str.suffix"?`) {
+		t.Errorf("err = %v, want it to suggest str.suffix", err)
 	}
 }

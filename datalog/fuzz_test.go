@@ -29,7 +29,9 @@ var fuzzSeeds = []string{
 	`node(?n), ?w = min(?v) : { weight(?n, ?v), ?v > 3 }, ?s = sum(distinct ?v) : { edge(?n, ?m), weight(?m, ?v) } => ?n, ?w, ?s`,
 	`edge(?a, ?b), ?a < ?b, ?b = "v3" => ?a`,
 	`r(?a, ?b) :- edge(?a, ?b); r("v0") => ?x`, // #133: a call one argument short panicked the planner
-	`imports(?a,,?b) => ?a`, // #129: an empty piece between commas
+	`imports(?a,,?b) => ?a`,                         // #129: an empty piece between commas
+	"r(?a) :- edge(?a, _), !edge(_, ?a).\n=> r(?a)", // #276: the endings agents write
+	`?- edge(?a, ?b), ?b > 1.5.`,
 }
 
 // fuzzVocabulary is the corpus's schema over one fixed small graph, with the path module.
