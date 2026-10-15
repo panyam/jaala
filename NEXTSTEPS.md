@@ -5,20 +5,16 @@ Maintained by /checkpoint: one thread per branch, pruned when the branch merges.
 
 ## At a glance
 
-- No open branches. Merged since v0.1.52: #271 (#270), #272 (#215), #277 (#206), #274 (#273, with
-  #275's #209 inside it). Next: tag them, then `./selfcheck.sh` on the tag. #270 needs an upgrade
-  note for Declaire (no code change: q09r on the stores engine should push `http.route` with
-  `Inputs`).
-- Both active missions have every jaala ticket closed (#219 7/7, #235 14/14 with #270) and wait on
-  Declaire's run: bump past v0.1.52 and run `bench -engine stores -time` on the partitioned
-  kubernetes view against declaire#180's baseline. #235's exercise last logged at bb965ca; 4 PRs
-  merged since.
-- New P1 off-mission: #276 (grammar: the clause endings agents write), filed by the owner from
-  Declaire's agent exercise; it serves no mission yet, so `retriage` should link or re-rank it.
-- Left for the owner: #179 (gated on hosts measuring its premise), #205 (waits for a host serving
-  prefixed values), #220 (API shape undecided).
-- This run: pruned feat/full-rule-demand, fix/filter-head-215, feat/head-projection-arith-206,
-  fix/inverse-mode-zero, feat/corpus-arithmetic-209 (all merged).
+- No open branches. #286 (#276, the clause endings agents write) merged as 163c0f4 and is tagged
+  v0.1.54 with its upgrade note on #276: Declaire changes no code, bumps, and reruns `make
+  exercise-mcp-agent` against 69 of 131 failed queries (declaire#246).
+- Both active missions have every jaala ticket closed (#219 7/7, #235 14/14) and wait on Declaire's
+  run: `bench -engine stores -time` on the partitioned kubernetes view against declaire#180's
+  baseline. #235's exercise last logged at bb965ca; 7 PRs merged since, none of them pushdown work.
+- Nothing ready on a mission. Off-mission: the #278 epic (Cypher/GQL gaps, children #279 to #284,
+  all `waiting`) is untriaged; `retriage` should decide whether it becomes jaala's next mission.
+  Left for the owner: #179, #205, #220 (P3).
+- This run: dropped feat/agent-clause-endings-276 (PR #286 merged).
 
 ## Across threads
 

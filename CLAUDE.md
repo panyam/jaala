@@ -237,6 +237,13 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
 - **A variable's name is an ident and a number is decimal** (`checkVarName`, `isDecimal`, #163), as
   the grammar comment in `parse.go` says. `strconv.ParseFloat` alone also takes inf, nan, hex and
   `.5`. The parser slices rather than lexes; a tokenizer is filed separately.
+- **The parser also reads the endings other Datalogs write, and only forms that never parsed**
+  (#276, from Declaire's agent exercise): `.` before whitespace or the end ends a clause
+  (`splitEnds`), `?- body` and `=> body` ask `body` with no projection (`goalAfterArrow`), `!atom` is
+  `not atom`, and a `.` between a goal and its `=>` is dropped. Each is tested against its jaala
+  spelling's `Query`. Uppercase words stay an error with a `?U` or `"U"` hint, on purpose:
+  `pin(?r, GND)` read as a variable would match every net. A new accepted form must be one that errs
+  today, so no program changes meaning, and `;` stays the spelling the docs and printer use.
 - **The answer order is a total order, and hosts see it.** `orderValues` ranks absent, then numbers by
   value, then text (#8). Comparing as numbers only when both are numbers cycles on a mixed column
   (2 < 10, "10" < "1a" < "2"). A row's survivor is the one ordering first among those with its
