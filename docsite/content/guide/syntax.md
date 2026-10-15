@@ -37,10 +37,10 @@ A comparison only compares, which is a bit different from `=` in most programmin
 
 ## The goal and its projection
 
-After the goal, `=>` and a list of columns say what the answer holds. The columns are variables or [aggregates]({{.Site.PathPrefix}}/guide/aggregation/), and after them can come `having`, `order by`, `limit` and `offset`, in that order. Leave out `=>` and its columns, and the answer has one column per variable of the goal, in the order they first appear:
+After the goal, `=>` and a list of columns say what the answer holds. The columns are variables, [aggregates]({{.Site.PathPrefix}}/guide/aggregation/) or [arithmetic]({{.Site.PathPrefix}}/guide/arithmetic/#in-the-answer-and-in-a-rules-head), and after them can come `having`, `order by`, `limit` and `offset`, in that order. Leave out `=>` and its columns, and the answer has one column per variable of the goal, in the order they first appear:
 
 {{ demo "demos/guide/syntax-no-projection.yaml" }}
 
 ## Rules
 
-A rule is a head, `:-`, and a body: `depends_on(?a, ?b) :- imports(?a, ?b);`. Each argument of the head is a variable the body binds, a constant, or an [aggregate]({{.Site.PathPrefix}}/guide/aggregation/#an-aggregate-in-a-rule), and a variable can declare its type, as in `size(?p, ?n: number)`, which the [next page]({{.Site.PathPrefix}}/guide/types-and-constants/) covers. A relation can have several rules, and its tuples are everything any of them derives. A relation name can contain dots and hyphens, which is how jaala names the standard library's tests (`str.contains`) and a module's members (`net.has_test_point`).
+A rule is a head, `:-`, and a body: `depends_on(?a, ?b) :- imports(?a, ?b);`. Each argument of the head is a variable the body binds, a constant, an [aggregate]({{.Site.PathPrefix}}/guide/aggregation/#an-aggregate-in-a-rule), or [arithmetic]({{.Site.PathPrefix}}/guide/arithmetic/#in-the-answer-and-in-a-rules-head) over what the body binds, and a variable can declare its type, as in `size(?p, ?n: number)`, which the [next page]({{.Site.PathPrefix}}/guide/types-and-constants/) covers. A relation can have several rules, and its tuples are everything any of them derives. A relation name can contain dots and hyphens, which is how jaala names the standard library's tests (`str.contains`) and a module's members (`net.has_test_point`).

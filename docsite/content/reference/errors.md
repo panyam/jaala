@@ -99,7 +99,7 @@ A term is a `?variable`, a quoted string or a number. A word without quotes is n
 
 `query: projection column … must be a ?variable or an aggregate`
 
-The columns after `=>` are variables or aggregates.
+The columns after `=>` are variables, aggregates or arithmetic, such as `?i * ?r`.
 
 {{ demo "demos/errors/projection-column.yaml" }}
 
