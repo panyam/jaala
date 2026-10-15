@@ -296,6 +296,11 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   A corpus control that counts a rare case has to hold at CI's 300 seeds, not only at the 1000 or
   5000 it was tried at: #192's mixed-units control passed at 1000 and failed CI's default, so it
   applies from 1000 seeds. Run `go test ./datalog` at its default before pushing a new control.
+  A control can be satisfied by another path to the same call: #263's count of one-atom pushes read
+  above 0 with lone pushes disabled, because a Federation's continuations are one-atom pushes too, so
+  it counts only those with no constant or `Inputs`. Two Go traps that made mutations survive: the
+  constant `-0.0` is plain 0 (use `math.Copysign(0, -1)`), and a peak-heap test streaming many tuples
+  measures uncollected garbage under `-race` unless it sets `debug.SetGCPercent(5)` while sampling.
   **Inlining hides rewrites**: a single-rule relation is folded into its caller, so a test of how
   demand, planning or the fixpoint treat a derived relation gives it two rules or runs with
   `Witnesses()` (which turns inlining off). A cost test needs a fixture where the old cost shows:
@@ -574,7 +579,9 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
 `chain()` (40 edges, enough to index), `lookingStreams` and `lookingUpLabels`; a `store` streams
 unless `sliced`, and counts what it `shipped`. `pushing` (a
   looking store that evaluates conjunctions by its own join, `evalConjunction`, optionally sloppy,
-  refusing comparisons, or failing) in `push_test.go`, and the `store` pushes too; `joinMem` and
+  refusing comparisons, or failing; `forBindings` and `withInputs` read a conjunction's `Bindings`) in
+  `push_test.go`, and the `store` pushes too, answering `Bindings` through its index; `joinMem`
+  (optionally `noPartial`, `noInputs`, `sloppy`, recording what it was `pushed`) and
   `partitionedEdges` (#238's two-store example) in `ns/federation_test.go`. The corpus's federations
   leave their members unnamed: a `Name` prefixes citations, which `agreeOver` compares. `both()` takes Eval options, so a `Bind`
   case runs through all three evaluators. `both()` compares rows in order, so every test checks the
@@ -607,13 +614,14 @@ match before sorting), not the engine, so profile before blaming jaala. Its seve
 charged to the budget, from declaire#211's measurement); it stays open for Declaire's half.
 `mission_store_pushdown` (#235), epic #213's second half: a store answers the part of a question it
 can evaluate (a conjunction, a walk, an aggregate, a page) and jaala combines the results, measured
-by the same benchmark's `shipped` column and its questions `two-hops-in-repo`, `count-lines`, `page`
-and `self-loops` (#236). All eleven of its jaala tickets are closed (#236 to #241, #246, #250, #252 to
-#254, released by v0.1.50): a conjunction, a walk, a count, a page, a batch of bindings and a walked
-step each go to a store, and every jaala line of its "Done when" holds. Like #219 it stays open for
-Declaire's run (`bench -time` on a federated view). Declaire's first measurement filed #268 (a batch
-of bindings across a partitioned federation's members, folding #259), and #263 (a lone literal the
-store filters) joined it. jaala's
+by the same benchmark's `shipped` column and its questions `two-hops-in-repo`, `count-lines`, `page`,
+`self-loops` (#236) and `attrs-of-reached` (q09r's shape, #268); `edges` is the unbound read no store
+filters, and `edges-budgeted` carries #233's stopped read. All thirteen of its jaala tickets are
+closed (#236 to #241, #246, #250, #252 to #254 by v0.1.50; #263 and #268, from Declaire's first
+measurement and folding #259, by v0.1.52): a conjunction, a walk, a count, a page, a batch of
+bindings (across a partitioned federation too), a walked step and a lone filtered literal each go to
+a store, and every jaala line of its "Done when" holds. Like #219 it stays open for Declaire's run
+(`bench -time` on a federated view). jaala's
 earlier four are closed: `mission_selfcheck` (#86, at v0.1.29) left `./selfcheck.sh` as the check to
 run on `main` after every merge and before every tag; `mission_docsite` (#104) left the docs site
 with every example run by the engine; `mission_aggregate_answers` (#172, at v0.1.42) left Soufflé

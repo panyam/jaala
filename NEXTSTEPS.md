@@ -5,29 +5,23 @@ Maintained by /checkpoint: one thread per branch, pruned when the branch merges.
 
 ## At a glance
 
-- No open branches; everything is merged and released (v0.1.50 on ee2a635, 2026-10-14). agni and
-  Declaire are being bumped to v0.1.50.
+- No open branches; everything is merged and released (v0.1.52 on bb965ca, 2026-10-15). Upgrade
+  notes are on #264 (v0.1.51, no host code changes) and #268 (v0.1.52, for Declaire's stores).
 - Both active missions have every jaala ticket closed and wait on Declaire's run, from a Declaire
-  session: build the view's federation with `NewPartitionedFederation`, give the SQLite fragment
-  stores the capabilities they can support (`PushSource`, `SummarySource`, `WalkSource`,
-  `ConjunctionWalkSource`; declaire#231 is its push step), and run `bench -engine stores -time` on
-  the kubernetes view against declaire#180's baseline. Quoting it on #219 and #235 closes both, or
-  names the next ticket.
-- #219 `mission_store_federation`: 7/7, exercise logged at e31a11f (2026-10-14). #235
-  `mission_store_pushdown`: 11/11, logged at ee2a635.
-- Next ready: #264 (P2, off-mission), stream a goal's whole read into its answer so a `limit`
-  stops it; plan it with `/start-pr` first, since the open decision is when a streamed read
-  skips `edbCache`. #215 (P3) is a small correctness fix. Other P3: #179, #205, #206, #209, #220.
-- No other mission is open. Candidates for the next (`/retriage`): #220 if Declaire moves its
-  linkers onto rules (declaire#205), timed facts (#183) if agni#95 or declaire#169 comes first.
-- This run: logged #219's exercise; filed #263 (`waiting`) and #264 (P2); moved #222 and #234
-  from P3 to `waiting` on Declaire's measurements.
+  session: bump to v0.1.52, answer `Partial` with `Inputs` on the SQLite stores (declaire#240), and
+  run `bench -engine stores -time` on the partitioned kubernetes view against declaire#180's
+  baseline. Quoting it on #219 and #235 closes both, or names the next ticket.
+- #219 `mission_store_federation`: 7/7, exercise last logged at e31a11f (2026-10-14). #235
+  `mission_store_pushdown`: 13/13, logged at bb965ca (2026-10-15, after #269).
+- No P0 or P1 is open. Next ready, off-mission: #215 (P3, a small correctness fix); other P3s are
+  #179, #205, #206, #209, #220.
+- This run: released v0.1.51 (#265 streaming, #267 fuzz fix) and v0.1.52 (#269: #268 and #263,
+  folding #259); pruned the three merged branches.
 
 ## Across threads
 
 - `make setup` installs Soufflé 2.5 (Homebrew on macOS), so `./selfcheck.sh` runs its Soufflé step
-  locally: 5000 seeds, 0 disagreements on 10a608e (2026-10-14).
-- Declaire's measurement decides what's next in jaala: #242 if lookup buckets are huge, #259 if a
-  join over its partitioned stores shows lookups per literal per round, #263 if a store ships a
-  whole relation for a literal it could filter, #260 if `bindArg`/`binding.clone` dominate (asked
-  on #234 whether Declaire's `edge` is derived and witnessed), #222 and #234 on their triggers.
+  locally.
+- Declaire's measurement decides what's next in jaala: #242 if lookup buckets are huge, #260 if
+  `bindArg`/`binding.clone` dominate (asked on #234 whether Declaire's `edge` is derived and
+  witnessed), #222 and #234 on their triggers.
