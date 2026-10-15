@@ -15,17 +15,23 @@ import (
 //	query       = { rule ";" } goal ;                 (* zero or more rules, then one goal *)
 //	rule        = head ":-" literals ;                (* head :- body; defines a derived relation *)
 //	head        = relation "(" [ harg { "," harg } ] ")" ;
-//	harg        = term [ ":" decl ] ;                 (* a declared type: ?n: net, see parseArgType *)
+//	harg        = term [ ":" decl ] | aggregate | expr ; (* a declared type: ?n: net, see parseArgType *)
 //	goal        = literals [ "=>" projection [ "having" havings ] [ "order" "by" orders ]
 //	              [ "limit" count ] [ "offset" count ] ] ;
 //	literals    = literal { "," literal } ;
 //	literal     = atom | "not" atom | comparison | bodyagg ; (* "not atom" = stratified negation *)
 //	bodyagg     = variable "=" aggregate ":" "{" literals "}" ; (* per shared variable's value, #71 *)
 //	atom        = relation "(" [ term { "," term } ] ")" ;
-//	comparison  = term op term ;
+//	comparison  = operand op operand ;
+//	operand     = term | expr ;
+//	expr        = sum ;                               (* arithmetic over num.* and functions, #5 *)
+//	sum         = product { ( "+" | "-" ) product } ;
+//	product     = unary { ( "*" | "/" ) unary } ;
+//	unary       = "-" unary | "(" expr ")" | call | term ;
+//	call        = relation "(" [ expr { "," expr } ] ")" ; (* a function relation; its last argument is the result *)
 //	op          = "<" | "<=" | "=" | "!=" | ">" | ">=" ;
 //	projection  = column { "," column } ;
-//	column      = variable | aggregate ;
+//	column      = variable | aggregate | expr ;          (* an expr column is labelled as written without ?s, #206 *)
 //	aggregate   = aggfunc "(" [ "distinct" ] variable ")" ; (* grouped by the variable columns *)
 //	aggfunc     = "count" | "min" | "max" | "sum" | "list" ;
 //	havings     = having { "," having } ;
