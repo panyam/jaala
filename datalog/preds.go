@@ -168,6 +168,9 @@ func (b *Base) checkAtom(atom *Atom) error {
 // exactly those positions instead of from the whole relation. unify still decides every candidate,
 // so the index only ever has to avoid MISSING a match; see index.go.
 func (b *Base) extendEDB(atom *Atom, bnd *binding, yield func(*binding) error) error {
+	if b.run != nil && b.run.stream == atom {
+		return b.streamEDB(atom, bnd, yield)
+	}
 	if b.looksUp(atom.Relation) {
 		if rows, ok, err := b.lookup(atom, bnd); err != nil || ok {
 			if err != nil {

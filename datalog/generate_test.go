@@ -686,8 +686,34 @@ func (c genCase) check() (genOutcome, string) {
 	if diff := agreePartitioned(q, b, want, werr, c.opts()); diff != "" {
 		return genDisagreed, diff
 	}
+	if diff := agreeStreamed(q, b, want, werr, c.opts()); diff != "" {
+		return genDisagreed, diff
+	}
 	return genAgreed, ""
 }
+
+// agreeStreamed runs q over b's facts through a Source that streams every relation (#264), where the
+// planned SemiNaive streams a relation only its goal reads: every evaluator must answer as Naive did
+// reading them whole. A program whose goal streamed, on a fresh Base, counts for the control.
+func agreeStreamed(q Query, b *Base, want []Row, werr error, opts []Option) string {
+	if diff := agreeOver(q, b, MustBase(b.reg, streamingOver(b.src)), "streamed", want, werr, opts); diff != "" {
+		return diff
+	}
+	src := streamingOver(b.src)
+	fresh := MustBase(b.reg, src)
+	if _, err := (SemiNaive{}).Eval(bg, q, fresh, opts...); err == nil {
+		for _, rel := range src.Relations() {
+			if src.count(rel) > 0 && !fresh.edb.holds(rel) {
+				streamedPrograms++
+				break
+			}
+		}
+	}
+	return ""
+}
+
+// streamedPrograms counts those whose goal streamed a relation into its answer (#264).
+var streamedPrograms int
 
 // lookedUpPrograms counts the corpus programs whose evaluation made a lookup, for the corpus's control.
 var lookedUpPrograms int
@@ -1262,7 +1288,7 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 	}
 	compared, known, skipped, failed := map[string]int{}, map[int]int{}, 0, 0
 	lookedUpPrograms, federatedPrograms, batchedPrograms, pushedPrograms, partitionedPrograms, walkedPrograms, unitAnswers, mixedAnswers = 0, 0, 0, 0, 0, 0, 0, 0
-	pagedPrograms, summarizedPrograms, batchPushedPrograms, stepWalkedPrograms = 0, 0, 0, 0
+	pagedPrograms, summarizedPrograms, batchPushedPrograms, stepWalkedPrograms, streamedPrograms = 0, 0, 0, 0, 0
 	withUnits := 0
 	for seed := first; seed < first+int64(seeds); seed++ {
 		rnd := rand.New(rand.NewSource(seed))
@@ -1342,6 +1368,9 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 	}
 	if walkedPrograms == 0 {
 		t.Errorf("control: no program asked a store to walk a relation")
+	}
+	if streamedPrograms == 0 {
+		t.Errorf("control: no program's goal streamed a relation into its answer")
 	}
 	if partitionedPrograms == 0 {
 		t.Errorf("control: no program pushed a conjunction across a partitioned federation's members")

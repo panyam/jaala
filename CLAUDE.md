@@ -73,6 +73,19 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   `TestExplainAccountsForEveryUnitOfWork` don't move, and only `BudgetExceeded.Work` includes it. A
   stopped read fails and isn't kept. A Federation always streams (its members in turn, a slice
   member's tuples one by one). A lookup's results still arrive as a slice (#242).
+- **A goal that alone reads a streamed relation solves it as it arrives** (`stream.go`, #264).
+  Before `magic` (which plans the goal), SemiNaive's rewrite lists in `run.streamable` the base
+  relations of a `StreamSource` read in exactly one place, a goal literal, and not held; `fanOut`
+  sizes them "unknown", as a looked-up relation, so a tie keeps the written order. `streamFirst`
+  marks the goal's first literal (`run.stream`) when its relation is still not held: a rule, a
+  demand rule or a prefetch prefix that read it kept it, and the cache is read instead. A relation
+  the Source looks up streams only for a call binding nothing under a limit without an order by
+  (`stopping`), so a repeated unbounded question still asks the store nothing (#212). `streamEDB`
+  normalizes each tuple and makes it a candidate exactly where the cached path's index would (the
+  first `indexMinFacts` wait until the size is known), so answers, `Work` and `Explain` match; it
+  keeps nothing, so the next query reads it again. A streamed read now interleaves work with
+  reading, so a stopped query has done some work. The corpus runs every program over `streaming`
+  (`agreeStreamed`); `streamedPrograms` is its control.
 - **A `BatchLookupSource` is asked once per looked-up call for all its values** (`prefetch.go`,
   #153, #230). Before solving a body, the planned SemiNaive (`run.batch`, set in its `rewrite`; Naive
   and `WrittenOrder` never batch) runs the body's prefix up to each looked-up literal, and the whole
@@ -548,7 +561,9 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   `looking` (a LookupSource, optionally sloppy or failing), `batching` (it with `LookupBatch`,
   recording each batch) and `fanned(n)` (a hub calling n nodes with attributes) in `lookup_test.go`;
   `versionedLooking` in `lookupcache_test.go`. `wide` (an `edge` relation made as it's read, counting what it made) and `streamingWide` in
-  `stream_test.go`; a `store` streams unless `sliced`, and counts what it `shipped`. `pushing` (a
+  `stream_test.go`, with `streaming` (any Source streamed, counting what it `handed` by relation),
+`chain()` (40 edges, enough to index), `lookingStreams` and `lookingUpLabels`; a `store` streams
+unless `sliced`, and counts what it `shipped`. `pushing` (a
   looking store that evaluates conjunctions by its own join, `evalConjunction`, optionally sloppy,
   refusing comparisons, or failing) in `push_test.go`, and the `store` pushes too; `joinMem` and
   `partitionedEdges` (#238's two-store example) in `ns/federation_test.go`. The corpus's federations

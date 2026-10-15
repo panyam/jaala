@@ -252,6 +252,9 @@ func fanOut(b *Base, a *Atom, flags []bool) int {
 	if _, ok := b.schemaOf(a.Relation); !ok || b.looksUp(a.Relation) {
 		return -1 // a relation the Source looks up isn't read whole to estimate it
 	}
+	if b.run != nil && b.run.streamable[a.Relation] {
+		return -1 // nor one the goal may stream (#264)
+	}
 	rows, err := b.edbTuples(a.Relation)
 	if err != nil {
 		if b.run != nil && b.run.readErr == nil {

@@ -187,23 +187,14 @@ func readTuples(run *evalRun, src ns.Source, rel string) ([]ns.Tuple, error) {
 	if src == nil {
 		return nil, nil
 	}
-	ctx := run.context()
-	failed := func(err error) error {
-		if ctx.Err() != nil {
-			return fmt.Errorf("query: evaluation stopped reading %s: %w", rel, ctx.Err())
-		}
-		return fmt.Errorf("query: reading %s: %w", rel, err)
-	}
 	if ss, ok := src.(ns.StreamSource); ok {
 		var out []ns.Tuple
-		for t, err := range ss.TuplesSeq(ctx, rel) {
-			if err != nil {
-				return nil, failed(err)
-			}
-			if err := run.readOne(); err != nil {
-				return nil, err
-			}
+		err := streamTuples(run, ss, rel, func(t ns.Tuple) error {
 			out = append(out, t)
+			return nil
+		})
+		if err != nil {
+			return nil, err
 		}
 		return out, nil
 	}
@@ -211,11 +202,38 @@ func readTuples(run *evalRun, src ns.Source, rel string) ([]ns.Tuple, error) {
 	if !ok {
 		return src.Tuples(rel), nil
 	}
+	ctx := run.context()
 	t, err := cs.TuplesContext(ctx, rel)
 	if err != nil {
-		return nil, failed(err)
+		return nil, readFailed(ctx, rel, err)
 	}
 	return t, nil
+}
+
+// streamTuples hands each tuple ss yields for rel to each, charging it to run's budget as it arrives
+// (#233). An error from each stops the read and is returned as it is.
+func streamTuples(run *evalRun, ss ns.StreamSource, rel string, each func(ns.Tuple) error) error {
+	ctx := run.context()
+	for t, err := range ss.TuplesSeq(ctx, rel) {
+		if err != nil {
+			return readFailed(ctx, rel, err)
+		}
+		if err := run.readOne(); err != nil {
+			return err
+		}
+		if err := each(t); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// readFailed wraps a failed read of rel, as the context's end when that is why it failed.
+func readFailed(ctx context.Context, rel string, err error) error {
+	if ctx.Err() != nil {
+		return fmt.Errorf("query: evaluation stopped reading %s: %w", rel, ctx.Err())
+	}
+	return fmt.Errorf("query: reading %s: %w", rel, err)
 }
 
 // Evaluator answers a Query over a Base, each answer Row carrying the provenance of the facts that

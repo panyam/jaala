@@ -75,8 +75,9 @@ type ContextSource interface {
 // The engine stops ranging when the budget is spent or the query's context ends, so the sequence
 // should release what it holds (close its cursor) when yield returns false. An error yielded stops
 // the read and fails the query, wrapped with the relation's name; a read that stops for any reason
-// is not kept, and the next query needing the relation reads it again. Each relation is still read
-// at most once per Base when a read completes, as Tuples is.
+// is not kept, and the next query needing the relation reads it again. A relation read in full is
+// kept, as Tuples is, except one only the goal reads, which the engine solves as it arrives and doesn't
+// keep (#264), so a limit stops the read; such a relation may be read once per query.
 type StreamSource interface {
 	TuplesSeq(ctx context.Context, rel string) iter.Seq2[Tuple, error]
 }
