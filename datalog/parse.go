@@ -12,14 +12,16 @@ import (
 
 // Parse reads a text query into a Query. Grammar (EBNF; whitespace is insignificant):
 //
-//	query       = { rule ";" } goal ;                 (* zero or more rules, then one goal *)
+//	query       = { rule end } goal [ "." ] ;         (* zero or more rules, then one goal *)
+//	end         = ";" | "." ;                         (* a "." only before whitespace or the end, #276 *)
 //	rule        = head ":-" literals ;                (* head :- body; defines a derived relation *)
 //	head        = relation "(" [ harg { "," harg } ] ")" ;
 //	harg        = term [ ":" decl ] | aggregate | expr ; (* a declared type: ?n: net, see parseArgType *)
 //	goal        = literals [ "=>" projection [ "having" havings ] [ "order" "by" orders ]
-//	              [ "limit" count ] [ "offset" count ] ] ;
+//	              [ "limit" count ] [ "offset" count ] ]
+//	            | ( "?-" | "=>" ) literals ;          (* asks literals with no projection, #276 *)
 //	literals    = literal { "," literal } ;
-//	literal     = atom | "not" atom | comparison | bodyagg ; (* "not atom" = stratified negation *)
+//	literal     = atom | ( "not" | "!" ) atom | comparison | bodyagg ; (* "not atom" = stratified negation *)
 //	bodyagg     = variable "=" aggregate ":" "{" literals "}" ; (* per shared variable's value, #71 *)
 //	atom        = relation "(" [ term { "," term } ] ")" ;
 //	comparison  = operand op operand ;
@@ -48,8 +50,10 @@ import (
 //
 // A "#" outside a string starts a comment that runs to the end of the line.
 //
-// Clauses are separated by ";"; a clause with ":-" is a rule, and the one clause without one is the
-// goal. A rule head defines a derived (IDB) relation the goal (or another rule) can then read, and a
+// Clauses are separated by ";", or ended by "." as Datalog and Prolog end them; a clause with ":-" is
+// a rule, and the one clause without one is the goal. A goal may also be written as Prolog and
+// agents write it, `?- r(?a)` or `=> r(?a)`, meaning `r(?a)`, and a "." between a goal and its
+// "=>" is read as if absent. A rule head defines a derived (IDB) relation the goal (or another rule) can then read, and a
 // rule whose body reads its own head is recursion (evaluated to a stratified fixpoint). Some relation
 // names are predicates the host registered rather than fact-base relations: reaches(from, net)
 // (transitive connectivity) and the string filters str.contains/str.prefix/str.suffix(?value,
@@ -82,6 +86,9 @@ func Parse(s string) (Query, error) {
 	if err != nil {
 		return Query{}, err
 	}
+	if len(goals) == 2 && strings.HasPrefix(goals[1], "=>") && len(splitTop(goals[0], "=>")) == 1 {
+		goals = []string{goals[0] + " " + goals[1]} // `edge(?a, ?b). => ?a`: an ending before the projection (#276)
+	}
 	var goalText string
 	switch len(goals) {
 	case 1:
@@ -94,6 +101,12 @@ func Parse(s string) (Query, error) {
 	body, proj, err := splitProjection(goalText)
 	if err != nil {
 		return Query{}, err
+	}
+	if strings.TrimSpace(body) == "" && strings.TrimSpace(proj) != "" {
+		if body, err = goalAfterArrow(proj); err != nil {
+			return Query{}, err
+		}
+		proj = ""
 	}
 	lits, err := parseLiterals(body)
 	if err != nil {
@@ -133,6 +146,21 @@ func Parse(s string) (Query, error) {
 		}
 	}
 	return q, nil
+}
+
+// goalAfterArrow reads a goal written after "=>" with nothing before it, as `=> r(?u, ?l)` (#276),
+// which asks for every row of r: the goal r(?u, ?l), whose columns are its variables. Columns with no
+// goal before them (`=> ?b, count(?a)`) are refused, saying where the goal goes.
+func goalAfterArrow(text string) (string, error) {
+	lits, err := parseLiterals(text)
+	columns := err != nil
+	for _, l := range lits {
+		columns = columns || l.Pos != nil && validAggFunc(l.Pos.Relation)
+	}
+	if columns {
+		return "", fmt.Errorf("query: %q has no goal before it; the goal goes first, as in %q", "=> "+strings.TrimSpace(text), "edge(?a, ?b) => ?b, count(?a)")
+	}
+	return text, nil
 }
 
 // tailWords are the clauses that may follow the projection, in the order they must be written.
@@ -399,9 +427,13 @@ func stripComments(s string) string {
 // by ";"; a clause containing ":-" is a rule (head :- body), and every other clause is a goal. The
 // caller decides how many goals it accepts: a query asks exactly one, a module none.
 func splitClauses(s string) (rules []Rule, goals []string, err error) {
-	for _, clause := range splitTop(s, ";") {
+	for _, clause := range splitEnds(s) {
 		clause = strings.TrimSpace(clause)
 		if clause == "" {
+			continue
+		}
+		if rest, ok := strings.CutPrefix(clause, "?-"); ok {
+			goals = append(goals, strings.TrimSpace(rest))
 			continue
 		}
 		parts := splitTop(clause, ":-")
@@ -421,12 +453,55 @@ func splitClauses(s string) (rules []Rule, goals []string, err error) {
 	return rules, goals, nil
 }
 
+// splitEnds splits text into clauses at each top-level ";", and at each top-level "." followed by
+// whitespace or the end, the ending Datalog and Prolog write (#276). A "." inside a relation path
+// (str.suffix) or a number (1.5) is followed by a letter or digit, so it never ends a clause.
+func splitEnds(s string) []string {
+	var parts []string
+	for _, piece := range splitTop(s, ";") {
+		start := 0
+		for _, i := range topIndexes(piece, '.') {
+			if i+1 == len(piece) || isSpace(piece[i+1]) {
+				parts = append(parts, piece[start:i])
+				start = i + 1
+			}
+		}
+		parts = append(parts, piece[start:])
+	}
+	return parts
+}
+
+// topIndexes returns the positions of c outside strings and brackets, as splitTop reads them.
+func topIndexes(s string, c byte) []int {
+	var out []int
+	depth, inQuote := 0, false
+	for i := 0; i < len(s); i++ {
+		switch b := s[i]; {
+		case b == '"':
+			inQuote = !inQuote
+		case inQuote:
+		case b == '(' || b == '{':
+			depth++
+		case b == ')' || b == '}':
+			depth--
+		case depth == 0 && b == c:
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+func isSpace(b byte) bool { return b == ' ' || b == '\t' || b == '\n' || b == '\r' }
+
 // parseRule parses one "head :- body" clause into a Rule. The head is a single atom; the body is a
 // conjunction of literals, the same grammar a goal body uses.
 func parseRule(headText, bodyText string) (Rule, error) {
 	head, types, err := parseHead(headText)
 	if err != nil {
 		return Rule{}, err
+	}
+	if len(splitTop(bodyText, "=>")) > 1 {
+		return Rule{}, fmt.Errorf("query: the rule for %s holds %q; end the rule with %q or %q, then write the goal", head.Relation, "=>", ";", ".")
 	}
 	lits, err := parseLiterals(bodyText)
 	if err != nil {
@@ -459,7 +534,7 @@ func parseHead(s string) (Atom, []ns.ArgType, error) {
 			if t, err = parseArgType(parts[1]); err != nil {
 				return Atom{}, nil, err
 			}
-			if v := strings.TrimSpace(parts[0]); len(v) < 2 || v[0] != '?' || v == "?_" {
+			if v := strings.TrimSpace(parts[0]); len(v) < 2 || v[0] != '?' || v == "?_" || isExpression(v) {
 				return Atom{}, nil, fmt.Errorf("query: only a ?variable can declare a type, not %q", v)
 			}
 			a, declared = parts[0], true
@@ -524,7 +599,11 @@ func parseLiteral(s string) (Literal, error) {
 	if parts := splitTop(s, ":"); len(parts) == 2 && strings.HasPrefix(strings.TrimSpace(parts[1]), "{") {
 		return parseBodyAggregate(parts[0], parts[1])
 	}
-	if rest, isNeg := strings.CutPrefix(strings.TrimSpace(s), "not "); isNeg {
+	rest, isNeg := strings.CutPrefix(strings.TrimSpace(s), "not ")
+	if bang, ok := strings.CutPrefix(strings.TrimSpace(s), "!"); ok {
+		rest, isNeg = bang, true
+	}
+	if isNeg {
 		atom, err := parseAtom(strings.TrimSpace(rest))
 		if err != nil {
 			return Literal{}, err
@@ -697,6 +776,9 @@ func parseTerm(s string) (Term, error) {
 				return Term{Const: &ns.Value{S: num, Num: &f, BaseUnit: unit}}, nil
 			}
 		}
+		if isWord(s) {
+			return Term{}, fmt.Errorf("query: bare identifier %q — a term must be a ?variable, a \"string\", or a number; write ?%s for a variable or %q for text", s, s, s)
+		}
 		return Term{}, fmt.Errorf("query: bare identifier %q — a term must be a ?variable, a \"string\", or a number", s)
 	}
 }
@@ -751,6 +833,16 @@ func checkVarName(name string) error {
 		}
 	}
 	return nil
+}
+
+// isWord reports whether s is a name a variable or a text could spell: a letter, then letters, digits
+// and _. inf and nan aren't, since they read as numbers that #163 refuses.
+func isWord(s string) bool {
+	if s == "" || !unicode.IsLetter(rune(s[0])) || checkVarName(s) != nil {
+		return false
+	}
+	_, err := strconv.ParseFloat(s, 64)
+	return err != nil
 }
 
 // splitUnitSuffix splits the letters at the end of s off it: 3.3V is 3.3 and V. Letters only, so a

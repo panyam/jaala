@@ -99,15 +99,15 @@ func TestALongUnknownNameIsCheapToSuggestFor(t *testing.T) {
 	v := moved(t)
 	cells := countingDistance(t)
 	const n = 2000
-	for _, name := range []string{
-		strings.Repeat("-", n),
-		strings.Repeat("a_", n/2),
-		"net." + strings.Repeat("x", n),
-		strings.Repeat("q.", n/2) + "r",
+	for name, want := range map[string]string{
+		strings.Repeat("-", n):          "",
+		strings.Repeat("a_", n/2):       "",
+		"net." + strings.Repeat("x", n): `; "net" holds pin_count, rail, total`,
+		strings.Repeat("q.", n/2) + "r": "",
 	} {
 		*cells = 0
-		if got := v.Hint(name); got != "" {
-			t.Errorf("Hint(%.20q...) = %q, want no suggestion", name, got)
+		if got := v.Hint(name); got != want {
+			t.Errorf("Hint(%.20q...) = %q, want %q", name, got, want)
 		}
 		if *cells > 100*n {
 			t.Errorf("Hint(%.20q...) filled %d edit-distance cells, want at most %d", name, *cells, 100*n)
@@ -120,5 +120,25 @@ func TestALongUnknownNameIsCheapToSuggestFor(t *testing.T) {
 	*cells = 0
 	if got := v.Hint("net_pin_cout"); got != `; did you mean "net.pin_count"?` || *cells == 0 {
 		t.Errorf("control: Hint(net_pin_cout) = %q after %d cells, want net.pin_count found by comparing", got, *cells)
+	}
+}
+
+// A member spelled with a word another library adds (`str.has_suffix`, #276) names the member whose
+// last segment is one of its words; two such members would be a guess, so the module's members are
+// listed instead, as they are for any unknown member of a module that exists.
+func TestAMemberWithAnExtraWordSuggestsTheMemberOrListsTheModule(t *testing.T) {
+	v := moved(t)
+	for name, want := range map[string]string{
+		"net.is_rail":    `; did you mean "net.rail"?`,
+		"net.get-total":  `; did you mean "net.total"?`,
+		"net.rail_total": `; "net" holds pin_count, rail, total`,
+		"net.voltage":    `; "net" holds pin_count, rail, total`,
+		"net.pin_cout":   `; did you mean "net.pin_count"?`, // control: a typo still wins
+		"nett.is_rail":   `; did you mean "net"?`,           // control: a missing module is repaired first
+		"is_rail":        ``,                                // control: a bare name never lists
+	} {
+		if got := v.Hint(name); got != want {
+			t.Errorf("Hint(%q) = %q, want %q", name, got, want)
+		}
 	}
 }

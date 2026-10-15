@@ -44,3 +44,11 @@ After the goal, `=>` and a list of columns say what the answer holds. The column
 ## Rules
 
 A rule is a head, `:-`, and a body: `depends_on(?a, ?b) :- imports(?a, ?b);`. Each argument of the head is a variable the body binds, a constant, an [aggregate]({{.Site.PathPrefix}}/guide/aggregation/#an-aggregate-in-a-rule), or [arithmetic]({{.Site.PathPrefix}}/guide/arithmetic/#in-the-answer-and-in-a-rules-head) over what the body binds, and a variable can declare its type, as in `size(?p, ?n: number)`, which the [next page]({{.Site.PathPrefix}}/guide/types-and-constants/) covers. A relation can have several rules, and its tuples are everything any of them derives. A relation name can contain dots and hyphens, which is how jaala names the standard library's tests (`str.contains`) and a module's members (`net.has_test_point`).
+
+## Endings from other Datalogs
+
+jaala also reads the endings Datalog, Prolog and Soufflé write, so a program written in their habits runs as its jaala spelling does. A `.` followed by a space or the end ends a clause, as `;` does; a `.` inside `str.suffix` or `1.5` doesn't. A goal written `?- r(?a)` or `=> r(?a)` asks `r(?a)` with no projection, and `!atom` is `not atom`:
+
+{{ demo "demos/guide/syntax-other-endings.yaml" }}
+
+A variable is still `?a`. A capitalised word, as Prolog writes a variable, is refused rather than read as one, because `pin(?r, GND)` meant as a constant would otherwise match every net.

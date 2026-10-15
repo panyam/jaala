@@ -1,0 +1,5 @@
+fixture: deps
+query: |
+  direct(?p, ?q) :- imports(?p, ?q), !imports(?q, ?p).
+  ?- direct("api", ?q).
+expect: [[auth], [cache], [db], [log]]
