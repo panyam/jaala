@@ -199,6 +199,7 @@ func (p *exprParser) primary() (Term, error) {
 // in the goal and every rule, before anything else reads the program. ?y = expr with ?y a variable
 // computes into ?y itself, so it binds ?y or tests it.
 func lowerExpressions(q Query, reg *ns.Vocabulary) (Query, error) {
+	q = computeColumns(q)
 	if !slices.ContainsFunc(q.Rules, func(r Rule) bool { return hasExpr(r.Body) }) && !hasExpr(q.Goal) {
 		return q, nil
 	}
@@ -229,6 +230,79 @@ func lowerExpressions(q Query, reg *ns.Vocabulary) (Query, error) {
 		out.Goal = body
 	}
 	return out, nil
+}
+
+// computeColumns writes arithmetic in a rule head or the projection (#206) as a comparison computing
+// it into a variable named for it, which lowerExpressions then lowers like any other: r(?x, ?a * 2) :-
+// body is r(?x, ?"a * 2") :- body, ?"a * 2" = ?a * 2, and => ?a * ?b projects ?"a * b", the column's
+// label, computed at the end of the goal. No query can spell such a name, and a message about it reads
+// as written. A head keeps its written text, so a witness shows the rule as written.
+func computeColumns(q Query) Query {
+	headExpr := func(r Rule) bool { return slices.ContainsFunc(r.Head.Args, func(t Term) bool { return t.Expr != nil }) }
+	selExpr := slices.ContainsFunc(q.Select, func(t Term) bool { return t.Expr != nil })
+	if !slices.ContainsFunc(q.Rules, headExpr) && !selExpr {
+		return q
+	}
+	out := q
+	out.Rules = slices.Clone(q.Rules)
+	for i, r := range out.Rules {
+		if !headExpr(r) {
+			continue
+		}
+		if r.text == "" {
+			r.text = r.String()
+		}
+		r.Head.Args = slices.Clone(r.Head.Args)
+		r.Body.Literals = slices.Clone(r.Body.Literals)
+		for j, t := range r.Head.Args {
+			if t.Expr != nil {
+				v := Term{Var: colLabel(t)} // an error about it names it as written
+				r.Head.Args[j] = v
+				r.Body.Literals = append(r.Body.Literals, Literal{Compare: &Compare{Left: v, Op: "=", Right: t}})
+			}
+		}
+		out.Rules[i] = r
+	}
+	if selExpr {
+		out.Select = slices.Clone(q.Select)
+		out.Goal.Literals = slices.Clone(q.Goal.Literals)
+		for i, t := range out.Select {
+			if t.Expr != nil {
+				v := Term{Var: colLabel(t)}
+				out.Select[i] = v
+				out.Goal.Literals = append(out.Goal.Literals, Literal{Compare: &Compare{Left: v, Op: "=", Right: t}})
+			}
+		}
+	}
+	return out
+}
+
+// exprLabel writes an expression as written, without its variables' ?s: the answer column it names.
+func exprLabel(t Term) string {
+	switch {
+	case t.Expr == nil && t.Var != "":
+		return string(t.Var)
+	case t.Expr == nil:
+		return t.String()
+	}
+	e := t.Expr
+	child := func(c Term) string {
+		if c.Expr != nil && c.Expr.Op != "call" && c.Expr.Op != "neg" {
+			return "(" + exprLabel(c) + ")"
+		}
+		return exprLabel(c)
+	}
+	switch e.Op {
+	case "call":
+		args := make([]string, len(e.Args))
+		for i, a := range e.Args {
+			args[i] = exprLabel(a)
+		}
+		return e.Func + "(" + strings.Join(args, ", ") + ")"
+	case "neg":
+		return "-" + child(e.Args[0])
+	}
+	return child(e.Args[0]) + " " + e.Op + " " + child(e.Args[1])
 }
 
 // lowerExprRules is lowerExpressions for rules alone, a module's.

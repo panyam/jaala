@@ -1,0 +1,5 @@
+facts: |
+  res("R1", 1000ohm); res("R2", 20ohm)
+  cur("R1", 0.005A); cur("R2", 0.25A)
+query: res(?p, ?r), cur(?p, ?i) => ?p, ?i * ?r, ?i * ?i * ?r
+expect: [[R1, "5V", "0.025W"], [R2, "5V", "1.25W"]]

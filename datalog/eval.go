@@ -1216,9 +1216,13 @@ func (q Query) Columns() []Var {
 	return selKeys(sel)
 }
 
-// colLabel is a select item's column identifier: the variable, or "func(var)" for an aggregate.
+// colLabel is a select item's column identifier: the variable, "func(var)" for an aggregate, or an
+// expression as written without its ?s.
 // It is also the key an aggregate result is stored under in Row.Bind, so printing keys both alike.
 func colLabel(t Term) Var {
+	if t.Expr != nil {
+		return Var(exprLabel(t)) // ?a * ?b answers a column "a * b" (#206)
+	}
 	if t.Agg != nil {
 		if t.Agg.Distinct {
 			return Var(t.Agg.Func + "(distinct " + string(t.Agg.Var) + ")")
