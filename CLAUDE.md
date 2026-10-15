@@ -506,9 +506,14 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   relations in full. That usually stratifies, but the corpus found two cases where it doesn't (#93):
   demand flowing from a rule above an aggregate down into the relation it reduces, and a negation
   still in a cycle the demand closes. When neither rewrite stratifies, `magic` returns the program
-  unrewritten, which `checkRules` has already stratified. It also returns it unrewritten when the rewrite would derive one
-  relation under two adornments (`severalAdornments`, #96): the copies can cover the whole relation
-  twice, which made demand for one points-to variable cost three times the whole analysis. A rule evaluated in full also has its
+  unrewritten, which `checkRules` has already stratified. A relation the rewrite would derive under two
+  adornments (`severalAdornments`, #96: the copies can cover it twice, which made demand for one
+  points-to variable cost three times the whole analysis) is read in full and the rest rewritten
+  again (#290); dropping the whole rewrite instead let one relation's callers decide every other
+  relation's plan. A relation whose every rule is only generators runnable from its constants
+  (`constantRun`, #290) is never demanded either: demand runs each generator once per caller value
+  (Declaire's `sends` over `graph.reach`: 86,460 walks for 7,205 callees, against 12 in full). A
+  rule reading a base relation keeps demand, since in full it is scanned rather than probed. A rule evaluated in full also has its
   constant calls rewritten (`fromConstants`, #57), adorned by the constants alone, so their demand
   rules are facts and add no dependency. A call its earlier literals bind is not demanded there, since
   a full rule binds it for every row (doing so cost `series-from-a-net` 170 times its baseline),

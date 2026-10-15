@@ -57,8 +57,9 @@ import (
 // When neither rewrite stratifies, the program runs without demand, as written, which stratify has
 // already accepted.
 //
-// Nor does it run with demand when the rewrite would derive one relation under two adornments (see
-// severalAdornments).
+// A relation the rewrite would derive under two adornments is read in full instead, and the rest
+// rewritten again (see severalAdornments). So is one whose rules run from their own constants, which
+// demand would run once per value (see constantRun).
 //
 // Magic tuples record what was asked, not what produced an answer, so their citations must not reach
 // an answer: SemiNaive's fixpoint derives them without citations (see SemiNaive.materialize). A
@@ -67,41 +68,57 @@ import (
 // supplementary relation is a set over the prefix's variables, so two derivations differing only in a
 // `_` would be stored as one, and the one kept would not be the one Naive's full comparison keeps.
 func magic(b *Base, q Query) Query {
+	inFull := map[string]bool{}
 	for _, intoNeg := range []bool{true, false} {
-		out := magicWith(b, q, intoNeg)
-		if severalAdornments(out.Rules) {
-			return q
-		}
-		if _, err := stratify(out.Rules, derivedArity(out.Rules)); err == nil {
-			return out
+		for {
+			out := magicWith(b, q, intoNeg, inFull)
+			several := severalAdornments(out.Rules)
+			if len(several) == 0 {
+				if _, err := stratify(out.Rules, derivedArity(out.Rules)); err == nil {
+					return out
+				}
+				break
+			}
+			grew := false
+			for _, rel := range several {
+				grew = grew || !inFull[rel]
+				inFull[rel] = true
+			}
+			if !grew {
+				return q
+			}
 		}
 	}
 	return q
 }
 
-// severalAdornments reports whether the rewrite derives some relation under more than one adornment.
+// severalAdornments returns the relations the rewrite derives under more than one adornment, sorted.
 // Each adornment is a copy of the relation with its own demand, and when callers ask for it bound in
 // different places the copies between them can cover all of it, twice, plus the demand that drove
-// them: demand for one points-to variable cost three times the whole analysis (#96). Reading the
-// program as written is never worse than that.
-func severalAdornments(rules []Rule) bool {
+// them: demand for one points-to variable cost three times the whole analysis (#96). magic reads such
+// a relation in full and rewrites the rest again, so one relation's two callers don't take demand
+// from every other relation (#290).
+func severalAdornments(rules []Rule) []string {
 	seen := map[string]string{}
+	var out []string
 	for _, r := range rules {
 		rel, adorn, ok := strings.Cut(r.Head.Relation, "\x00/")
 		if !ok {
 			continue
 		}
-		if prev, ok := seen[rel]; ok && prev != adorn {
-			return true
+		if prev, ok := seen[rel]; ok && prev != adorn && !slices.Contains(out, rel) {
+			out = append(out, rel)
 		}
 		seen[rel] = adorn
 	}
-	return false
+	sort.Strings(out)
+	return out
 }
 
-// magicWith makes the rewrite, pushing demand into negated calls when intoNeg is set (see magic).
-func magicWith(b *Base, q Query, intoNeg bool) Query {
-	m := &magician{b: b, byHead: map[string][]Rule{}, done: map[string]bool{}, intoNeg: intoNeg}
+// magicWith makes the rewrite, pushing demand into negated calls when intoNeg is set, and reading
+// the relations in inFull in full (see magic).
+func magicWith(b *Base, q Query, intoNeg bool, inFull map[string]bool) Query {
+	m := &magician{b: b, byHead: map[string][]Rule{}, done: map[string]bool{}, intoNeg: intoNeg, inFull: inFull, runs: map[string]bool{}}
 	for _, r := range q.Rules {
 		m.byHead[r.Head.Relation] = append(m.byHead[r.Head.Relation], r)
 	}
@@ -369,6 +386,8 @@ type magician struct {
 	supplied int             // supplementary relations made so far, numbering them
 	free     []adorned       // all-free adornments made (#60), for foldFree
 	asGoal   map[string]bool // relations whose rules get the goal's demand (see asGoal)
+	inFull   map[string]bool // relations read in full, never demanded (see magic)
+	runs     map[string]bool // constantRun's answers, by relation
 }
 
 type adorned struct{ rel, adorn string }
@@ -423,13 +442,52 @@ func (m *magician) body(guard *Atom, lits []Literal, entry map[Var]bool, supply 
 }
 
 // wants reports whether a call can be rewritten for demand: it reads a derived relation and binds at
-// least one argument, or binds none from a body the rewrite guards (#60).
+// least one argument, or binds none from a body the rewrite guards (#60). A relation read in full
+// (magic's inFull) or one its own constants run (constantRun) is never demanded.
 func (m *magician) wants(a Atom, bound map[Var]bool, guarded bool) bool {
 	if rules, derived := m.byHead[a.Relation]; !derived || m.aggregates(a.Relation) || len(rules[0].Head.Args) != len(a.Args) {
 		return false // a wrong arity is refused before any rewrite (checkWrittenArity); never index past it
 	}
+	if m.inFull[a.Relation] || m.constantRun(a.Relation) {
+		return false
+	}
 	adorn, _ := adornment(a, bound)
 	return guarded || strings.Contains(adorn, "b")
+}
+
+// constantRun reports whether every rule of rel runs from its own constants: its positive body is
+// generators only, which checkModes has already found callable from the body alone, and which bind
+// the head, as every rule's body must. Read in full, such a relation costs one call per generator;
+// demanded, one per value its callers bind (#290: Declaire's twelve
+// sends(?c) :- graph.reach(?c, "net/http.X", "calls") rules made 86,460 walks for 7,205 callees,
+// where reading them in full walks twelve times). A base relation keeps demand, since read in full it
+// is scanned rather than probed per value, and a generator's output, unlike a base relation's, can't
+// be sized to compare the two.
+func (m *magician) constantRun(rel string) bool {
+	if runs, ok := m.runs[rel]; ok {
+		return runs
+	}
+	runs := len(m.byHead[rel]) > 0
+	for _, r := range m.byHead[rel] {
+		runs = runs && onlyGenerators(m.b, r.Body)
+	}
+	m.runs[rel] = runs
+	return runs
+}
+
+// onlyGenerators reports whether a body's positive literals are all generators, and there is one.
+func onlyGenerators(b *Base, body Body) bool {
+	positive := false
+	for _, lit := range body.Literals { // a body aggregate is lowered to rules before magic runs (#71)
+		if lit.Pos == nil {
+			continue
+		}
+		if bi, isPred := b.reg.Predicate(lit.Pos.Relation); !isPred || !bi.IsGenerator() {
+			return false
+		}
+		positive = true
+	}
+	return positive
 }
 
 // aggregates reports whether rel is an aggregating relation (#4), which is read in full: its head's

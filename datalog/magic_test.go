@@ -138,7 +138,7 @@ func TestDemandGoesIntoANegatedCall(t *testing.T) {
 func TestDemandIntoANegationFallsBackWhenItWouldNotStratify(t *testing.T) {
 	text := `q(?y) :- weight(?y, ?w), ?w > 5; p(?x, ?y) :- edge(?x, ?y), not q(?y); p(?x, ?z) :- p(?x, ?y), edge(?y, ?z), not q(?z); p("v0", ?z) => ?z`
 	b := baseFor(std(randomGraph(3, 10, 0.3)))
-	if _, err := stratify(magicWith(b, mustParse(t, text), true).Rules, derivedArity(magicWith(b, mustParse(t, text), true).Rules)); err == nil {
+	if _, err := stratify(magicWith(b, mustParse(t, text), true, nil).Rules, derivedArity(magicWith(b, mustParse(t, text), true, nil).Rules)); err == nil {
 		t.Fatal("control: demand into the negation stratifies here, so the fallback is not exercised")
 	}
 	q := magic(b, mustParse(t, text))
@@ -721,5 +721,58 @@ func TestDemandIsSkippedWhenARelationNeedsTwoAdornments(t *testing.T) {
 	}
 	if out := magic(b, mustParse(t, leftReach+`reach("a", ?y) => ?y`)); !strings.Contains(fmt.Sprint(out.Rules), magicPrefix) {
 		t.Errorf("control: a closure demanded one way should keep its rewrite")
+	}
+}
+
+// A relation whose every rule runs from its own constants is read in full rather than demanded
+// (#290): each sends rule walks back from its constant end once, where demand walked once per value
+// the goal binds (Declaire's x04: 86,460 graph.reach calls for 7,205 callees). control: the same
+// shape over a base relation is still demanded, since read in full it would be scanned.
+func TestARelationItsConstantsRunIsReadInFull(t *testing.T) {
+	const rules = `sends(?c) :- walk(?c, "v19"); sends(?c) :- walk(?c, "v10"); ` +
+		`near(?c) :- edge(?c, "v19"); near(?c) :- edge(?c, "v10"); `
+	v := std(line(20))
+	calls := walker(t, v, [][]bool{{true, false}, {false, true}})
+	if rows, err := both(mustParse(t, rules+`node(?c), sends(?c) => ?c`), baseFor(v)); err != nil || len(rows) != 19 {
+		t.Fatalf("sends answered %d rows, %v; want v0 to v18", len(rows), err)
+	}
+	*calls = nil
+	var r Report
+	if _, err := (SemiNaive{}).Eval(bg, mustParse(t, rules+`node(?c), sends(?c) => ?c`), baseFor(v), Explain(&r)); err != nil {
+		t.Fatal(err)
+	}
+	if rr := relationIn(&r, "sends"); rr == nil || rr.How != "full" {
+		t.Errorf("sends: %+v, want it read in full", rr)
+	}
+	if want := [][2]bool{{false, true}, {false, true}}; !reflect.DeepEqual(*calls, want) {
+		t.Errorf("walk calls (from, to bound) = %v, want one per rule from its constant: %v", *calls, want)
+	}
+	r = Report{}
+	if _, err := (SemiNaive{}).Eval(bg, mustParse(t, rules+`node(?c), near(?c) => ?c`), baseFor(v), Explain(&r)); err != nil {
+		t.Fatal(err)
+	}
+	if rr := relationIn(&r, "near"); rr == nil || rr.How != "demand" {
+		t.Errorf("control: near over edge: %+v, want it demanded", rr)
+	}
+}
+
+// A relation called under two adornments is read in full, and every other relation keeps its demand
+// (#290). Before, one relation's two callers dropped the rewrite for the whole program, so an
+// unrelated rule's plan decided whether Declaire's sends was demanded. control: a reads in full as
+// before, and b's demand is what moved.
+func TestTwoAdornmentsReadOnlyThatRelationInFull(t *testing.T) {
+	const q = `a(?x, ?y) :- edge(?x, ?y); a(?x, ?y) :- edge(?y, ?x); ` +
+		`b(?x, ?y) :- edge(?x, ?y); b(?x, ?y) :- edge(?x, ?m), edge(?m, ?y); ` +
+		`q(?s, ?y, ?z) :- a(?s, ?y), a(?y, ?s), b(?s, ?z); q(?s, ?y, ?z) :- a(?s, ?y), a(?y, ?s), b(?y, ?z); ` +
+		`q("v3", ?y, ?z) => ?y, ?z`
+	if rows := eval(t, line(20), q); len(rows) != 6 {
+		t.Fatalf("answered %d rows, want 6", len(rows))
+	}
+	_, r := reported(t, line(20), q)
+	if rr := relationIn(&r, "a"); rr == nil || rr.How != "full" {
+		t.Errorf("control: a: %+v, want it read in full", rr)
+	}
+	if rr := relationIn(&r, "b"); rr == nil || rr.How != "demand" {
+		t.Errorf("b: %+v, want it demanded", rr)
 	}
 }
