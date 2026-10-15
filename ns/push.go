@@ -69,6 +69,10 @@ type Conjunction struct {
 	// each row's inputs and files it under its binding, but a binding's match left out is lost. The
 	// planner offers c with Inputs and no Bindings to Pushes; a store that declines is asked literal by
 	// literal, as before.
+	//
+	// With Partial too, as a partitioned Federation asks (#268), a prefix row is one whose atoms agree
+	// with some binding on the Inputs they bind: an input only a later atom reads can't filter it. A
+	// store that pushes c with Inputs also pushes its suffixes with the Inputs they still read.
 	Inputs   []int
 	Bindings [][]Value
 }

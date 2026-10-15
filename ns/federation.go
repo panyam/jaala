@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"iter"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -378,15 +379,16 @@ func NewPartitionedFederation(members ...Member) (*Federation, error) {
 // (Conjunction.Page) of one atom is pushed when every member serving it pushes it, since one fact is in
 // one member and the federation's first rows are among theirs. Otherwise one of
 // several pushes only when it is partitioned (NewPartitionedFederation), every member serves every
-// relation of c, and each pushes c with its prefixes (Partial). A join of a federation's members
-// otherwise could pair facts no one member sees, and is asked literal by literal.
+// relation of c, and each pushes c with its prefixes (Partial), with c's Inputs when it has them
+// (#268). A join of a federation's members otherwise could pair facts no one member sees, and is
+// asked literal by literal.
 func (f *Federation) Pushes(c Conjunction) bool {
 	if len(f.members) == 1 {
 		ps, ok := f.members[0].Source.(PushSource)
 		return ok && ps.Pushes(c)
 	}
-	if len(c.Inputs) > 0 {
-		return false // a binding's values would have to be routed by Holds, member by member
+	if len(c.Inputs) > 0 && c.Page != nil {
+		return false // a goal's page has no inputs
 	}
 	if c.Page != nil {
 		if f.single(c, func(src Source) bool { ps, ok := src.(PushSource); return ok && ps.Pushes(c) }) {
@@ -417,7 +419,9 @@ func (f *Federation) Pushes(c Conjunction) bool {
 // that member. A page of one atom goes to each member whose Holds allows it, each answering its own
 // first rows, which hold the federation's (see Page). Partitioned, it asks each member whose Holds allows c's first atom for c with its
 // prefixes, yields that member's whole rows, and continues each prefix in the other members whose
-// Holds allows the next atom, by pushing the rest of c with the prefix's values as constants. A
+// Holds allows the next atom, by pushing the rest of c with the prefix's values as constants. With
+// Bindings, each goes only to the members whose Holds allows the first atom under its values, and
+// each of those is asked once for all of its bindings (#268). A
 // match is found once, through the member holding its first fact and then, at each fact held
 // elsewhere, the member holding it. A member's failure is wrapped with its name.
 func (f *Federation) Push(ctx context.Context, c Conjunction) iter.Seq2[[]Tuple, error] {
@@ -465,11 +469,15 @@ func (f *Federation) pushAcross(ctx context.Context, c Conjunction, except int, 
 	p.Partial = true
 	first := c.Atoms[0]
 	for _, i := range f.serving[first.Relation] {
-		if i == except || !f.holds(i, first) {
+		if i == except {
+			continue
+		}
+		q, ok := f.routed(i, p)
+		if !ok {
 			continue
 		}
 		var partial [][]Tuple
-		more := f.pushMember(ctx, i, p, nil, func(row []Tuple, err error) bool {
+		more := f.pushMember(ctx, i, q, nil, func(row []Tuple, err error) bool {
 			switch {
 			case err != nil:
 				return yield(nil, err)
@@ -492,6 +500,38 @@ func (f *Federation) pushAcross(ctx context.Context, c Conjunction, except int, 
 		}
 	}
 	return true
+}
+
+// routed is c for member i: c itself when its Holds allows c's first atom, or with Bindings, c with
+// only the bindings under whose values Holds allows it. ok is false when it allows none.
+func (f *Federation) routed(i int, c Conjunction) (Conjunction, bool) {
+	if len(c.Inputs) == 0 || f.members[i].Holds == nil {
+		return c, f.holds(i, c.Atoms[0])
+	}
+	var kept [][]Value
+	for _, b := range c.Bindings {
+		if f.holds(i, c.Atoms[0].under(c.Inputs, b)) {
+			kept = append(kept, b)
+		}
+	}
+	if len(kept) == 0 {
+		return c, false
+	}
+	c.Bindings = kept
+	return c, true
+}
+
+// under is a with each variable in inputs replaced by its value in vals, in inputs' order.
+func (a PushAtom) under(inputs []int, vals []Value) PushAtom {
+	out := PushAtom{Relation: a.Relation, Args: make([]PushArg, len(a.Args))}
+	for pos, x := range a.Args {
+		out.Args[pos] = x
+		if j := slices.Index(inputs, x.Var); x.Var > 0 && j >= 0 && j < len(vals) {
+			v := vals[j]
+			out.Args[pos] = PushArg{Const: &v}
+		}
+	}
+	return out
 }
 
 // holds reports whether member i's Holds allows atom a, its constants bound.

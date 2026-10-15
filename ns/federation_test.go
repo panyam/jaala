@@ -367,13 +367,18 @@ func TestAFederationPushesToALoneMember(t *testing.T) {
 type joinMem struct {
 	*MemSource
 	noPartial bool
+	noInputs  bool
 	pushes    int
+	pushed    []Conjunction
 }
 
-func (m *joinMem) Pushes(c Conjunction) bool { return !c.Partial || !m.noPartial }
+func (m *joinMem) Pushes(c Conjunction) bool {
+	return (!c.Partial || !m.noPartial) && (len(c.Inputs) == 0 || !m.noInputs)
+}
 
 func (m *joinMem) Push(_ context.Context, c Conjunction) iter.Seq2[[]Tuple, error] {
 	m.pushes++
+	m.pushed = append(m.pushed, c)
 	var rows [][]Tuple
 	vals := map[int]string{}
 	row := make([]Tuple, len(c.Atoms))
@@ -412,6 +417,7 @@ func (m *joinMem) Push(_ context.Context, c Conjunction) iter.Seq2[[]Tuple, erro
 		}
 	}
 	walk(0)
+	rows = slices.DeleteFunc(rows, func(r []Tuple) bool { return !agrees(c, r) })
 	return func(yield func([]Tuple, error) bool) {
 		for _, r := range rows {
 			if !yield(r, nil) {
@@ -419,6 +425,30 @@ func (m *joinMem) Push(_ context.Context, c Conjunction) iter.Seq2[[]Tuple, erro
 			}
 		}
 	}
+}
+
+// agrees reports whether row, a match of c or a prefix of one, agrees with one of c's Bindings on the
+// Inputs its atoms bind, or c has none.
+func agrees(c Conjunction, row []Tuple) bool {
+	if len(c.Bindings) == 0 {
+		return true
+	}
+	return slices.ContainsFunc(c.Bindings, func(b []Value) bool {
+		for j, n := range c.Inputs {
+		find:
+			for k, a := range c.Atoms[:len(row)] {
+				for pos, x := range a.Args {
+					if x.Var == n {
+						if row[k].Vals[pos].S != b[j].S {
+							return false
+						}
+						break find
+					}
+				}
+			}
+		}
+		return true
+	})
 }
 
 // Two stores partitioned by an edge's source, A holding a1's edges and a2's, B holding b9's: two
@@ -506,6 +536,70 @@ func TestAPartitionedFederationPushesAcrossMembers(t *testing.T) {
 	members = append(members, Member{Name: "C", Source: &joinMem{MemSource: NewMemSource().Declare("node", "id")}})
 	if f, _ := NewPartitionedFederation(members...); f.Pushes(c) {
 		t.Errorf("a partitioned federation pushes though a member doesn't serve edge")
+	}
+}
+
+// A partitioned federation pushes a conjunction with Inputs (#268): each binding goes to the members
+// whose Holds allows the first atom under its values, each asked once for all of its bindings, and a
+// prefix leaving a member continues as before. The answer is each binding's matches, whatever Holds
+// routes; a federation not declared partitioned, or with a member refusing Inputs, declines.
+func TestAPartitionedFederationPushesBindingsAcrossMembers(t *testing.T) {
+	c := Conjunction{
+		Atoms: []PushAtom{
+			{Relation: "edge", Args: []PushArg{{Var: 1}, {Var: 2}}},
+			{Relation: "edge", Args: []PushArg{{Var: 2}, {Var: 3}}},
+		},
+		Inputs:   []int{1},
+		Bindings: [][]Value{{S("a1")}, {S("b9")}},
+	}
+	offered := c
+	offered.Bindings = nil
+	want := []string{"A:a1-a2 A:a2-a3", "A:a1-b9 B:b9-a2", "A:a1-b9 B:b9-b10", "B:b9-a2 A:a2-a3"}
+	for _, holds := range []bool{true, false} {
+		a, b, members := partitionedEdges(holds)
+		b.Add("edge", Tuple{Vals: []Value{S("b9"), S("a2")}, Cites: []string{"b9-a2"}})
+		f, err := NewPartitionedFederation(members...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !f.Pushes(offered) {
+			t.Fatalf("holds %v: a partitioned federation refuses a conjunction with Inputs", holds)
+		}
+		if got := pushedRows(t, f, c); !reflect.DeepEqual(got, want) {
+			t.Errorf("holds %v: pushed %q, want %q", holds, got, want)
+		}
+		firsts := func(m *joinMem) (n int, bound [][]Value) {
+			for _, p := range m.pushed {
+				if len(p.Bindings) > 0 {
+					n++
+					bound = append(bound, p.Bindings...)
+				}
+			}
+			return n, bound
+		}
+		an, ab := firsts(a)
+		bn, bb := firsts(b)
+		switch {
+		case holds && (an != 1 || bn != 1 || !reflect.DeepEqual(ab, [][]Value{{S("a1")}}) || !reflect.DeepEqual(bb, [][]Value{{S("b9")}})):
+			t.Errorf("A was asked %d times for %v and B %d for %v, want once each for its own binding", an, ab, bn, bb)
+		case !holds && (an != 1 || bn != 1 || len(ab) != 2 || len(bb) != 2):
+			t.Errorf("control: with no Holds, A was asked %d times for %v and B %d for %v, want once each for both", an, ab, bn, bb)
+		}
+	}
+	_, _, members := partitionedEdges(true)
+	if plain, _ := NewFederation(members...); plain.Pushes(offered) {
+		t.Errorf("a federation not declared partitioned pushes a conjunction with Inputs across members")
+	}
+	a, _, members := partitionedEdges(true)
+	a.noInputs = true
+	if f, _ := NewPartitionedFederation(members...); f.Pushes(offered) {
+		t.Errorf("a partitioned federation pushes Inputs though a member refuses them")
+	}
+	paged := offered
+	paged.Page = &Page{Columns: []int{1}, Limit: 1}
+	_, _, members = partitionedEdges(true)
+	if f, _ := NewPartitionedFederation(members...); f.Pushes(paged) {
+		t.Errorf("a partitioned federation pushes a page with Inputs")
 	}
 }
 

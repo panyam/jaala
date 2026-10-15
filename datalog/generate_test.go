@@ -712,6 +712,9 @@ func agreeStreamed(q Query, b *Base, want []Row, werr error, opts []Option) stri
 	return ""
 }
 
+// partitionedBatchPrograms counts those whose partitioned push carried Bindings (#268).
+var partitionedBatchPrograms int
+
 // streamedPrograms counts those whose goal streamed a relation into its answer (#264).
 var streamedPrograms int
 
@@ -1041,14 +1044,20 @@ func agreePartitioned(q Query, b *Base, want []Row, werr error, opts []Option) s
 	if diff := agreeOver(q, b, lb, "partitioned", want, werr, opts); diff != "" {
 		return diff
 	}
-	asked := 0
+	asked, bound := 0, false
 	for _, st := range stores {
 		if st.pushes() > 0 {
 			asked++
 		}
+		st.mu.Lock()
+		bound = bound || slices.ContainsFunc(st.pushed, func(c ns.Conjunction) bool { return c.Partial && len(c.Bindings) > 0 })
+		st.mu.Unlock()
 	}
 	if asked > 1 {
 		partitionedPrograms++
+	}
+	if bound {
+		partitionedBatchPrograms++
 	}
 	if werr != nil || anyRows(q) {
 		return ""
@@ -1288,7 +1297,7 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 	}
 	compared, known, skipped, failed := map[string]int{}, map[int]int{}, 0, 0
 	lookedUpPrograms, federatedPrograms, batchedPrograms, pushedPrograms, partitionedPrograms, walkedPrograms, unitAnswers, mixedAnswers = 0, 0, 0, 0, 0, 0, 0, 0
-	pagedPrograms, summarizedPrograms, batchPushedPrograms, stepWalkedPrograms, streamedPrograms = 0, 0, 0, 0, 0
+	pagedPrograms, summarizedPrograms, batchPushedPrograms, stepWalkedPrograms, streamedPrograms, partitionedBatchPrograms = 0, 0, 0, 0, 0, 0
 	withUnits := 0
 	for seed := first; seed < first+int64(seeds); seed++ {
 		rnd := rand.New(rand.NewSource(seed))
@@ -1368,6 +1377,9 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 	}
 	if walkedPrograms == 0 {
 		t.Errorf("control: no program asked a store to walk a relation")
+	}
+	if partitionedBatchPrograms == 0 {
+		t.Errorf("control: no program pushed a batch of bindings across a partitioned federation's members")
 	}
 	if streamedPrograms == 0 {
 		t.Errorf("control: no program's goal streamed a relation into its answer")
