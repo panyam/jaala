@@ -494,7 +494,12 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   relation under two adornments (`severalAdornments`, #96): the copies can cover the whole relation
   twice, which made demand for one points-to variable cost three times the whole analysis. A rule evaluated in full also has its
   constant calls rewritten (`fromConstants`, #57), adorned by the constants alone, so their demand
-  rules are facts and add no dependency.
+  rules are facts and add no dependency. A call its earlier literals bind is not demanded there, since
+  a full rule binds it for every row (doing so cost `series-from-a-net` 170 times its baseline),
+  except in a rule `unfold` would have inlined into the goal had the Eval not been witnessed
+  (`asGoal`, `sideways`, #270): Witnesses turn inlining off, and without this a witnessed goal over
+  such a rule derived what it calls in full (Declaire's q09r). The corpus reaches `sideways` but
+  never its bound path; `TestAWitnessedRuleStandingInForTheGoalPassesItsBindingsOn` guards it.
 - **A Base keeps the derived relations SemiNaive evaluated in full** (`derived.go`, #140). The key is
   the sorted text of the relation's linked rules and those of every derived relation they reach
   (`derivedKeys`; text, not a hash, for the deps check above), so a redefinition anywhere below is

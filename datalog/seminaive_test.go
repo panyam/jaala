@@ -182,7 +182,8 @@ func counter(t *testing.T, v *ns.Vocabulary) *int {
 // stratum holds every relation no negation separates, but only the ones reading one another need
 // rounds. Here b reads a and probes each row, and c joins b with a recursive closure. Before, round
 // zero ran b over a whenever a's name sorted first, and round one counted a's tuples as new and ran b
-// over them again.
+// over them again. Planned, c stands in for the goal (#270), so r("v0", ?x) demands b for the 7 nodes
+// it reaches; as written, nothing is demanded and b probes all 8.
 func TestAPlainDependencyIsDerivedOnce(t *testing.T) {
 	for _, names := range [][3]string{{"a", "b", "c"}, {"z", "y", "x"}} {
 		a, b, c := names[0], names[1], names[2]
@@ -195,8 +196,12 @@ func TestAPlainDependencyIsDerivedOnce(t *testing.T) {
 			if err != nil || len(rows) != 7 {
 				t.Fatalf("%T %v: %d rows, %v", ev, names, len(rows), err)
 			}
-			if *n != 8 {
-				t.Errorf("%T, relations named %v: probe ran %d times, want once per node (8)", ev, names, *n)
+			want := 7
+			if ev.(SemiNaive).WrittenOrder {
+				want = 8
+			}
+			if *n != want {
+				t.Errorf("%T %+v, relations named %v: probe ran %d times, want once per node (%d)", ev, ev, names, *n, want)
 			}
 		}
 	}

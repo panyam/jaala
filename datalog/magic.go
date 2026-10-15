@@ -105,6 +105,7 @@ func magicWith(b *Base, q Query, intoNeg bool) Query {
 	for _, r := range q.Rules {
 		m.byHead[r.Head.Relation] = append(m.byHead[r.Head.Relation], r)
 	}
+	m.asGoal = asGoal(b, q, m.byHead)
 	out := q
 	if len(out.Select) == 0 {
 		out.Select = defaultSelect(q.Goal)
@@ -241,7 +242,13 @@ func (m *magician) drain() {
 // earlier literals bind are not used: a rule evaluated in full binds them for every row, which would
 // demand as much as the whole relation. A call into the rule's own recursion is left alone, since that
 // relation is being evaluated in full already.
+//
+// The exception is a rule unfold would have inlined into the goal but didn't, because the Eval is
+// witnessed (see asGoal): its body gets the demand the goal's would have, sideways.
 func (m *magician) fromConstants(r Rule) Body {
+	if m.asGoal[r.Head.Relation] {
+		return m.sideways(r)
+	}
 	none := map[Var]bool{}
 	lits := make([]Literal, len(r.Body.Literals))
 	for i, lit := range r.Body.Literals {
@@ -262,6 +269,86 @@ func (m *magician) fromConstants(r Rule) Body {
 	return Body{Literals: lits}
 }
 
+// sideways rewrites a rule evaluated in full that stands in for the goal (#270): a call its earlier
+// literals bind, in planned order, is demanded by them, as the goal's calls are, so a generator's
+// bindings reach the relations it calls (Declaire's q09r: graph.reach, then http.route). A call bound
+// by constants alone still gets a fact for its demand.
+func (m *magician) sideways(r Rule) Body {
+	none := map[Var]bool{}
+	bound := map[Var]bool{}
+	supply := !m.b.canonical() && !countsBindings(r.Head.Args, nil)
+	var front []Literal
+	pos, negs := splitNegations(planBody(m.b, r.Body, nil).Literals)
+	for _, lit := range pos {
+		if lit.Pos != nil {
+			if a := *lit.Pos; !m.reaches(a.Relation, r.Head.Relation) && m.wants(a, bound, false) {
+				var call Atom
+				if readsAny(a, bound) {
+					if supply && doesWork(front) {
+						front = []Literal{m.supplement(front, bound)}
+					}
+					call = m.call(a, bound, front)
+				} else {
+					call = m.call(a, none, nil)
+				}
+				lit = Literal{Pos: &call, at: lit.at}
+			}
+			bindAll(lit.Pos, bound)
+		}
+		front = append(front, lit)
+	}
+	for _, lit := range negs {
+		if !m.reaches(lit.Neg.Relation, r.Head.Relation) {
+			switch {
+			case m.intoNeg && readsAny(*lit.Neg, bound) && m.wants(*lit.Neg, bound, false):
+				call := m.call(*lit.Neg, bound, front)
+				lit = Literal{Neg: &call, at: lit.at}
+			case m.wants(*lit.Neg, none, false):
+				call := m.call(*lit.Neg, none, nil)
+				lit = Literal{Neg: &call, at: lit.at}
+			}
+		}
+		front = append(front, lit)
+	}
+	return Body{Literals: front}
+}
+
+// asGoal lists the relations unfold would have inlined into the goal, and into what it inlined there,
+// had the Eval not been witnessed (see unfold). Witnesses keep a relation's node, so they turn
+// inlining off, but they shouldn't turn off the demand the inlined body would have carried.
+func asGoal(b *Base, q Query, byHead map[string][]Rule) map[string]bool {
+	out := map[string]bool{}
+	if !b.witnessing() || countsBindings(q.Select, q.Having) {
+		return out
+	}
+	u := &unfolder{byHead: byHead, recursive: recursiveRelations(q.Rules), reg: b.reg}
+	queue := q.Goal.Literals
+	for len(queue) > 0 {
+		lit := queue[0]
+		queue = queue[1:]
+		if lit.Pos == nil || out[lit.Pos.Relation] {
+			continue
+		}
+		if _, ok := u.inline(*lit.Pos); ok {
+			out[lit.Pos.Relation] = true
+			if r := byHead[lit.Pos.Relation][0]; !countsBindings(r.Head.Args, nil) {
+				queue = append(queue, r.Body.Literals...)
+			}
+		}
+	}
+	return out
+}
+
+// readsAny reports whether a call has an argument some earlier literal binds.
+func readsAny(a Atom, bound map[Var]bool) bool {
+	for _, t := range a.Args {
+		if t.Var != "" && t.Var != "_" && bound[t.Var] {
+			return true
+		}
+	}
+	return false
+}
+
 // derivedArity is the arity of each relation the rules derive, as stratify takes it.
 func derivedArity(rules []Rule) map[string]int {
 	out := map[string]int{}
@@ -277,10 +364,11 @@ type magician struct {
 	intoNeg  bool            // push demand into negated calls
 	done     map[string]bool // adorned relations already queued
 	queue    []adorned
-	rules    []Rule    // magic, supplementary, adorned and factored rules, in the order made
-	factored int       // goal calls factored so far, numbering their relations
-	supplied int       // supplementary relations made so far, numbering them
-	free     []adorned // all-free adornments made (#60), for foldFree
+	rules    []Rule          // magic, supplementary, adorned and factored rules, in the order made
+	factored int             // goal calls factored so far, numbering their relations
+	supplied int             // supplementary relations made so far, numbering them
+	free     []adorned       // all-free adornments made (#60), for foldFree
+	asGoal   map[string]bool // relations whose rules get the goal's demand (see asGoal)
 }
 
 type adorned struct{ rel, adorn string }
