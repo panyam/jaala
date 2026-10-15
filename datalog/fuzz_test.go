@@ -50,7 +50,7 @@ func addSeeds(f *testing.F) {
 	for seed := int64(1); seed <= 100; seed++ {
 		rnd := rand.New(rand.NewSource(seed))
 		facts := genGraph(rnd)
-		f.Add((&generator{rnd: rnd, nodes: facts.n}).program().String())
+		f.Add(newGenerator(rnd, facts).program().String())
 	}
 }
 
