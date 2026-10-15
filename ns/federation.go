@@ -375,9 +375,9 @@ func NewPartitionedFederation(members ...Member) (*Federation, error) {
 	return f, nil
 }
 
-// Pushes implements PushSource. A Federation of one member pushes what that member pushes. A page
-// (Conjunction.Page) of one atom is pushed when every member serving it pushes it, since one fact is in
-// one member and the federation's first rows are among theirs. Otherwise one of
+// Pushes implements PushSource. A Federation of one member pushes what that member pushes. A
+// conjunction of one atom, or a page (Conjunction.Page) of one, is pushed when every member serving it
+// pushes it, since one fact is in one member (#263), and a page's first rows are among theirs. Otherwise one of
 // several pushes only when it is partitioned (NewPartitionedFederation), every member serves every
 // relation of c, and each pushes c with its prefixes (Partial), with c's Inputs when it has them
 // (#268). A join of a federation's members otherwise could pair facts no one member sees, and is
@@ -389,6 +389,9 @@ func (f *Federation) Pushes(c Conjunction) bool {
 	}
 	if len(c.Inputs) > 0 && c.Page != nil {
 		return false // a goal's page has no inputs
+	}
+	if len(c.Atoms) == 1 && c.Page == nil {
+		return f.single(c, func(src Source) bool { ps, ok := src.(PushSource); return ok && ps.Pushes(c) })
 	}
 	if c.Page != nil {
 		if f.single(c, func(src Source) bool { ps, ok := src.(PushSource); return ok && ps.Pushes(c) }) {
@@ -410,8 +413,8 @@ func (f *Federation) Pushes(c Conjunction) bool {
 }
 
 // Push implements PushSource, citing each tuple to the member it came from. With one member it asks
-// that member. A page of one atom goes to each member whose Holds allows it, each answering its own
-// first rows, which hold the federation's (see Page). Partitioned, it asks each member whose Holds allows c's first atom for c with its
+// that member. One atom, or a page of one, goes to each member whose Holds allows it, each answering
+// its own facts' matches, or its own first rows, which hold the federation's (see Page). Partitioned, it asks each member whose Holds allows c's first atom for c with its
 // prefixes, yields that member's whole rows, and continues its prefixes in the other members whose
 // Holds allows the next atom: the rest of c once per member for all prefixes of as many atoms, their
 // values as its Bindings (continuePrefixes), or once per prefix with its values as constants to a
@@ -425,9 +428,9 @@ func (f *Federation) Push(ctx context.Context, c Conjunction) iter.Seq2[[]Tuple,
 			f.pushMember(ctx, 0, c, nil, yield)
 			return
 		}
-		if c.Page != nil {
+		if c.Page != nil || len(c.Atoms) == 1 {
 			for _, i := range f.serving[c.Atoms[0].Relation] {
-				if f.holds(i, c.Atoms[0]) && !f.pushMember(ctx, i, c, nil, yield) {
+				if q, ok := f.routed(i, c); ok && !f.pushMember(ctx, i, q, nil, yield) {
 					return
 				}
 			}

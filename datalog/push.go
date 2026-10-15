@@ -56,7 +56,8 @@ func pushConjunctions(b *Base, q Query) Query {
 // pushBody groups body's base literals for the Source: each literal that binds nothing bound before
 // it starts a group, which takes each later literal sharing a variable with the group and none with a
 // literal before it outside the group, for as long as the Source pushes the group (ns.PushSource's
-// Pushes). A group of at least two literals becomes one literal, at its first literal's place.
+// Pushes). A group of at least two literals becomes one literal, at its first literal's place, and so
+// does one literal the store filters better than a whole read (#263, filtersAlone).
 func pushBody(b *Base, body Body) Body {
 	pos, negs := splitNegations(body.Literals)
 	bound := map[Var]bool{}
@@ -80,8 +81,8 @@ func pushBody(b *Base, body Body) Body {
 	return Body{Literals: append(out, negs...)}
 }
 
-// growGroup is the group starting at pos[i], or nil when none of two literals or more does, marking
-// its members used.
+// growGroup is the group starting at pos[i], or nil when none of two literals or more does and pos[i]
+// alone isn't worth pushing, marking its members used.
 func growGroup(b *Base, pos []Literal, i int, bound map[Var]bool, used []bool) *pushGroup {
 	if !b.pushable(pos[i]) {
 		return nil
@@ -105,7 +106,8 @@ func growGroup(b *Base, pos []Literal, i int, bound map[Var]bool, used []bool) *
 		}
 		bindAll(lit.Pos, outside)
 	}
-	if len(members) < 2 {
+	alone := len(members) == 1
+	if alone && !filtersAlone(pos[i].Pos, bound) {
 		return nil
 	}
 	var cmps []Compare
@@ -118,10 +120,40 @@ func growGroup(b *Base, pos []Literal, i int, bound map[Var]bool, used []bool) *
 	if len(cmps) > 0 && !b.pusher.Pushes(g.offered(bound)) {
 		g.compare = nil
 	}
+	if alone && ((g.compare == nil && !repeatsVar(pos[i].Pos)) || !b.pusher.Pushes(g.offered(bound))) {
+		return nil // nothing the store filters by, or it doesn't push it
+	}
 	for _, m := range members {
 		used[m] = true
 	}
 	return g
+}
+
+// filtersAlone reports whether a literal could be worth pushing alone (#263): nothing before it binds
+// it and it has no constant, which a lookup answers already. Whether it is depends on what the store
+// filters it by, a repeated variable or a comparison going with it.
+func filtersAlone(a *Atom, bound map[Var]bool) bool {
+	for _, t := range a.Args {
+		if t.Const != nil || (t.Var != "" && t.Var != "_" && bound[t.Var]) {
+			return false
+		}
+	}
+	return true
+}
+
+// repeatsVar reports whether a variable appears twice in a, a join within one fact.
+func repeatsVar(a *Atom) bool {
+	seen := map[Var]bool{}
+	for _, t := range a.Args {
+		if t.Var == "" || t.Var == "_" {
+			continue
+		}
+		if seen[t.Var] {
+			return true
+		}
+		seen[t.Var] = true
+	}
+	return false
 }
 
 // offered is g as the planner offers it to Pushes: its variables that bound, what the literals before

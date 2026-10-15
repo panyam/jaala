@@ -317,8 +317,8 @@ func (m *pushMem) Push(_ context.Context, c Conjunction) iter.Seq2[[]Tuple, erro
 	}
 }
 
-// A Federation pushes a conjunction only to a lone member that pushes, citing each tuple to it, and
-// wraps the member's failure with its name.
+// A Federation pushes a join only to a lone member that pushes, and one atom to every member serving
+// it, citing each tuple to its member, and wraps the member's failure with its name.
 func TestAFederationPushesToALoneMember(t *testing.T) {
 	mem := NewMemSource().Declare("edge", "from", "to")
 	mem.Add("edge", Tuple{Vals: []Value{S("a"), S("b")}, Cites: []string{"e1"}})
@@ -351,8 +351,12 @@ func TestAFederationPushesToALoneMember(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if two.Pushes(c) {
-		t.Errorf("a federation of two members pushes a conjunction, whose join could span them (#238)")
+	join := Conjunction{Atoms: []PushAtom{c.Atoms[0], {Relation: "edge", Args: []PushArg{{Var: 2}, {Var: 3}}}}}
+	if two.Pushes(join) {
+		t.Errorf("a federation of two members pushes a join, which could span them (#238)")
+	}
+	if !two.Pushes(c) {
+		t.Errorf("a federation of two members refuses one atom, which each member answers for its own facts (#263)")
 	}
 	plain, err := NewFederation(Member{Name: "repo0", Source: mem})
 	if err != nil {
@@ -605,6 +609,26 @@ func TestAPartitionedFederationPushesBindingsAcrossMembers(t *testing.T) {
 	_, _, members = partitionedEdges(true)
 	if f, _ := NewPartitionedFederation(members...); f.Pushes(paged) {
 		t.Errorf("a partitioned federation pushes a page with Inputs")
+	}
+}
+
+// One atom goes to every member serving it whose Holds allows it, partitioned or not (#263): one fact
+// is in one member, so the members' matches together are the federation's.
+func TestAFederationPushesOneAtomToTheMembersHoldingIt(t *testing.T) {
+	a1 := S("a1")
+	c := Conjunction{Atoms: []PushAtom{{Relation: "edge", Args: []PushArg{{Const: &a1}, {Var: 1}}}}}
+	for _, partitioned := range []bool{false, true} {
+		a, b, members := partitionedEdges(true)
+		f, _ := NewFederation(members...)
+		if partitioned {
+			f, _ = NewPartitionedFederation(members...)
+		}
+		if !f.Pushes(c) {
+			t.Fatalf("partitioned %v: one atom isn't pushed", partitioned)
+		}
+		if got, want := pushedRows(t, f, c), []string{"A:a1-a2", "A:a1-b9"}; !reflect.DeepEqual(got, want) || a.pushes != 1 || b.pushes != 0 {
+			t.Errorf("partitioned %v: pushed %q to A %d times and B %d, want %q from A alone", partitioned, got, a.pushes, b.pushes, want)
+		}
 	}
 }
 

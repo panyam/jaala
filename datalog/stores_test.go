@@ -367,13 +367,16 @@ var storeQuestions = []struct{ name, text string }{
 	{"count-lines", `attr(?id, "lines", "7") => count(?id)`},
 	{"page", `attr(?id, "lines", ?n) => ?id, ?n order by ?id limit 10`},
 	{"self-loops", `edge(?a, ?k, ?a) => ?a, ?k`},
+	{"edges", `edge(?a, _, ?b) => ?a, ?b`},
 }
 
-// storeBudget is the budget self-loops is asked under too, less than one store's edges, to show a
-// whole read stopping at it.
+// storeBudget is the budget edges is asked under too, less than one store's edges, to show a whole
+// read stopping at it.
 const storeBudget = 100
 
-var selfLoopsQuestion = storeQuestions[len(storeQuestions)-1].text
+// wholeReadQuestion is edges, an unbound call no store filters, so it's read whole (#233); self-loops
+// was, until a store filtered a literal with a repeated variable (#263).
+var wholeReadQuestion = storeQuestions[len(storeQuestions)-1].text
 
 // storeCost is what one ask of a question cost the stores.
 type storeCost struct {
@@ -482,8 +485,8 @@ func (s storeSet) askTwice(q Query, setup ...func(*Base)) (first, second storeCo
 // BenchmarkStores is the exercise of missions #219 and #235: each question over 1, 10 and 50 stores,
 // reporting the stores it asked, its calls to them (round trips, and the latency they stand for), the
 // calls an index couldn't answer and the tuples they scanned, the tuples they shipped to the engine,
-// what asking it again on the same Base called, and the peak heap in use. self-loops-budgeted is
-// self-loops under storeBudget, which a streamed read stops at (#233).
+// what asking it again on the same Base called, and the peak heap in use. edges-budgeted is edges
+// under storeBudget, which a streamed read stops at (#233).
 func BenchmarkStores(b *testing.B) {
 	for _, question := range storeQuestions {
 		q := MustParse(question.text)
@@ -510,9 +513,9 @@ func BenchmarkStores(b *testing.B) {
 			})
 		}
 	}
-	q := MustParse(selfLoopsQuestion)
+	q := MustParse(wholeReadQuestion)
 	for _, n := range []int{1, 10, 50} {
-		b.Run(fmt.Sprintf("self-loops-budgeted/stores=%d", n), func(b *testing.B) {
+		b.Run(fmt.Sprintf("edges-budgeted/stores=%d", n), func(b *testing.B) {
 			set := newStoreSet(n)
 			var c storeCost
 			var peak uint64
@@ -566,7 +569,7 @@ func TestStoresExercise(t *testing.T) {
 		}
 		// A relation read whole is kept apart from the lookup cache, so only a lookup is asked again.
 		uncached := func(b *Base) { b.LimitLookupCache(0) }
-		if _, again, _, err := set.askTwice(q, uncached); question.name != "self-loops" && (err != nil || again.calls == 0) {
+		if _, again, _, err := set.askTwice(q, uncached); question.name != "edges" && (err != nil || again.calls == 0) {
 			t.Errorf("control: with the lookup cache off, asking %s again called no store: %v", question.name, err)
 		}
 		costs[question.name] = first
@@ -640,15 +643,23 @@ func TestStoresExercise(t *testing.T) {
 			t.Errorf("control: from stores that don't page or summarize, %s shipped %d tuples, want more than %d: %v", name, c.shipped, pushed, err)
 		}
 	}
-	edges := len(whole.Tuples("edge"))
-	if c := costs["self-loops"]; c.shipped != edges {
+	edges, loops := len(whole.Tuples("edge")), 0
+	for _, e := range whole.Tuples("edge") {
+		if e.Vals[0].S == e.Vals[2].S {
+			loops++
+		}
+	}
+	if c := costs["edges"]; c.shipped != edges {
 		t.Errorf("control: an unbound call shipped %d tuples, want all %d edges read whole", c.shipped, edges)
 	}
-	q := mustParse(t, selfLoopsQuestion)
+	if c := costs["self-loops"]; c.shipped != loops || loops == 0 || loops*10 > edges {
+		t.Errorf("self-loops shipped %d tuples, want its %d self-loops of %d edges: each store filters the repeated variable (#263)", c.shipped, loops, edges)
+	}
+	q := mustParse(t, wholeReadQuestion)
 	if c, err := newStoreSet(n).askBudgeted(q); err != nil || c.shipped > storeBudget+1 {
-		t.Errorf("self-loops under a budget of %d shipped %d tuples, want the streamed read stopped at the budget (#233): %v", storeBudget, c.shipped, err)
+		t.Errorf("edges under a budget of %d shipped %d tuples, want the streamed read stopped at the budget (#233): %v", storeBudget, c.shipped, err)
 	}
 	if c, err := newStoreSet(n).sliced().askBudgeted(q); err != nil || c.shipped <= storeBudget+1 {
-		t.Errorf("control: from stores returning slices, self-loops under a budget of %d shipped %d tuples, want a whole store's edges: %v", storeBudget, c.shipped, err)
+		t.Errorf("control: from stores returning slices, edges under a budget of %d shipped %d tuples, want a whole store's edges: %v", storeBudget, c.shipped, err)
 	}
 }

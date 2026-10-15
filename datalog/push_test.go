@@ -40,6 +40,20 @@ type pushing struct {
 
 func pushingAt(src ns.Source) *pushing { return &pushing{looking: lookingAt(src)} }
 
+// alone counts the literals p was pushed alone (#263): conjunctions of one atom with no constant, page
+// or Inputs, which a Federation's continuation of a prefix has.
+func (p *pushing) alone() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	n := 0
+	for _, c := range p.pushed {
+		if len(c.Atoms) == 1 && c.Page == nil && len(c.Inputs) == 0 && !slices.ContainsFunc(c.Atoms[0].Args, func(a ns.PushArg) bool { return a.Const != nil }) {
+			n++
+		}
+	}
+	return n
+}
+
 func (p *pushing) Pushes(c ns.Conjunction) bool {
 	if p.noCompare && len(c.Compare) > 0 || c.Page != nil && p.noGoal || len(c.Inputs) > 0 && p.noInputs {
 		return false
@@ -945,6 +959,59 @@ func TestAPartitionedFederationPushesABoundGroup(t *testing.T) {
 			case noInputs && batches != 0:
 				t.Errorf("control: store %d refusing inputs was pushed %d batches", i, batches)
 			}
+		}
+	}
+}
+
+// One literal goes to the store alone when it filters it better than a whole read (#263): a variable
+// repeated in it, or a comparison the store takes. One of distinct free variables, or with a constant
+// (a lookup), isn't pushed; nor one whose only filter is a comparison the store refuses. Either way it
+// answers as in memory.
+func TestAStoreFiltersALiteralAlone(t *testing.T) {
+	mem := ns.NewMemSource().Declare("edge", "from", "to").DeclareSchema("weight", ns.Schema{Arity: 2, Labels: []string{"node", "w"}, Types: []ns.ArgType{{}, {Type: ns.TypeNumber}}})
+	for i := range 10 {
+		mem.Add("edge", ns.Tuple{Vals: []ns.Value{ns.S(fmt.Sprint("n", i)), ns.S(fmt.Sprint("n", i+1))}})
+		mem.Add("weight", ns.Tuple{Vals: []ns.Value{ns.S(fmt.Sprint("n", i)), ns.N(float64(i))}})
+	}
+	for _, n := range []string{"n3", "n7"} {
+		mem.Add("edge", ns.Tuple{Vals: []ns.Value{ns.S(n), ns.S(n)}})
+	}
+	for _, c := range []struct {
+		query             string
+		noCompare, refuse bool
+		pushed            bool
+	}{
+		{`edge(?a, ?a) => ?a`, false, false, true},
+		{`edge(?a, ?a) => ?a`, false, true, false},
+		{`weight(?n, ?w), ?w > 7 => ?n`, false, false, true},
+		{`weight(?n, ?w), ?w > 7 => ?n`, true, false, false},
+		{`edge(?a, ?b) => ?a`, false, false, false},
+		{`weight("n9", ?w), ?w > 7 => ?w`, false, false, false},
+	} {
+		q := mustParse(t, c.query)
+		want, err := Naive{}.Eval(bg, q, baseFor(std(mem)))
+		if err != nil || len(want) == 0 {
+			t.Fatalf("control: %s answers %v, %v in memory", c.query, binds(want), err)
+		}
+		src := pushingAt(mem)
+		src.noCompare = c.noCompare
+		if c.refuse {
+			src.refuse = func(ns.Conjunction) bool { return true }
+		}
+		got, err := SemiNaive{}.Eval(bg, q, MustBase(std(mem), src))
+		if err != nil || !reflect.DeepEqual(binds(got), binds(want)) {
+			t.Errorf("%s: pushed %v %v, in memory %v", c.query, binds(got), err, binds(want))
+		}
+		rel := q.Goal.Literals[0].Pos.Relation
+		alone := 0
+		for _, p := range src.pushed {
+			if len(p.Atoms) == 1 && p.Page == nil {
+				alone++
+			}
+		}
+		if pushed := alone == 1; pushed != c.pushed || (pushed && src.whole(rel) != 0) {
+			t.Errorf("%s (store refusing comparisons %v, everything %v): pushed alone %d times, %s read whole %d times; want pushed %v and, pushed, never read whole",
+				c.query, c.noCompare, c.refuse, alone, rel, src.whole(rel), c.pushed)
 		}
 	}
 }
