@@ -16,6 +16,12 @@ import (
 // is why there is one dispatch, not one per kind, and why `not R(...)` works uniformly for EDB, IDB,
 // filters, and generators.
 
+// unboundFilter is the error for a filter tested with an argument unbound, which checkModes gives
+// before running and extendBuiltin while running.
+func unboundFilter(rel string) error {
+	return fmt.Errorf("query: %s needs all arguments bound (a variable must appear in a relation before %s tests it)", rel, rel)
+}
+
 // extendBuiltin runs a builtin under the current binding.
 func extendBuiltin(bi ns.Builtin, atom *Atom, bnd *binding, b *Base, yield func(*binding) error) error {
 	if b.run != nil && b.run.explain != nil {
@@ -30,7 +36,7 @@ func extendBuiltin(bi ns.Builtin, atom *Atom, bnd *binding, b *Base, yield func(
 		for i, a := range atom.Args {
 			v, ok := resolve(a, bnd)
 			if !ok {
-				return fmt.Errorf("query: %s needs all arguments bound (a variable must appear in a relation before %s tests it)", atom.Relation, atom.Relation)
+				return unboundFilter(atom.Relation)
 			}
 			args[i] = v
 		}

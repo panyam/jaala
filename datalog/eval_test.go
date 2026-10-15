@@ -147,6 +147,34 @@ func TestFilterNeedsBoundArguments(t *testing.T) {
 	}
 }
 
+// A filter over a variable nothing in its body binds is refused before any evaluator runs it (#215).
+// In a relation of two rules, which isn't inlined, Naive failed on the filter while the planned
+// SemiNaive first refused the goal's unbound projection. (In a single rule, ?x is an input, #200.) A
+// filter written before what binds it waits for it, in Naive too, as a comparison does.
+func TestAFilterIsCheckedWhereItsBodyBindsIt(t *testing.T) {
+	for _, q := range []string{
+		`f(?x) :- str.contains(?x, "R"); f(?x) :- rail(?x, _); f("R1") => ?ok`,
+		`f(?x) :- str.contains(?x, "R"); f(?x) :- rail(?x, _); f(?x) => ?x`,
+		`str.contains(?x, "R") => ?x`,
+	} {
+		err := evalErr(ohmsLaw(), q)
+		if err == nil || !strings.Contains(err.Error(), "str.contains needs all arguments bound") {
+			t.Errorf("%s: err = %v, want the unbound-filter error", q, err)
+		}
+		if err := Validate(mustParse(t, q), std(ohmsLaw())); err == nil || !strings.Contains(err.Error(), "str.contains needs all arguments bound") {
+			t.Errorf("%s: Validate = %v, want the unbound-filter error", q, err)
+		}
+	}
+	for _, q := range []string{
+		`str.contains(?x, "R"), rail(?x, _) => ?x`,
+		`f(?x) :- str.contains(?x, "R"), rail(?x, _); f(?x) :- rail(?x, _), str.contains(?x, "X"); f(?x) => ?x`,
+	} {
+		if got := col(eval(t, ohmsLaw(), q), "x"); got != "R1,R2" {
+			t.Errorf("%s = %s, want R1,R2", q, got)
+		}
+	}
+}
+
 // nets holds names that differ by one character (#77): PMIC_EN and PMIC_EM, SDA0 and SDAO.
 func nets() *ns.MemSource {
 	src := ns.NewMemSource().Declare("net", "name")

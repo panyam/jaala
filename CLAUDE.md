@@ -539,7 +539,10 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   has to write a body generator-first (#36). Naive doesn't plan: it calls a generator where it is
   written, mode or not, with the unbound inputs `Bound: false`, so a generator must refuse what it
   can't run without (`str.distance` errors like a filter, #77) rather than read the zero value; a
-  `both()` test of a generator-first body catches it as Naive answering differently. Relations tied on bound arguments (at least one) go by
+  `both()` test of a generator-first body catches it as Naive answering differently. A filter is
+  refused the same way when nothing in its body binds an argument (`checkFilters`, #215, after
+  `checkRules` so a redefinition reports first), and `deferComparisons` holds one until its arguments
+  are bound, so Naive answers a filter written before its binder. Relations tied on bound arguments (at least one) go by
   `fanOut`, the base relation's tuples per call from its index (#139): `part(?r, "capacitor")`
   scans every capacitor, `pin(?r, ?a)` with `?a` bound reads one net. It reads the Source at plan
   time, and a failed read is reported after the rewrite (`evalRun.readErr`). A body the demand rewrite guarded (a magic,

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/panyam/jaala/ns"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -395,6 +396,9 @@ func evaluateOn(b *Base, gen int64, q Query, o evalOptions, rewrite func(*Base, 
 	if _, _, err := b.checkRules(q.Rules); err != nil {
 		return nil, err
 	}
+	if err := checkFilters(b, q.Goal, nil); err != nil {
+		return nil, err
+	}
 	if rewrite != nil {
 		q = rewrite(b, q)
 		if b.run != nil && b.run.readErr != nil {
@@ -729,6 +733,13 @@ func deferComparisons(lits []Literal, reg *ns.Vocabulary) []Literal {
 			// A call an expression was written as waits for one of its function's modes (#5).
 			bi, ok := reg.Predicate(l.Pos.Relation)
 			return !ok || !bi.IsGenerator() || bi.Satisfied(boundFlags(l.Pos, bound)) && !awaitsBinder(l, rest, bound, reg)
+		}
+		if l.Pos != nil {
+			// A filter waits for its arguments as a comparison does (#215).
+			if bi, ok := reg.Predicate(l.Pos.Relation); ok && !bi.IsGenerator() {
+				return !slices.Contains(boundFlags(l.Pos, bound), false)
+			}
+			return true
 		}
 		c := l.Compare
 		if c == nil {

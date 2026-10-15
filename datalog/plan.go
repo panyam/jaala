@@ -2,6 +2,7 @@ package datalog
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/panyam/jaala/ns"
@@ -22,6 +23,44 @@ func checkModes(b *Base, where string, body Body) error {
 
 // checkModesFrom is checkModes for a body whose inputs (see inputsOf) its caller binds.
 func checkModesFrom(b *Base, where string, body Body, inputs map[Var][]ns.Value) error {
+	bound, done := modeBound(b, body, inputs)
+	for i, lit := range body.Literals {
+		a := lit.Pos
+		if a == nil {
+			a = lit.Neg // a negated generator runs over what the positive body bound
+		} else if done[i] {
+			continue
+		}
+		if a == nil {
+			continue
+		}
+		if bi, ok := b.reg.Predicate(a.Relation); ok && bi.IsGenerator() && !bi.Satisfied(boundFlags(a, bound)) {
+			return fmt.Errorf("query: %s calls %s, and nothing binds what %s needs first: it needs %s",
+				where, a, a.Relation, modesText(bi, a))
+		}
+	}
+	return nil
+}
+
+// checkFilters refuses a filter some argument of which nothing in its body binds, with the error
+// running it gives (#215). A rule whose head variable only a filter reads passed every check, and
+// then Naive and the planned SemiNaive failed at different places. It runs after the rules are
+// checked, so a goal calling a filter a rule redefines reports the redefinition.
+func checkFilters(b *Base, body Body, inputs map[Var][]ns.Value) error {
+	bound, _ := modeBound(b, body, inputs)
+	for _, lit := range body.Literals {
+		if a := lit.Pos; a != nil {
+			if bi, ok := b.reg.Predicate(a.Relation); ok && !bi.IsGenerator() && slices.Contains(boundFlags(a, bound), false) {
+				return unboundFilter(a.Relation)
+			}
+		}
+	}
+	return nil
+}
+
+// modeBound is what a body can bind from inputs, whatever its order: each atom's variables once that
+// atom could run. done marks the literals that could.
+func modeBound(b *Base, body Body, inputs map[Var][]ns.Value) (map[Var]bool, []bool) {
 	bound := map[Var]bool{}
 	for v := range inputs {
 		bound[v] = true
@@ -44,22 +83,7 @@ func checkModesFrom(b *Base, where string, body Body, inputs map[Var][]ns.Value)
 			bindAll(lit.Pos, bound)
 		}
 	}
-	for i, lit := range body.Literals {
-		a := lit.Pos
-		if a == nil {
-			a = lit.Neg // a negated generator runs over what the positive body bound
-		} else if done[i] {
-			continue
-		}
-		if a == nil {
-			continue
-		}
-		if bi, ok := b.reg.Predicate(a.Relation); ok && bi.IsGenerator() && !bi.Satisfied(boundFlags(a, bound)) {
-			return fmt.Errorf("query: %s calls %s, and nothing binds what %s needs first: it needs %s",
-				where, a, a.Relation, modesText(bi, a))
-		}
-	}
-	return nil
+	return bound, done
 }
 
 // boundFlags reports, per argument, whether it is a constant or a variable already bound.
