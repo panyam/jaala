@@ -12,10 +12,8 @@ Maintained by /checkpoint: one thread per branch, pruned when the branch merges.
   run: `bench -engine stores -time` on the partitioned kubernetes view against declaire#180's
   baseline. #235's exercise reran at 36f943b (v0.1.54): calls and shipped match bb965ca on every
   question, logged on #235.
-- Nothing ready on a mission. Off-mission: the #278 epic (Cypher/GQL gaps, children #279 to #284,
-  all `waiting`) is untriaged; `retriage` should decide whether it becomes jaala's next mission.
-  Left for the owner: #179, #205, #220 (P3), and #167 (tokenizer, unparked at P3 when FuzzParse
-  found a fifth slicing bug).
+- Nothing ready on a mission. Off-mission P3s for the owner to pick: #167 (tokenizer, unparked when
+  FuzzParse found a fifth slicing bug), #179, #205, #220.
 - Retriage 2026-10-15: #278 stays an epic (no exercise until Declaire's Cypher front end refuses
   queries over its gaps); #280 is blocked by #279. An agent-queries mission (exercise: Declaire's
   `make exercise-mcp-agent`) waits on Declaire's rerun on v0.1.54; start it if jaala failures remain.
