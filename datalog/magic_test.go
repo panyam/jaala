@@ -402,6 +402,76 @@ func TestAConstantInARuleCarriesDemand(t *testing.T) {
 	}
 }
 
+// Witnesses turn inlining off, but not the demand an inlined body carries (#270). Declaire's q09r
+// asks issues(?h) with nothing bound, and issues' one rule walks to ?h before calling route: inlined
+// into the goal, the walk's values demand route; witnessed, issues is evaluated in full, and its body
+// demands route the same way, so a store is pushed route's join with the values as Inputs. With a
+// second rule, issues would never have been inlined, and route is derived in full as before.
+func TestAWitnessedRuleStandingInForTheGoalPassesItsBindingsOn(t *testing.T) {
+	const route = `route(?cs) :- node(?cs), attr(?cs, "callee", ?c), str.glob(?c, "net/http.ServeMux.Handle*"); ` +
+		`route(?cs) :- node(?cs), attr(?cs, "callee", ?c), str.glob(?c, "net/http.Handle*"); `
+	const issues = `issues(?h) :- hop(?h, "v5"), route(?h), not attr(?h, "role", "test"); `
+	for _, c := range []struct {
+		name, rules string
+		opts        []Option
+		how         string
+		want        string
+	}{
+		{"witnessed", issues, []Option{Witnesses()}, "demand", "v4"},
+		{"control: unwitnessed, inlined", issues, nil, "demand", "v4"},
+		{"control: two rules, never inlined", issues + `issues(?h) :- hop(?h, "v3"), route(?h); `, []Option{Witnesses()}, "full", "v0,v2,v4"},
+	} {
+		src := tested()
+		for i := 0; i < 6; i++ {
+			callee := "net/http.ServeMux.Handle"
+			if i%2 == 1 {
+				callee = "fmt.Println"
+			}
+			src.Add("attr", ns.Tuple{Vals: []ns.Value{ns.S(fmt.Sprintf("v%d", i)), ns.S("callee"), ns.S(callee)}})
+		}
+		store := pushingAt(src)
+		v := std(store)
+		hopper(t, v)
+		q := mustParse(t, route+c.rules+`issues(?h) => ?h`)
+		var r Report
+		rows, err := SemiNaive{}.Eval(bg, q, baseFor(v), append(c.opts, Explain(&r))...)
+		if err != nil || col(rows, "h") != c.want {
+			t.Fatalf("%s: %v, %v; want %s", c.name, col(rows, "h"), err, c.want)
+		}
+		if _, err := both(q, baseFor(v), c.opts...); err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		var how string
+		for _, rel := range r.Relations {
+			if rel.Relation == "route" {
+				how = rel.How
+			}
+		}
+		if how != c.how {
+			t.Errorf("%s: route derived %q, want %q", c.name, how, c.how)
+		}
+		var bound int
+		for _, p := range store.pushed {
+			if len(p.Inputs) > 0 {
+				bound += len(p.Bindings)
+			}
+		}
+		if c.opts != nil && c.how == "demand" {
+			w := rows[0].Witness[0]
+			var kids []string
+			for _, k := range w.Children {
+				kids = append(kids, k.Relation)
+			}
+			if w.Relation != "issues" || strings.Join(kids, ",") != "hop,route,attr" {
+				t.Errorf("%s: witness %s over %v, want issues over hop,route,attr as written", c.name, w.Relation, kids)
+			}
+		}
+		if c.how == "demand" && bound != 5 {
+			t.Errorf("%s: pushed %d bindings of route's join, want the walk's 5: %+v", c.name, bound, store.pushed)
+		}
+	}
+}
+
 // A rule evaluated in full that calls a relation with a constant, positively or under a negation,
 // derives only that constant's part, so its work grows with what the constant reaches. Each relation
 // has two rules so that it is not inlined.
