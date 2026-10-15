@@ -712,6 +712,12 @@ func agreeStreamed(q Query, b *Base, want []Row, werr error, opts []Option) stri
 	return ""
 }
 
+// alonePushedPrograms counts those whose planned evaluation pushed one literal alone (#263).
+var alonePushedPrograms int
+
+// partitionedBatchPrograms counts those whose partitioned push carried Bindings (#268).
+var partitionedBatchPrograms int
+
 // streamedPrograms counts those whose goal streamed a relation into its answer (#264).
 var streamedPrograms int
 
@@ -803,8 +809,11 @@ func agreePushed(q Query, b *Base, want []Row, werr error, opts []Option) string
 	if diff := agreeOver(q, b, lb, "pushed", want, werr, opts); diff != "" {
 		return diff
 	}
-	if src.pushes() > 0 {
+	if slices.ContainsFunc(src.pushed, func(c ns.Conjunction) bool { return len(c.Atoms) > 1 }) {
 		pushedPrograms++
+	}
+	if slices.ContainsFunc(src.pushed, func(c ns.Conjunction) bool { return len(c.Atoms) == 1 && c.Page == nil }) {
+		alonePushedPrograms++
 	}
 	if slices.ContainsFunc(src.pushed, func(c ns.Conjunction) bool { return len(c.Bindings) > 0 }) {
 		batchPushedPrograms++
@@ -826,9 +835,9 @@ func agreePushed(q Query, b *Base, want []Row, werr error, opts []Option) string
 	}); diff != "" {
 		return diff
 	}
-	if diff := agreeGoals(b, func() (ns.Source, func() (int, int)) {
+	if diff := agreeGoals(b, func() (ns.Source, func() (int, int, int)) {
 		p := pushingAt(b.src)
-		return p, func() (int, int) { return p.pages, p.summaries }
+		return p, func() (int, int, int) { return p.pages, p.summaries, p.alone() }
 	}); diff != "" {
 		return diff
 	}
@@ -852,8 +861,9 @@ var batchPushedPrograms int
 // summarized (#241, #240).
 var pagedPrograms, summarizedPrograms int
 
-// goalQuestions aggregate and page over a graph's own relations, the shapes a store pages or
-// summarizes and the generated programs rarely take: their goals read derived relations or negate.
+// goalQuestions aggregate, page and filter one literal over a graph's own relations, the shapes a
+// store pages, summarizes or pushes alone (#263) and the generated programs rarely take: their goals
+// read derived relations or negate, and their literals join or carry constants.
 // The weights carry units in some graphs (#192), mixed in some, so the unit rules are exercised.
 var goalQuestions = []string{
 	`edge(?a, ?b) => ?a, count(?b)`,
@@ -867,12 +877,14 @@ var goalQuestions = []string{
 	`edge(?a, ?b) => ?a, ?b order by ?a desc, ?b after "v3", "v1" limit 2`,
 	`edge(?a, ?b), weight(?b, ?w) => ?a, max(?w)`,
 	`weight(?n, ?w) => min(?w), max(distinct ?w)`,
+	`edge(?a, ?a) => ?a`,
+	`weight(?n, ?w), ?w > 2 => ?n, ?w`,
 }
 
 // agreeGoals runs goalQuestions over a Source that pages and summarizes, on a fresh Base each (Naive
 // reading a relation whole would leave nothing to push), and compares each with Naive reading whole:
 // its rows, then under CanonicalCites its citations and witnesses.
-func agreeGoals(b *Base, pushing func() (ns.Source, func() (int, int))) string {
+func agreeGoals(b *Base, pushing func() (ns.Source, func() (int, int, int))) string {
 	for _, text := range goalQuestions {
 		q, err := Parse(text)
 		if err != nil {
@@ -884,9 +896,12 @@ func agreeGoals(b *Base, pushing func() (ns.Source, func() (int, int))) string {
 		if errText(gerr) != errText(werr) || !reflect.DeepEqual(binds(got), binds(want)) {
 			return fmt.Sprintf("planned SemiNaive over a store paging and summarizing answers differently on %v\n whole:  %v %v\n pushed: %v %v", q, binds(want), werr, binds(got), gerr)
 		}
-		pages, sums := counts()
+		pages, sums, alone := counts()
 		if pages > 0 {
 			pagedPrograms++
+		}
+		if alone > 0 {
+			alonePushedPrograms++
 		}
 		if sums > 0 {
 			summarizedPrograms++
@@ -1024,15 +1039,16 @@ func agreePartitioned(q Query, b *Base, want []Row, werr error, opts []Option) s
 	if diff := agreeWalked(b, walking); diff != "" {
 		return diff
 	}
-	if diff := agreeGoals(b, func() (ns.Source, func() (int, int)) {
+	if diff := agreeGoals(b, func() (ns.Source, func() (int, int, int)) {
 		stores, f, _ := federate()
-		return f, func() (int, int) {
-			pages, sums := 0, 0
+		return f, func() (int, int, int) {
+			pages, sums, alone := 0, 0, 0
 			for _, st := range stores {
 				pages += st.pages
 				sums += st.summaries
+				alone += st.alone()
 			}
-			return pages, sums
+			return pages, sums, alone
 		}
 	}); diff != "" {
 		return diff
@@ -1041,14 +1057,20 @@ func agreePartitioned(q Query, b *Base, want []Row, werr error, opts []Option) s
 	if diff := agreeOver(q, b, lb, "partitioned", want, werr, opts); diff != "" {
 		return diff
 	}
-	asked := 0
+	asked, bound := 0, false
 	for _, st := range stores {
 		if st.pushes() > 0 {
 			asked++
 		}
+		st.mu.Lock()
+		bound = bound || slices.ContainsFunc(st.pushed, func(c ns.Conjunction) bool { return c.Partial && len(c.Bindings) > 0 })
+		st.mu.Unlock()
 	}
 	if asked > 1 {
 		partitionedPrograms++
+	}
+	if bound {
+		partitionedBatchPrograms++
 	}
 	if werr != nil || anyRows(q) {
 		return ""
@@ -1288,7 +1310,7 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 	}
 	compared, known, skipped, failed := map[string]int{}, map[int]int{}, 0, 0
 	lookedUpPrograms, federatedPrograms, batchedPrograms, pushedPrograms, partitionedPrograms, walkedPrograms, unitAnswers, mixedAnswers = 0, 0, 0, 0, 0, 0, 0, 0
-	pagedPrograms, summarizedPrograms, batchPushedPrograms, stepWalkedPrograms, streamedPrograms = 0, 0, 0, 0, 0
+	pagedPrograms, summarizedPrograms, batchPushedPrograms, stepWalkedPrograms, streamedPrograms, partitionedBatchPrograms, alonePushedPrograms = 0, 0, 0, 0, 0, 0, 0
 	withUnits := 0
 	for seed := first; seed < first+int64(seeds); seed++ {
 		rnd := rand.New(rand.NewSource(seed))
@@ -1368,6 +1390,12 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 	}
 	if walkedPrograms == 0 {
 		t.Errorf("control: no program asked a store to walk a relation")
+	}
+	if alonePushedPrograms == 0 {
+		t.Errorf("control: no program pushed a literal alone for the store to filter")
+	}
+	if partitionedBatchPrograms == 0 {
+		t.Errorf("control: no program pushed a batch of bindings across a partitioned federation's members")
 	}
 	if streamedPrograms == 0 {
 		t.Errorf("control: no program's goal streamed a relation into its answer")

@@ -40,6 +40,20 @@ type pushing struct {
 
 func pushingAt(src ns.Source) *pushing { return &pushing{looking: lookingAt(src)} }
 
+// alone counts the literals p was pushed alone (#263): conjunctions of one atom with no constant, page
+// or Inputs, which a Federation's continuation of a prefix has.
+func (p *pushing) alone() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	n := 0
+	for _, c := range p.pushed {
+		if len(c.Atoms) == 1 && c.Page == nil && len(c.Inputs) == 0 && !slices.ContainsFunc(c.Atoms[0].Args, func(a ns.PushArg) bool { return a.Const != nil }) {
+			n++
+		}
+	}
+	return n
+}
+
 func (p *pushing) Pushes(c ns.Conjunction) bool {
 	if p.noCompare && len(c.Compare) > 0 || c.Page != nil && p.noGoal || len(c.Inputs) > 0 && p.noInputs {
 		return false
@@ -258,8 +272,32 @@ func (p *pushing) Summarize(_ context.Context, c ns.Conjunction, s ns.Summary) i
 	}
 }
 
+// withInputs is c with each of its Inputs replaced by its value in b, and no Inputs or Bindings.
+func withInputs(c ns.Conjunction, b []ns.Value) ns.Conjunction {
+	arg := func(x ns.PushArg) ns.PushArg {
+		if j := slices.Index(c.Inputs, x.Var); x.Var > 0 && j >= 0 {
+			v := b[j]
+			return ns.PushArg{Const: &v}
+		}
+		return x
+	}
+	out := c
+	out.Inputs, out.Bindings, out.Atoms, out.Compare = nil, nil, nil, nil
+	for _, a := range c.Atoms {
+		na := ns.PushAtom{Relation: a.Relation, Args: make([]ns.PushArg, len(a.Args))}
+		for pos, x := range a.Args {
+			na.Args[pos] = arg(x)
+		}
+		out.Atoms = append(out.Atoms, na)
+	}
+	for _, cmp := range c.Compare {
+		out.Compare = append(out.Compare, ns.PushComparison{Op: cmp.Op, Left: arg(cmp.Left), Right: arg(cmp.Right)})
+	}
+	return out
+}
+
 // forBindings keeps the rows whose Inputs equal one of c's Bindings, each read as its type, or every
-// row when c has none.
+// row when c has none. A prefix (Partial) is kept when it agrees with one on the Inputs it binds.
 func forBindings(c ns.Conjunction, schema func(string) ns.Schema, rows [][]ns.Tuple) [][]ns.Tuple {
 	if len(c.Bindings) == 0 {
 		return rows
@@ -269,7 +307,7 @@ func forBindings(c ns.Conjunction, schema func(string) ns.Schema, rows [][]ns.Tu
 		vals := rowValues(c, schema, row)
 		if slices.ContainsFunc(c.Bindings, func(b []ns.Value) bool {
 			for i, n := range c.Inputs {
-				if !valueEq(vals[n], b[i]) {
+				if v, ok := vals[n]; ok && !valueEq(v, b[i]) {
 					return false
 				}
 			}
@@ -281,10 +319,11 @@ func forBindings(c ns.Conjunction, schema func(string) ns.Schema, rows [][]ns.Tu
 	return out
 }
 
-// rowValues is a match's value for each variable of c, read as its argument's type.
+// rowValues is a match's value for each variable of c, read as its argument's type: for a prefix of
+// a match (Partial), each variable its atoms bind.
 func rowValues(c ns.Conjunction, schema func(string) ns.Schema, row []ns.Tuple) map[int]ns.Value {
 	vals := map[int]ns.Value{}
-	for k, a := range c.Atoms {
+	for k, a := range c.Atoms[:len(row)] {
 		read := normalizeTuples([]ns.Tuple{row[k]}, schema(a.Relation).Types)[0]
 		for pos, x := range a.Args {
 			if _, ok := vals[x.Var]; x.Var > 0 && !ok {
@@ -877,6 +916,126 @@ func TestABatchedPushAnswersAsItsLiteralsDo(t *testing.T) {
 			if !slices.ContainsFunc(src.pushed, func(c ns.Conjunction) bool { return len(c.Bindings) > 0 }) || len(src.lookups) != 0 {
 				t.Errorf("%s: pushed %+v and looked up %v, want a batched push and no lookups", c.text, src.pushed, src.lookups)
 			}
+		}
+	}
+}
+
+// q09r's shape (#268): a derived relation binds ?h, and the node + attr group reading it goes to a
+// partitioned federation of two stores, A holding the a ids and B the b ones. The group is pushed with
+// ?h as its input, each store asked once for the bindings its Holds allows, and nothing is looked up
+// literal by literal. A store refusing Inputs makes the federation refuse, and the group is solved as
+// before; both answer as in memory.
+func TestAPartitionedFederationPushesABoundGroup(t *testing.T) {
+	mem := ns.NewMemSource().Declare("label", "id", "text").Declare("node", "id", "kind").Declare("attr", "id", "key", "value")
+	for _, id := range []string{"a1", "a2", "a3", "b1", "b2", "b3"} {
+		mem.Add("node", ns.Tuple{Vals: []ns.Value{ns.S(id), ns.S("callsite")}, Cites: []string{"node:" + id}})
+		mem.Add("attr", ns.Tuple{Vals: []ns.Value{ns.S(id), ns.S("callee"), ns.S("f" + id)}, Cites: []string{"attr:" + id}})
+	}
+	for _, id := range []string{"a1", "b2", "b3"} {
+		mem.Add("label", ns.Tuple{Vals: []ns.Value{ns.S(id), ns.S("start")}})
+	}
+	mem.Add("label", ns.Tuple{Vals: []ns.Value{ns.S("a2"), ns.S("also")}})
+	q := mustParse(t, `pick(?h) :- label(?h, "start"); pick(?h) :- label(?h, "also"); pick(?h), node(?h, ?k), attr(?h, ?key, ?c) => ?h, ?c`)
+	want, err := Naive{}.Eval(bg, q, baseFor(std(mem)))
+	if err != nil || len(want) != 4 {
+		t.Fatalf("control: in memory %v, %v; want the four picked ids", binds(want), err)
+	}
+	for _, noInputs := range []bool{false, true} {
+		stores := make([]*pushing, 2)
+		members := make([]ns.Member, 2)
+		for i, prefix := range []string{"a", "b"} {
+			part := ns.NewMemSource().Declare("label", "id", "text").Declare("node", "id", "kind").Declare("attr", "id", "key", "value")
+			for _, rel := range []string{"label", "node", "attr"} {
+				for _, tu := range mem.Tuples(rel) {
+					if strings.HasPrefix(tu.Vals[0].S, prefix) {
+						part.Add(rel, tu)
+					}
+				}
+			}
+			stores[i] = pushingAt(part)
+			stores[i].noInputs = noInputs
+			members[i] = ns.Member{Source: stores[i], Holds: ns.HoldsPrefix(prefix, map[string][]int{"label": {0}, "node": {0}, "attr": {0}})}
+		}
+		f, err := ns.NewPartitionedFederation(members...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := SemiNaive{}.Eval(bg, q, MustBase(std(f), f))
+		if err != nil || !reflect.DeepEqual(got, want) {
+			t.Errorf("noInputs %v: federated %v %v, in memory %v", noInputs, binds(got), err, binds(want))
+		}
+		for i, st := range stores {
+			batches := 0
+			for _, c := range st.pushed {
+				if len(c.Bindings) > 0 {
+					batches++
+					for _, b := range c.Bindings {
+						if !strings.HasPrefix(b[0].S, []string{"a", "b"}[i]) {
+							t.Errorf("store %d was asked for %v, which its Holds refuses", i, b)
+						}
+					}
+				}
+			}
+			lookups := st.lookups["node"] + st.lookups["attr"]
+			switch {
+			case !noInputs && (batches != 1 || lookups != 0):
+				t.Errorf("store %d: %d pushes with bindings and %d lookups of node and attr, want one push and none", i, batches, lookups)
+			case noInputs && batches != 0:
+				t.Errorf("control: store %d refusing inputs was pushed %d batches", i, batches)
+			}
+		}
+	}
+}
+
+// One literal goes to the store alone when it filters it better than a whole read (#263): a variable
+// repeated in it, or a comparison the store takes. One of distinct free variables, or with a constant
+// (a lookup), isn't pushed; nor one whose only filter is a comparison the store refuses. Either way it
+// answers as in memory.
+func TestAStoreFiltersALiteralAlone(t *testing.T) {
+	mem := ns.NewMemSource().Declare("edge", "from", "to").DeclareSchema("weight", ns.Schema{Arity: 2, Labels: []string{"node", "w"}, Types: []ns.ArgType{{}, {Type: ns.TypeNumber}}})
+	for i := range 10 {
+		mem.Add("edge", ns.Tuple{Vals: []ns.Value{ns.S(fmt.Sprint("n", i)), ns.S(fmt.Sprint("n", i+1))}})
+		mem.Add("weight", ns.Tuple{Vals: []ns.Value{ns.S(fmt.Sprint("n", i)), ns.N(float64(i))}})
+	}
+	for _, n := range []string{"n3", "n7"} {
+		mem.Add("edge", ns.Tuple{Vals: []ns.Value{ns.S(n), ns.S(n)}})
+	}
+	for _, c := range []struct {
+		query             string
+		noCompare, refuse bool
+		pushed            bool
+	}{
+		{`edge(?a, ?a) => ?a`, false, false, true},
+		{`edge(?a, ?a) => ?a`, false, true, false},
+		{`weight(?n, ?w), ?w > 7 => ?n`, false, false, true},
+		{`weight(?n, ?w), ?w > 7 => ?n`, true, false, false},
+		{`edge(?a, ?b) => ?a`, false, false, false},
+		{`weight("n9", ?w), ?w > 7 => ?w`, false, false, false},
+	} {
+		q := mustParse(t, c.query)
+		want, err := Naive{}.Eval(bg, q, baseFor(std(mem)))
+		if err != nil || len(want) == 0 {
+			t.Fatalf("control: %s answers %v, %v in memory", c.query, binds(want), err)
+		}
+		src := pushingAt(mem)
+		src.noCompare = c.noCompare
+		if c.refuse {
+			src.refuse = func(ns.Conjunction) bool { return true }
+		}
+		got, err := SemiNaive{}.Eval(bg, q, MustBase(std(mem), src))
+		if err != nil || !reflect.DeepEqual(binds(got), binds(want)) {
+			t.Errorf("%s: pushed %v %v, in memory %v", c.query, binds(got), err, binds(want))
+		}
+		rel := q.Goal.Literals[0].Pos.Relation
+		alone := 0
+		for _, p := range src.pushed {
+			if len(p.Atoms) == 1 && p.Page == nil {
+				alone++
+			}
+		}
+		if pushed := alone == 1; pushed != c.pushed || (pushed && src.whole(rel) != 0) {
+			t.Errorf("%s (store refusing comparisons %v, everything %v): pushed alone %d times, %s read whole %d times; want pushed %v and, pushed, never read whole",
+				c.query, c.noCompare, c.refuse, alone, rel, src.whole(rel), c.pushed)
 		}
 	}
 }

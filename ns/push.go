@@ -11,9 +11,10 @@ import (
 // comparisons over them, and solves the rest of the body itself, so a join within the store costs one
 // call and ships only the rows that join rather than every intermediate tuple.
 //
-// The evaluator pushes a group only when nothing earlier in the body binds its variables, so the
-// group's only inputs are its constants (a group bound partway through a body is looked up literal by
-// literal, as before). A group is at least two literals; one literal is a Lookup.
+// A group bound partway through a body carries the variables bound before it as Inputs (#246). A
+// group is at least two literals, or one with nothing bound and no constant that the store filters
+// better than a whole read: a variable repeated in it, or a comparison going with it (#263). A literal
+// with a constant or a bound variable is a Lookup.
 type PushSource interface {
 	// Pushes reports whether the store evaluates c. The planner asks while planning, growing a group
 	// one literal at a time and offering it with its comparisons and then without, so it must be
@@ -69,6 +70,10 @@ type Conjunction struct {
 	// each row's inputs and files it under its binding, but a binding's match left out is lost. The
 	// planner offers c with Inputs and no Bindings to Pushes; a store that declines is asked literal by
 	// literal, as before.
+	//
+	// With Partial too, as a partitioned Federation asks (#268), a prefix row is one whose atoms agree
+	// with some binding on the Inputs they bind: an input only a later atom reads can't filter it. A
+	// store that pushes c with Inputs also pushes its suffixes with the Inputs they still read.
 	Inputs   []int
 	Bindings [][]Value
 }

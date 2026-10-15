@@ -116,7 +116,9 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   `pushConjunctions` runs after `plan`, in the planned SemiNaive only, and replaces each group the
   Source's `Pushes` accepts with one literal over `\x00p:{…}` whose arguments are the group's
   variables (`run.pushed` holds the group). A group starts at a pushable literal and takes each later
-  literal sharing a variable with it and none with a literal outside it before its place; variables
+  literal sharing a variable with it and none with a literal outside it before its place; one literal
+  alone is a group when nothing binds it, it has no constant, and a variable repeats in it or a
+  comparison the store takes goes with it (`filtersAlone`, `repeatsVar`, #263); variables
   bound before it are `Inputs` (`offered`), which the store must take (#246), and `prefetchPushed`
   (from `prefetch`) asks for a batch of their bindings (`pushBatch`), filing each binding's rows under
   `pushKey(g.conjunction(bnd))`, where `extendPushed` finds them; a binding not filed is solved literal
@@ -127,12 +129,17 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   group (`deltaFirst`) solves it literal by literal (`solveUnpushed`); `scanSize` sizes a pushed
   literal 0 so a round keeps starting from it. A Federation of one member pushes what it pushes; one
   built with `NewPartitionedFederation` pushes across members (#238): `pushAcross` asks each member
-  `Holds` allows for the first atom with `Partial` (every prefix of its matches too), and continues each
-  prefix in every other member `Holds` allows for the next atom (`Conjunction.after` substitutes the
-  prefix's values), so a match is found once and a loose `Holds` costs calls, never answers. The
-  engine sees only whole rows. The corpus runs every program over `pushing` (`agreePushed`,
-  alternating a store that refuses comparisons) and over a partitioned three-member federation dealt
-  by first argument (`agreePartitioned`); `pushedPrograms` and `partitionedPrograms` are its controls.
+  `Holds` allows for the first atom with `Partial` (every prefix of its matches too), with `Inputs` the
+  bindings `routed` sends it (#268), and `continuePrefixes` sends the rest of the conjunction once per
+  member for every prefix of as many atoms, their values as its `Bindings` (`restAfter`), joining each
+  row back to its prefixes by `joinKey`, which must equate what a member's comparison does; a member
+  refusing `Inputs` is asked per prefix (`Conjunction.after` substitutes its values). A match is found
+  once and a loose `Holds` costs calls, never answers. One atom goes to each member serving it, in any
+  Federation. The engine sees only whole rows. The corpus runs every program over `pushing`
+  (`agreePushed`, alternating a store that refuses comparisons) and over a partitioned three-member
+  federation dealt by first argument (`agreePartitioned`); `pushedPrograms` (joins),
+  `partitionedPrograms` and `partitionedBatchPrograms` are its controls, and `alonePushedPrograms`
+  counts `goalQuestions`' lone literals, since generated literals join or carry constants.
 - **A goal a store could evaluate whole is summarized or paged** (`goalpush.go`, #240, #241).
   `goalGroup` takes the goal's positive body when it is only pushable base literals (or pushed
   groups) and comparisons over their variables, with no negation. An aggregating goal asks
@@ -604,8 +611,9 @@ by the same benchmark's `shipped` column and its questions `two-hops-in-repo`, `
 and `self-loops` (#236). All eleven of its jaala tickets are closed (#236 to #241, #246, #250, #252 to
 #254, released by v0.1.50): a conjunction, a walk, a count, a page, a batch of bindings and a walked
 step each go to a store, and every jaala line of its "Done when" holds. Like #219 it stays open for
-Declaire's run (`bench -time` on a federated view); #259, a batch of bindings across a partitioned
-federation's members, is `waiting`. jaala's
+Declaire's run (`bench -time` on a federated view). Declaire's first measurement filed #268 (a batch
+of bindings across a partitioned federation's members, folding #259), and #263 (a lone literal the
+store filters) joined it. jaala's
 earlier four are closed: `mission_selfcheck` (#86, at v0.1.29) left `./selfcheck.sh` as the check to
 run on `main` after every merge and before every tag; `mission_docsite` (#104) left the docs site
 with every example run by the engine; `mission_aggregate_answers` (#172, at v0.1.42) left Soufflé

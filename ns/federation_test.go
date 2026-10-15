@@ -3,7 +3,9 @@ package ns
 import (
 	"context"
 	"errors"
+	"fmt"
 	"iter"
+	"math"
 	"reflect"
 	"slices"
 	"strings"
@@ -315,8 +317,8 @@ func (m *pushMem) Push(_ context.Context, c Conjunction) iter.Seq2[[]Tuple, erro
 	}
 }
 
-// A Federation pushes a conjunction only to a lone member that pushes, citing each tuple to it, and
-// wraps the member's failure with its name.
+// A Federation pushes a join only to a lone member that pushes, and one atom to every member serving
+// it, citing each tuple to its member, and wraps the member's failure with its name.
 func TestAFederationPushesToALoneMember(t *testing.T) {
 	mem := NewMemSource().Declare("edge", "from", "to")
 	mem.Add("edge", Tuple{Vals: []Value{S("a"), S("b")}, Cites: []string{"e1"}})
@@ -349,8 +351,12 @@ func TestAFederationPushesToALoneMember(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if two.Pushes(c) {
-		t.Errorf("a federation of two members pushes a conjunction, whose join could span them (#238)")
+	join := Conjunction{Atoms: []PushAtom{c.Atoms[0], {Relation: "edge", Args: []PushArg{{Var: 2}, {Var: 3}}}}}
+	if two.Pushes(join) {
+		t.Errorf("a federation of two members pushes a join, which could span them (#238)")
+	}
+	if !two.Pushes(c) {
+		t.Errorf("a federation of two members refuses one atom, which each member answers for its own facts (#263)")
 	}
 	plain, err := NewFederation(Member{Name: "repo0", Source: mem})
 	if err != nil {
@@ -367,13 +373,19 @@ func TestAFederationPushesToALoneMember(t *testing.T) {
 type joinMem struct {
 	*MemSource
 	noPartial bool
+	noInputs  bool
+	sloppy    bool // returns every match and prefix, whatever the Bindings
 	pushes    int
+	pushed    []Conjunction
 }
 
-func (m *joinMem) Pushes(c Conjunction) bool { return !c.Partial || !m.noPartial }
+func (m *joinMem) Pushes(c Conjunction) bool {
+	return (!c.Partial || !m.noPartial) && (len(c.Inputs) == 0 || !m.noInputs)
+}
 
 func (m *joinMem) Push(_ context.Context, c Conjunction) iter.Seq2[[]Tuple, error] {
 	m.pushes++
+	m.pushed = append(m.pushed, c)
 	var rows [][]Tuple
 	vals := map[int]string{}
 	row := make([]Tuple, len(c.Atoms))
@@ -412,6 +424,9 @@ func (m *joinMem) Push(_ context.Context, c Conjunction) iter.Seq2[[]Tuple, erro
 		}
 	}
 	walk(0)
+	if !m.sloppy {
+		rows = slices.DeleteFunc(rows, func(r []Tuple) bool { return !agrees(c, r) })
+	}
 	return func(yield func([]Tuple, error) bool) {
 		for _, r := range rows {
 			if !yield(r, nil) {
@@ -419,6 +434,30 @@ func (m *joinMem) Push(_ context.Context, c Conjunction) iter.Seq2[[]Tuple, erro
 			}
 		}
 	}
+}
+
+// agrees reports whether row, a match of c or a prefix of one, agrees with one of c's Bindings on the
+// Inputs its atoms bind, or c has none.
+func agrees(c Conjunction, row []Tuple) bool {
+	if len(c.Bindings) == 0 {
+		return true
+	}
+	return slices.ContainsFunc(c.Bindings, func(b []Value) bool {
+		for j, n := range c.Inputs {
+		find:
+			for k, a := range c.Atoms[:len(row)] {
+				for pos, x := range a.Args {
+					if x.Var == n {
+						if row[k].Vals[pos].S != b[j].S {
+							return false
+						}
+						break find
+					}
+				}
+			}
+		}
+		return true
+	})
 }
 
 // Two stores partitioned by an edge's source, A holding a1's edges and a2's, B holding b9's: two
@@ -506,6 +545,184 @@ func TestAPartitionedFederationPushesAcrossMembers(t *testing.T) {
 	members = append(members, Member{Name: "C", Source: &joinMem{MemSource: NewMemSource().Declare("node", "id")}})
 	if f, _ := NewPartitionedFederation(members...); f.Pushes(c) {
 		t.Errorf("a partitioned federation pushes though a member doesn't serve edge")
+	}
+}
+
+// A partitioned federation pushes a conjunction with Inputs (#268): each binding goes to the members
+// whose Holds allows the first atom under its values, each asked once for all of its bindings, and a
+// prefix leaving a member continues as before. The answer is each binding's matches, whatever Holds
+// routes; a federation not declared partitioned, or with a member refusing Inputs, declines.
+func TestAPartitionedFederationPushesBindingsAcrossMembers(t *testing.T) {
+	c := Conjunction{
+		Atoms: []PushAtom{
+			{Relation: "edge", Args: []PushArg{{Var: 1}, {Var: 2}}},
+			{Relation: "edge", Args: []PushArg{{Var: 2}, {Var: 3}}},
+		},
+		Inputs:   []int{1},
+		Bindings: [][]Value{{S("a1")}, {S("b9")}},
+	}
+	offered := c
+	offered.Bindings = nil
+	want := []string{"A:a1-a2 A:a2-a3", "A:a1-b9 B:b9-a2", "A:a1-b9 B:b9-b10", "B:b9-a2 A:a2-a3"}
+	for _, holds := range []bool{true, false} {
+		a, b, members := partitionedEdges(holds)
+		b.Add("edge", Tuple{Vals: []Value{S("b9"), S("a2")}, Cites: []string{"b9-a2"}})
+		f, err := NewPartitionedFederation(members...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !f.Pushes(offered) {
+			t.Fatalf("holds %v: a partitioned federation refuses a conjunction with Inputs", holds)
+		}
+		if got := pushedRows(t, f, c); !reflect.DeepEqual(got, want) {
+			t.Errorf("holds %v: pushed %q, want %q", holds, got, want)
+		}
+		firsts := func(m *joinMem) (n int, bound [][]Value) {
+			for _, p := range m.pushed {
+				if slices.Equal(p.Inputs, []int{1}) {
+					n++
+					bound = append(bound, p.Bindings...)
+				}
+			}
+			return n, bound
+		}
+		an, ab := firsts(a)
+		bn, bb := firsts(b)
+		switch {
+		case holds && (an != 1 || bn != 1 || !reflect.DeepEqual(ab, [][]Value{{S("a1")}}) || !reflect.DeepEqual(bb, [][]Value{{S("b9")}})):
+			t.Errorf("A was asked %d times for %v and B %d for %v, want once each for its own binding", an, ab, bn, bb)
+		case !holds && (an != 1 || bn != 1 || len(ab) != 2 || len(bb) != 2):
+			t.Errorf("control: with no Holds, A was asked %d times for %v and B %d for %v, want once each for both", an, ab, bn, bb)
+		}
+	}
+	_, _, members := partitionedEdges(true)
+	if plain, _ := NewFederation(members...); plain.Pushes(offered) {
+		t.Errorf("a federation not declared partitioned pushes a conjunction with Inputs across members")
+	}
+	a, _, members := partitionedEdges(true)
+	a.noInputs = true
+	if f, _ := NewPartitionedFederation(members...); f.Pushes(offered) {
+		t.Errorf("a partitioned federation pushes Inputs though a member refuses them")
+	}
+	paged := offered
+	paged.Page = &Page{Columns: []int{1}, Limit: 1}
+	_, _, members = partitionedEdges(true)
+	if f, _ := NewPartitionedFederation(members...); f.Pushes(paged) {
+		t.Errorf("a partitioned federation pushes a page with Inputs")
+	}
+}
+
+// One atom goes to every member serving it whose Holds allows it, partitioned or not (#263): one fact
+// is in one member, so the members' matches together are the federation's.
+func TestAFederationPushesOneAtomToTheMembersHoldingIt(t *testing.T) {
+	a1 := S("a1")
+	c := Conjunction{Atoms: []PushAtom{{Relation: "edge", Args: []PushArg{{Const: &a1}, {Var: 1}}}}}
+	for _, partitioned := range []bool{false, true} {
+		a, b, members := partitionedEdges(true)
+		f, _ := NewFederation(members...)
+		if partitioned {
+			f, _ = NewPartitionedFederation(members...)
+		}
+		if !f.Pushes(c) {
+			t.Fatalf("partitioned %v: one atom isn't pushed", partitioned)
+		}
+		if got, want := pushedRows(t, f, c), []string{"A:a1-a2", "A:a1-b9"}; !reflect.DeepEqual(got, want) || a.pushes != 1 || b.pushes != 0 {
+			t.Errorf("partitioned %v: pushed %q to A %d times and B %d, want %q from A alone", partitioned, got, a.pushes, b.pushes, want)
+		}
+	}
+}
+
+// A prefix leaving a member continues in the others in one call per member for every prefix of as
+// many atoms (#268): the rest goes with the variables the prefixes bind as Inputs, and each row it
+// returns joins every prefix with its values, so a prefix a member holds twice makes two matches. A
+// member refusing Inputs is asked once per prefix, with its values as constants, as before.
+func TestAPartitionedFederationContinuesPrefixesInOneCall(t *testing.T) {
+	c := Conjunction{Atoms: []PushAtom{
+		{Relation: "edge", Args: []PushArg{{Var: 1}, {Var: 2}}},
+		{Relation: "edge", Args: []PushArg{{Var: 2}, {Var: 3}}},
+	}}
+	var want []string
+	for _, noInputs := range []bool{false, true} {
+		a, b, members := partitionedEdges(true)
+		for i := range 5 {
+			to := fmt.Sprintf("b%d", i)
+			a.Add("edge", Tuple{Vals: []Value{S("a5"), S(to)}, Cites: []string{"a5-" + to}})
+			b.Add("edge", Tuple{Vals: []Value{S(to), S("c")}, Cites: []string{to + "-c"}})
+		}
+		a.Add("edge", Tuple{Vals: []Value{S("a5"), S("b0")}, Cites: []string{"a5-b0"}}) // held twice
+		b.noInputs = noInputs
+		f, err := NewPartitionedFederation(members...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := pushedRows(t, f, c)
+		if !noInputs {
+			want = got
+			continue
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("asked per prefix, pushed %q; batched, %q", got, want)
+		}
+		if b.pushes < 7 {
+			t.Errorf("control: B refusing Inputs was pushed %d times, want one per prefix it continues", b.pushes)
+		}
+	}
+	twice := 0
+	for _, r := range want {
+		if r == "A:a5-b0 B:b0-c" {
+			twice++
+		}
+	}
+	if len(want) != 8 || twice != 2 {
+		t.Fatalf("pushed %q, want a5's six two-hop matches (b0's twice) and a1's two", want)
+	}
+	a, b, members := partitionedEdges(true)
+	for i := range 5 {
+		to := fmt.Sprintf("b%d", i)
+		a.Add("edge", Tuple{Vals: []Value{S("a5"), S(to)}, Cites: []string{"a5-" + to}})
+		b.Add("edge", Tuple{Vals: []Value{S(to), S("c")}, Cites: []string{to + "-c"}})
+	}
+	f, _ := NewPartitionedFederation(members...)
+	compared := c
+	compared.Compare = []PushComparison{{Op: "!=", Left: PushArg{Var: 1}, Right: PushArg{Var: 3}}}
+	pushedRows(t, f, compared)
+	if a.pushes != 1 || b.pushes != 2 {
+		t.Errorf("A was pushed %d times and B %d, want A once and B once for its own edges and once for every prefix leaving A", a.pushes, b.pushes)
+	}
+	for _, p := range b.pushed {
+		if len(p.Inputs) > 0 && len(p.Compare) > 0 {
+			t.Errorf("B was asked to continue with %v, a comparison over a variable its atoms don't read", p.Compare)
+		}
+	}
+}
+
+// A continuation carries only the prefixes agreeing with one of the conjunction's Bindings, so a
+// sloppy member's extra prefixes cost nothing further.
+func TestAContinuationCarriesOnlyAgreeingPrefixes(t *testing.T) {
+	c := Conjunction{
+		Atoms: []PushAtom{
+			{Relation: "edge", Args: []PushArg{{Var: 1}, {Var: 2}}},
+			{Relation: "edge", Args: []PushArg{{Var: 2}, {Var: 3}}},
+		},
+		Inputs:   []int{1},
+		Bindings: [][]Value{{S("a1")}},
+	}
+	for _, sloppy := range []bool{false, true} {
+		a, b, members := partitionedEdges(true)
+		a.Add("edge", Tuple{Vals: []Value{S("a7"), S("b8")}, Cites: []string{"a7-b8"}})
+		a.sloppy = sloppy
+		f, _ := NewPartitionedFederation(members...)
+		pushedRows(t, f, c)
+		var continued [][]Value
+		for _, p := range b.pushed {
+			continued = append(continued, p.Bindings...)
+		}
+		if !reflect.DeepEqual(continued, [][]Value{{S("b9")}}) {
+			t.Errorf("sloppy %v: B continued %v, want only a1's prefix through b9", sloppy, continued)
+		}
+		if n := len(a.pushed); sloppy && n == 0 {
+			t.Errorf("control: A was never pushed")
+		}
 	}
 }
 
@@ -737,5 +954,28 @@ func TestAPartitionedFederationSummarizesAJoin(t *testing.T) {
 	plain, _ := NewFederation(members...)
 	if plain.Summarizes(c, Summary{}) {
 		t.Errorf("control: a federation not declared partitioned summarizes a join")
+	}
+}
+
+// A continuation's rows join their prefixes by joinKey, which must equate what a member's comparison
+// equates (as Lookup's values compare), or a match is lost: a number and its spelling in a number
+// argument, -0 and 0, two units of one number, and in a text argument only the text.
+func TestJoinKeyEquatesWhatAMemberEquates(t *testing.T) {
+	number, text := ArgType{Type: TypeNumber}, ArgType{Type: TypeString}
+	neg := math.Copysign(0, -1)
+	same := [][2]Value{{S("01"), N(1)}, {Value{S: "-0", Num: &neg}, N(0)}, {NU(5, "V"), NU(5, "A")}}
+	for _, p := range same {
+		if joinKey(p[0], number) != joinKey(p[1], number) {
+			t.Errorf("%v and %v key apart in a number argument", p[0], p[1])
+		}
+	}
+	apart := []struct {
+		a, b Value
+		at   ArgType
+	}{{S("01"), N(1), text}, {S("1"), N(1), ArgType{}}, {Value{Absent: true}, S(""), number}, {S("x"), S("y"), ArgType{}}}
+	for _, p := range apart {
+		if joinKey(p.a, p.at) == joinKey(p.b, p.at) {
+			t.Errorf("%v and %v key together as %+v", p.a, p.b, p.at)
+		}
 	}
 }
