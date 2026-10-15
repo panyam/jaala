@@ -389,13 +389,13 @@ func evaluateOn(b *Base, gen int64, q Query, o evalOptions, rewrite func(*Base, 
 			return nil, err
 		}
 	}
+	// The rules are checked as linked, before any rewrite renames them, so an error names the
+	// program's relations rather than an adorned or factored one, and every evaluator reports it.
+	b.idbArity = map[string]int{}
+	if _, _, err := b.checkRules(q.Rules); err != nil {
+		return nil, err
+	}
 	if rewrite != nil {
-		// The rules are checked as linked too, before the rewrite renames them, so an error names
-		// the program's relations rather than an adorned or factored one.
-		b.idbArity = map[string]int{}
-		if _, _, err := b.checkRules(q.Rules); err != nil {
-			return nil, err
-		}
 		q = rewrite(b, q)
 		if b.run != nil && b.run.readErr != nil {
 			return nil, b.run.readErr

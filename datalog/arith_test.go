@@ -86,6 +86,19 @@ func TestArithmeticRefusals(t *testing.T) {
 	}
 }
 
+// A goal calling a computing relation twice, the second call's demand read from the first, gives the
+// demand rewrite a cycle the program doesn't have. The recursion check reads the program as linked,
+// so every evaluator answers it, under CanonicalCites (no supplementary relations) too (#266).
+func TestDemandDoesNotMakeAComputingRuleRecursive(t *testing.T) {
+	q := `hot(?p) :- res(?p, ?r), cur(?p, ?i), ?r * ?i > 1V; hot(?p) :- rail(?p, ?v), ?v > 4V; hot("R1"), hot("R1"), res("R1", ?r) => ?r`
+	for _, opts := range [][]Option{nil, {CanonicalCites()}} {
+		rows, err := both(mustParse(t, q), baseFor(std(ohmsLaw())), opts...)
+		if err != nil || len(rows) != 1 {
+			t.Errorf("%d options: %v, %v; want R1's resistance", len(opts), rows, err)
+		}
+	}
+}
+
 func TestAnExpressionPrintsAsItParses(t *testing.T) {
 	for _, text := range []string{
 		`res(?p, ?r), ?y = (?r + 1) * -?r, ?z = num.add(?r, 2) / 3, ?r < 3.3V => ?y`,
