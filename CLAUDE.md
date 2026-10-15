@@ -634,7 +634,10 @@ in memory, measured by the `Stores` benchmark (#218: stores asked, unindexed pro
 peak heap and a repeated question's fetches as the number of stores grows) and Declaire's `bench
 -time` on a federated view. The benchmark's stores run in its process, so `peak-MB` counts their
 work too: `page`'s 15 MB at 50 stores is mostly the fixture's own paging (`pageOf` builds every
-match before sorting), not the engine, so profile before blaming jaala. Its seven jaala tickets are closed, the last #233 (a `StreamSource` read
+match before sorting), not the engine, so profile before blaming jaala. `peak-MB` also moves run
+to run (`attrs-of-reached` read 14.3 to 17.2 MB over four runs of one commit), so rerun with
+`-count 3` before reading a few MB as a regression; store calls and `shipped` are exact. Run it as
+`go test ./datalog -run '^$' -bench 'BenchmarkStores/.*/stores=50' -benchtime 1x`. Its seven jaala tickets are closed, the last #233 (a `StreamSource` read
 charged to the budget, from declaire#211's measurement); it stays open for Declaire's half.
 `mission_store_pushdown` (#235), epic #213's second half: a store answers the part of a question it
 can evaluate (a conjunction, a walk, an aggregate, a page) and jaala combines the results, measured
