@@ -272,6 +272,30 @@ func (p *pushing) Summarize(_ context.Context, c ns.Conjunction, s ns.Summary) i
 	}
 }
 
+// withInputs is c with each of its Inputs replaced by its value in b, and no Inputs or Bindings.
+func withInputs(c ns.Conjunction, b []ns.Value) ns.Conjunction {
+	arg := func(x ns.PushArg) ns.PushArg {
+		if j := slices.Index(c.Inputs, x.Var); x.Var > 0 && j >= 0 {
+			v := b[j]
+			return ns.PushArg{Const: &v}
+		}
+		return x
+	}
+	out := c
+	out.Inputs, out.Bindings, out.Atoms, out.Compare = nil, nil, nil, nil
+	for _, a := range c.Atoms {
+		na := ns.PushAtom{Relation: a.Relation, Args: make([]ns.PushArg, len(a.Args))}
+		for pos, x := range a.Args {
+			na.Args[pos] = arg(x)
+		}
+		out.Atoms = append(out.Atoms, na)
+	}
+	for _, cmp := range c.Compare {
+		out.Compare = append(out.Compare, ns.PushComparison{Op: cmp.Op, Left: arg(cmp.Left), Right: arg(cmp.Right)})
+	}
+	return out
+}
+
 // forBindings keeps the rows whose Inputs equal one of c's Bindings, each read as its type, or every
 // row when c has none. A prefix (Partial) is kept when it agrees with one on the Inputs it binds.
 func forBindings(c ns.Conjunction, schema func(string) ns.Schema, rows [][]ns.Tuple) [][]ns.Tuple {

@@ -212,7 +212,22 @@ func (s *store) Push(_ context.Context, c ns.Conjunction) iter.Seq2[[]ns.Tuple, 
 			return out
 		}
 		schema := func(rel string) ns.Schema { sc, _ := s.Schema(rel); return sc }
-		rows := forBindings(c, schema, evalConjunction(c, schema, match, false))
+		var rows [][]ns.Tuple
+		if len(c.Bindings) == 0 {
+			rows = evalConjunction(c, schema, match, false)
+		} else {
+			// Each binding through the indexes, as WHERE (inputs) IN (...) would, and a row matching
+			// several bindings (a prefix not reaching some input) once.
+			seen := map[string]bool{}
+			for _, b := range c.Bindings {
+				for _, row := range evalConjunction(withInputs(c, b), schema, match, false) {
+					if k := fmt.Sprint(row); !seen[k] {
+						seen[k] = true
+						rows = append(rows, row)
+					}
+				}
+			}
+		}
 		if c.Page != nil {
 			rows = pageOf(c, schema, rows)
 		}
@@ -366,6 +381,7 @@ var storeQuestions = []struct{ name, text string }{
 	{"two-hops-in-repo", `edge("repo0/n5", _, ?m), edge(?m, _, ?o) => ?o`},
 	{"count-lines", `attr(?id, "lines", "7") => count(?id)`},
 	{"page", `attr(?id, "lines", ?n) => ?id, ?n order by ?id limit 10`},
+	{"attrs-of-reached", `reach(?a, ?b) :- edge(?a, _, ?b); reach(?a, ?c) :- reach(?a, ?b), edge(?b, _, ?c); reach("repo0/n0", ?x), edge(?x, _, ?y), attr(?y, "lines", "7") => count(?y)`},
 	{"self-loops", `edge(?a, ?k, ?a) => ?a, ?k`},
 	{"edges", `edge(?a, _, ?b) => ?a, ?b`},
 }
