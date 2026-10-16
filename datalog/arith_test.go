@@ -126,6 +126,33 @@ func TestAFunctionWaitsForWhatItWouldSolveFor(t *testing.T) {
 	}
 }
 
+// A call waits for what would bind its operand only while that binder could still run (FuzzEval's
+// 159b75a6). Solving ?w = ?x * 2 + 1 backwards, num.add(?e, 1, ?w) would wait for the num.mul that
+// computes ?e, and num.mul can't run until num.add has given it ?e. Each waited on the other, so
+// they ran in the order they were left in: Naive's written order called num.mul first, which errs,
+// and the plan called num.add first and answered.
+func TestTwoFunctionsWaitingOnEachOtherRunInTheOnlyOrderThatCan(t *testing.T) {
+	src := ns.NewMemSource().Declare("weight", "n", "w")
+	for i, w := range []float64{9, 4, 0} {
+		src.Add("weight", ns.Tuple{Vals: []ns.Value{ns.S(fmt.Sprintf("v%d", i)), ns.N(w)}})
+	}
+	q := mustParse(t, `weight(?n, ?w), ?w = ?x * 2 + 1 => ?n, ?x`)
+	if _, err := (Naive{}).Eval(bg, q, baseFor(std(src))); err != nil {
+		t.Fatalf("Naive: %v; want ?x solved after num.add gives num.mul its result", err)
+	}
+	rows, err := both(q, baseFor(std(src)))
+	if err != nil || col(rows, "x") != "-0.5,1.5,4" {
+		t.Fatalf("%v, %v; want -0.5,1.5,4", col(rows, "x"), err)
+	}
+	lowered, err := lowerExpressions(q, std(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if body := lowered.Goal.Literals; len(body) < 3 || body[1].Pos == nil || body[1].Pos.Relation != "num.mul" {
+		t.Errorf("control: the goal lowers to %v, so num.mul isn't written before num.add and this proves nothing", body)
+	}
+}
+
 func TestAnExpressionPrintsAsItParses(t *testing.T) {
 	for _, text := range []string{
 		`res(?p, ?r), ?y = (?r + 1) * -?r, ?z = num.add(?r, 2) / 3, ?r < 3.3V => ?y`,
