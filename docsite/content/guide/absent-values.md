@@ -2,6 +2,7 @@
 title: "Absent values"
 description: "A field the source didn't state is absent, which isn't the same as empty, and how to ask about one."
 prev: {url: "/jaala/guide/modules-and-vocabulary/", title: "Modules and the vocabulary"}
+next: {url: "/jaala/guide/versions/", title: "Versions"}
 ---
 
 A source can leave a field out. A datasheet row might state a maximum and no minimum, and a package might declare no license. jaala keeps that apart from a field stated as the empty string, because "not stated" and "stated as nothing" are different facts, and a query that mixed them up would answer the wrong question without saying so. As a host, you serve an absent field as `ns.Absent()`, which is a bit more work than an empty string.

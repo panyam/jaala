@@ -841,6 +841,9 @@ func (c genCase) check() (genOutcome, string) {
 	if diff := agreeStreamed(q, b, want, werr, c.opts()); diff != "" {
 		return genDisagreed, diff
 	}
+	if diff := agreeAt(q, b, c.opts(), len(text)); diff != "" {
+		return genDisagreed, diff
+	}
 	return genAgreed, ""
 }
 
@@ -1486,6 +1489,7 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 	compared, known, skipped, failed := map[string]int{}, map[int]int{}, 0, 0
 	lookedUpPrograms, federatedPrograms, batchedPrograms, pushedPrograms, partitionedPrograms, walkedPrograms, unitAnswers, mixedAnswers, foldedAnswers = 0, 0, 0, 0, 0, 0, 0, 0, 0
 	pagedPrograms, summarizedPrograms, batchPushedPrograms, stepWalkedPrograms, streamedPrograms, partitionedBatchPrograms, alonePushedPrograms = 0, 0, 0, 0, 0, 0, 0
+	atPrograms = 0
 	withUnits := 0
 	for seed := first; seed < first+int64(seeds); seed++ {
 		rnd := rand.New(rand.NewSource(seed))
@@ -1577,6 +1581,10 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 	}
 	if streamedPrograms == 0 {
 		t.Errorf("control: no program's goal streamed a relation into its answer")
+	}
+	t.Logf("versions: %d programs answered differently between versions", atPrograms)
+	if atPrograms < seeds/10 {
+		t.Errorf("control: %d programs answered differently between versions over %d seeds", atPrograms, seeds)
 	}
 	if partitionedPrograms == 0 {
 		t.Errorf("control: no program pushed a conjunction across a partitioned federation's members")

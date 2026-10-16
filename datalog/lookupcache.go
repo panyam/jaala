@@ -47,6 +47,7 @@ func (b *Base) LimitLookupCache(tuples int) {
 	if c == nil {
 		return
 	}
+	b.versions.each(func(vb *Base) { vb.LimitLookupCache(tuples) })
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.limit = max(tuples, 0)

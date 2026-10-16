@@ -34,5 +34,7 @@
 // A Vocabulary holds no data. An engine pairs it with a Source per query, so a host composes its
 // vocabulary once, checks it at load, and binds each dataset as it reads it. A Federation is one
 // Source over several, for facts kept in several stores: each relation is the union of its members',
-// and a lookup goes only to the members whose Holds says they can match.
+// and a lookup goes only to the members whose Holds says they can match. A TimedSource serves several
+// versions of its facts, each fact once with its VersionSet (an IntervalSet for linear history, a
+// BitSet for history that branches), so one Base answers at any version.
 package ns

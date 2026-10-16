@@ -669,6 +669,18 @@ The context ended while the source was serving a relation.
 
 The host's source failed to serve a relation. jaala doesn't cache a failed read.
 
+`query: At needs a Source that serves versions (ns.TimedSource)`
+
+`At` was given to a query over a base whose source serves one version. See [versions]({{.Site.PathPrefix}}/guide/versions/).
+
+`query: Diff needs a Source that serves versions (ns.TimedSource)`
+
+`Base.Diff` was called on a base whose source serves one version.
+
+`query: version … is not one the Source serves`
+
+`At` or `Diff` named a version outside the timed source's `Versions()`.
+
 `query: evaluation stopped looking up …: …`
 
 The context ended while a source that looks facts up (`ns.LookupSource`) was answering a call.

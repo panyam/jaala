@@ -80,6 +80,12 @@ type Base struct {
 	stepWalker ns.ConjunctionWalkSource
 	// summarizer is the Source when it reduces a conjunction's matches itself (ns.SummarySource, #240).
 	summarizer ns.SummarySource
+	// timed is the Source when it serves versions (ns.TimedSource, #179), and versions the Bases At
+	// answers each version on, shared by every copy of this Base. at is the version a Base made for one
+	// answers at, nil on any other.
+	timed    ns.TimedSource
+	versions *versionCache
+	at       *ns.Version
 	// run is one Eval's own state (its context and budget), set on that Eval's copy of the Base and
 	// nil on a Base no Eval is running on.
 	run *evalRun
@@ -137,7 +143,8 @@ func NewBase(v *ns.Vocabulary, src ns.Source) (*Base, error) {
 	walker, _ := src.(ns.WalkSource)
 	stepWalker, _ := src.(ns.ConjunctionWalkSource)
 	summarizer, _ := src.(ns.SummarySource)
-	return &Base{src: src, reg: v, looker: looker, lookRels: lookRels, indexed: indexed, pusher: pusher, filterer: filterer, walker: walker, stepWalker: stepWalker, summarizer: summarizer, edb: newEDBCache(), derived: newDerivedCache(), lookups: newLookupCache(), work: new(int64)}, nil
+	timed, _ := src.(ns.TimedSource)
+	return &Base{src: src, reg: v, looker: looker, lookRels: lookRels, indexed: indexed, pusher: pusher, filterer: filterer, walker: walker, stepWalker: stepWalker, summarizer: summarizer, timed: timed, versions: newVersionCache(), edb: newEDBCache(), derived: newDerivedCache(), lookups: newLookupCache(), work: new(int64)}, nil
 }
 
 // MustBase is NewBase for a Source known to match its vocabulary, such as a test fixture. It panics
@@ -288,6 +295,15 @@ func evaluate(ctx context.Context, q Query, b *Base, opts []Option, rewrite func
 	var o evalOptions
 	for _, opt := range opts {
 		opt(&o)
+	}
+	if o.at != nil && b.at == nil {
+		// A version's own Base, whose caches are that version's; a cold rerun of it starts there.
+		b.refresh()
+		vb, err := b.atVersion(*o.at)
+		if err != nil {
+			return nil, err
+		}
+		b, ctx = vb, ns.WithVersion(ctx, *o.at)
 	}
 	// The query runs on its own copy of the Base: its context, its budget and its derived relations
 	// are its own, while the Source's tuples and their indexes stay shared (see Base).

@@ -57,6 +57,7 @@ func (b *Base) LimitDerivedCache(tuples int) {
 	if b.derived == nil {
 		return
 	}
+	b.versions.each(func(vb *Base) { vb.LimitDerivedCache(tuples) })
 	c := b.derived
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -74,6 +75,7 @@ func (b *Base) KeepDerivedIn(s ns.DerivedStore) {
 	if b.derived == nil {
 		return
 	}
+	b.versions.each(func(vb *Base) { vb.KeepDerivedIn(s) })
 	c := b.derived
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -95,6 +97,7 @@ func (b *Base) Forget() {
 		b.derived.drop()
 	}
 	b.lookups.drop()
+	b.versions.drop()
 }
 
 // refresh reads a Versioned Source's version, for an Eval about to start, and drops every cache when
@@ -121,6 +124,7 @@ func (b *Base) refresh() (gen int64, version string, versioned bool) {
 			b.edb.reset()
 		}
 		b.lookups.drop()
+		b.versions.drop()
 	}
 	return c.gen, v, true
 }
