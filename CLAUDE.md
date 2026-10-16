@@ -11,7 +11,11 @@ engine (#41).
 `docsite/` is the documentation site (#104), an s3gen site in its own Go module so its dependencies
 never reach jaala's. `docsite/README.md` says how to add a page and an example; every example runs on the engine at build
 time and in `docsite`'s tests (`demo.Run`, #106), so an engine change that changes an answer the docs
-pin fails the docs workflow. `make -C docsite check` builds it and runs its tests, and `.github/workflows/docs.yml` runs that on every PR and deploys `main` to Pages.
+pin fails the docs workflow. `make -C docsite check` builds it and runs its tests, and `.github/workflows/docs.yml` runs that on every PR and deploys `main` to Pages. A change to a store interface or to how
+the planner asks a store also updates `guide/stores.md` (what a host implements) and
+`architecture/stores.md` (what the engine asks, and when); one to `ns.Builtin` updates
+`guide/predicates.md`. `guide/host-options.md` is for the `Eval` options and sharing a base, not
+stores, which is why it was split (#320).
 
 ## Commands
 
@@ -198,7 +202,9 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   pushed group reads the recursive column as `in` and writes the head's as `out`; `walkStep` files
   each reached value's rows under `pushKey(g.conjunction(bnd))`, #246's batch key, after unifying
   each row with the group so a non-match is never followed. A demand rewrite that splits the step
-  into a supplementary prefix leaves no single group to walk. The corpus's programs
+  into a supplementary prefix leaves no single group to walk. A walk is found only where the recursive rule
+  reads the relation itself: one reading it through a one-rule helper (the docs' `deps.depends_on`
+  through `_step`) is probed per round, since nothing is inlined into a recursive rule (#97, #319). The corpus's programs
   rarely walk, so `agreeWalked` runs a fixed reach from each graph's first edge over a walking store
   and over the partitioned federation, on a fresh Base (Naive's lookups would leave nothing to walk);
   `walkedPrograms` is its control.

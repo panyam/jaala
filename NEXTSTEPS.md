@@ -5,14 +5,17 @@ Maintained by /checkpoint: one thread per branch, pruned when the branch merges.
 
 ## At a glance
 
-- No open branches. v0.1.62 (b8b1b50: #314, a `\"` inside a string reads as v0.1.60 read it) follows
-  v0.1.61 (#179 to #181 timed facts, #167 the tokenizer). Declaire hit #314 on v0.1.61 and worked
-  around it (declaire#284), so it needs no change to take v0.1.62.
-- No active mission, and nothing ready: every open issue is `waiting` or an epic (#183 timed facts,
-  #213 stores, #278 Cypher/GQL gaps). Next: `retriage` to start a mission when a host files a need;
-  #312 (timed facts through lookups, pushdown, federations) unparks when a host serves versions from
-  a store.
-- This run: #311, #313, #315 and #316 merged; dropped feat/tokenizer-167 and the v0.1.60 notes.
+- No open branches. `main` (c8d4564) holds two merges since v0.1.62: #318 (#312, `ns.SourceAt`, a
+  version served as a store, and `Federation.Timed`) and #320 (docs: stores, predicates and
+  generators, architecture of stores). Unreleased: agni takes tags only, so it can't serve revisions
+  from stores until v0.1.63. Next: tag it when the owner says, after the CI set and `./selfcheck.sh`
+  on merged `main` (#318 and #320 never ran together).
+- No active mission. Ready off-mission: #319 (P3, a recursive rule reading through a one-rule
+  helper isn't walked). Waiting: #317 (`Across` through stores, an `Across` cache) until a host
+  asks `Across` over a history in stores; #288 (session overlays) after #287 and agni#1027's
+  trigger, and it will wrap the per-version Source #318 added. Next: `retriage` to start a mission
+  around agni serving revisions from stores (agni#971, #999, #1007) once agni picks up v0.1.63.
+- This run: dropped the v0.1.60-era notes; merged #315, #316 (v0.1.62), #318, #320.
 
 ## Across threads
 
