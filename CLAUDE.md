@@ -247,12 +247,26 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   rule order decide answers. Answers, groups, `distinct` and the Lookup cache key on `valueKey` too,
   so a derived column holding both `1` and `"1"` answers both; only `CanonicalCites`' derivation
   order still reads `keyText`.
-- **A variable's name is an ident and a number is decimal** (`checkVarName`, `isDecimal`, #163), as
+- **A variable's name is an ident and a number is decimal** (`checkVarName`, `lexNumber`, #163), as
   the grammar comment in `parse.go` says. `strconv.ParseFloat` alone also takes inf, nan, hex and
-  `.5`. The parser slices rather than lexes; a tokenizer is filed separately.
+  `.5`.
+- **The query text is read as tokens first** (`lex.go`, #167), and the parser, the expression parser
+  and `parseArgType` read tokens. It keeps the old slicing parser's decomposition, because error order
+  and wording come from it: separators are found in the symbols' text (`occurrences`, so `=>` in `!=>`
+  counts) and a cut inside a token re-reads that piece (`span.slice`). Every parse error is a
+  `*ParseError` with `Line`, `Column` (runes) and `Offset`; `Error()` is the message alone. A string
+  takes no escapes, but a backslash keeps the next character in it, so `\"` is a quote inside and both
+  stay in the value (#314: Declaire's regexes write `\"`). The old parser is frozen as test code
+  (`slicer_test.go`, every change to it marked), and `FuzzParseAgreesWithSlicer` and
+  `TestATypoGetsTheSlicersMessage` hold the two to the same `Query` and the same message word for
+  word. A grammar change that should make them disagree is when to delete it, keeping its typo
+  messages as a golden if they still matter. The differential's allowances (`readsAsWritten`,
+  `agreesWithoutExponents`, `unknownAggregate`) cover only the readings #167 changed on purpose;
+  match a disagreement by rewriting the text, never by the slicer's wording, which differs by
+  where the piece sits (#315 took four tries that way).
 - **The parser also reads the endings other Datalogs write, and only forms that never parsed**
   (#276, from Declaire's agent exercise): `.` before whitespace or the end ends a clause
-  (`splitEnds`), `?- body` and `=> body` ask `body` with no projection (`goalAfterArrow`), `!atom` is
+  (the lexer marks that `.`, and `clauses` cuts at it), `?- body` and `=> body` ask `body` with no projection (`goalAfterArrow`), `!atom` is
   `not atom`, and a `.` between a goal and its `=>` is dropped. Each is tested against its jaala
   spelling's `Query`. Uppercase words stay an error with a `?U` or `"U"` hint, on purpose:
   `pin(?r, GND)` read as a variable would match every net. A new accepted form must be one that errs
