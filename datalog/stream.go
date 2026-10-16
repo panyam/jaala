@@ -101,14 +101,16 @@ func (b *Base) streamEDB(atom *Atom, bnd *binding, yield func(*binding) error) e
 		if err := b.countWork(); err != nil {
 			return err
 		}
-		next, ok := unify(atom.Args, t, bnd)
-		if !ok {
+		m := bnd.mark()
+		if !unify(atom.Args, t, bnd) {
 			return nil
 		}
 		if b.witnessing() {
-			next.last = leaf(rel, t.Vals, t.Cites)
+			bnd.last = leaf(rel, t.Vals, t.Cites)
 		}
-		return yield(next)
+		err := yield(bnd)
+		bnd.reset(m)
+		return err
 	}
 	var early []ns.Tuple
 	n := 0

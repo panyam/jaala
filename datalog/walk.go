@@ -391,19 +391,19 @@ func stepStarts(b *Base, prefix []Literal, g *pushGroup, in Var) ([]ns.Value, er
 	var starts []ns.Value
 	asked := map[string]bool{}
 	err := solve(prefix, 0, newBinding(), b, func(bnd *binding) error {
-		v, ok := bnd.vals[in]
+		v, ok := bnd.get(in)
 		if !ok {
 			return nil
 		}
 		for _, lit := range g.lits {
 			for _, t := range lit.Pos.Args {
-				if _, bound := bnd.vals[t.Var]; bound && t.Var != in && t.Var != "" && t.Var != "_" {
+				if _, bound := bnd.get(t.Var); bound && t.Var != in && t.Var != "" && t.Var != "_" {
 					return nil
 				}
 			}
 		}
 		only := newBinding()
-		only.vals[in] = v
+		only.set(in, v)
 		key := pushKey(g.conjunction(only))
 		if _, done := b.run.looked[key]; done || asked[key] {
 			return nil
@@ -458,16 +458,11 @@ func (b *Base) walkStep(g *pushGroup, c ns.Conjunction, s stepWalk, in Var, star
 			}
 			read[i] = normalizeTuples([]ns.Tuple{t}, types[i])[0]
 		}
-		next, ok := newBinding(), true
-		for i, lit := range g.lits {
-			if next, ok = unify(lit.Pos.Args, read[i], next); !ok {
-				break
-			}
-		}
-		if !ok {
+		next := newBinding()
+		if !unifyRow(g.lits, read, next) {
 			continue // not a match: neither a value's answer nor a step to follow
 		}
-		k := valueKey(next.vals[in])
+		k := valueKey(next.value(in))
 		byIn[k] = append(byIn[k], read)
 		fetched++
 	}
@@ -484,18 +479,12 @@ func (b *Base) walkStep(g *pushGroup, c ns.Conjunction, s stepWalk, in Var, star
 		var rows []ns.Tuple
 		for _, row := range byIn[k] {
 			rows = append(rows, row...)
-			next, ok := newBinding(), true
-			for i, lit := range g.lits {
-				if next, ok = unify(lit.Pos.Args, row[i], next); !ok {
-					break
-				}
-			}
-			if ok {
-				queue = append(queue, next.vals[out])
+			if next := newBinding(); unifyRow(g.lits, row, next) {
+				queue = append(queue, next.value(out))
 			}
 		}
 		only := newBinding()
-		only.vals[in] = v
+		only.set(in, v)
 		b.keepLookup(pushKey(g.conjunction(only)), rows)
 	}
 	if r.explain != nil {

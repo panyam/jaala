@@ -145,7 +145,7 @@ func summarizeGoal(b *Base, g *pushGroup, ag *aggregator) (bool, error) {
 	for _, row := range rows {
 		bnd := newBinding()
 		for i, v := range vars {
-			bnd.vals[v] = row.vals[i]
+			bnd.set(v, row.vals[i])
 		}
 		bnd.cites = row.cites
 		pass := true
@@ -362,17 +362,13 @@ func pageGoal(b *Base, g *pushGroup, cols []Term, fixed map[int]ns.Value, writte
 		return true, err
 	}
 	n := len(g.lits)
+	next := newBinding()
 	for k := 0; k+n <= len(rows); k += n {
 		if err := b.countWork(); err != nil {
 			return true, err
 		}
-		next, ok := newBinding(), true
-		for i, lit := range g.lits {
-			if next, ok = unify(lit.Pos.Args, rows[k+i], next); !ok {
-				break
-			}
-		}
-		if !ok {
+		next.reset(mark{})
+		if !unifyRow(g.lits, rows[k:k+n], next) {
 			continue
 		}
 		if b.witnessing() {

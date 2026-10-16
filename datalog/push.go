@@ -323,7 +323,7 @@ func (g *pushGroup) numbered(bnd *binding) (ns.Conjunction, map[Var]int) {
 			return ns.PushArg{}
 		}
 		if bnd != nil {
-			if v, ok := bnd.vals[t.Var]; ok {
+			if v, ok := bnd.get(t.Var); ok {
 				return ns.PushArg{Const: &v}
 			}
 		}
@@ -361,7 +361,7 @@ func (g *pushGroup) boundIn(bnd *binding) bool {
 	for _, lit := range g.lits {
 		for _, t := range lit.Pos.Args {
 			if t.Var != "" && t.Var != "_" {
-				if _, ok := bnd.vals[t.Var]; ok {
+				if _, ok := bnd.get(t.Var); ok {
 					return true
 				}
 			}
@@ -448,27 +448,37 @@ func (b *Base) extendPushed(atom *Atom, bnd *binding, yield func(*binding) error
 		if err := b.countWork(); err != nil {
 			return err
 		}
-		next, ok := bnd, true
-		for i, lit := range g.lits {
-			if next, ok = unify(lit.Pos.Args, rows[k+i], next); !ok {
-				break
-			}
-		}
-		if !ok {
+		m := bnd.mark()
+		if !unifyRow(g.lits, rows[k:k+n], bnd) {
 			continue
 		}
 		if b.witnessing() {
-			next.parts = make([]placed, n)
+			bnd.parts = make([]placed, n)
 			for i, lit := range g.lits {
 				t := rows[k+i]
-				next.parts[i] = placed{at: lit.at, node: leaf(lit.Pos.Relation, t.Vals, t.Cites)}
+				bnd.parts[i] = placed{at: lit.at, node: leaf(lit.Pos.Relation, t.Vals, t.Cites)}
 			}
 		}
-		if err := yield(next); err != nil {
+		err := yield(bnd)
+		bnd.reset(m)
+		if err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// unifyRow unifies each literal with its tuple of row in turn, extending bnd in place; on false bnd is
+// as it was.
+func unifyRow(lits []Literal, row []ns.Tuple, bnd *binding) bool {
+	m := bnd.mark()
+	for i, lit := range lits {
+		if !unify(lit.Pos.Args, row[i], bnd) {
+			bnd.reset(m)
+			return false
+		}
+	}
+	return true
 }
 
 // solveUnpushed solves g's literals in turn from bnd, counting their work against the pushed literal.
@@ -591,7 +601,7 @@ func prefetchGroup(b *Base, prefix []Literal, g *pushGroup) error {
 		seen := map[Var]bool{}
 		for _, lit := range g.lits {
 			for _, t := range lit.Pos.Args {
-				if v, ok := bnd.vals[t.Var]; ok && t.Var != "" && t.Var != "_" && !seen[t.Var] {
+				if v, ok := bnd.get(t.Var); ok && t.Var != "" && t.Var != "_" && !seen[t.Var] {
 					seen[t.Var] = true
 					vars = append(vars, t.Var)
 					vals = append(vals, v)
@@ -709,7 +719,7 @@ func (b *Base) pushBatch(g *pushGroup, vars []Var, bindings [][]ns.Value) error 
 		bnd := newBinding()
 		for i, v := range vars {
 			sb.WriteString(valueKey(vals[i]) + "\x00")
-			bnd.vals[v] = vals[i]
+			bnd.set(v, vals[i])
 		}
 		b.keepLookup(pushKey(g.conjunction(bnd)), byBinding[sb.String()])
 	}

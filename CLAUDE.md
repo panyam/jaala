@@ -274,6 +274,13 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   `main` held 3.5 GB at a budget of 2,000,000) guard it. A new answer feature reads bindings as they
   arrive; collecting them first brings #120 back. `EvalTable` (on `Evaluator`) returns a `Table`;
   `Eval` converts it, so a host's `[]Row` is built only for returned rows (#195).
+- **A solve extends one binding in place and undoes it on backtrack** (`binding`, #260). Each
+  extender (`unifyEach`, `extendIDB`, a generator's emit, a filter, `extendPushed`, `streamEDB`)
+  takes a `mark`, extends, yields and `reset`s, so a candidate allocates nothing whether or not it
+  unifies, and `reset` also restores a spelling `bindArg` replaced (`undo`). What a callback is handed
+  is rewritten by the next candidate: anything keeping a binding past the call keeps `bnd.keep()` (the
+  projector's `r.bnd` does; `TestACanonicalRowKeepsItsFirstBinding` fails without it), and values read
+  out of it are copies already. `vals` is a short slice scanned by `get`, not a map.
 - **Comments use agni's circuit vocabulary on purpose** (`doc.go` says so). Host-specific test
   data doesn't belong here, though: checks against agni's real catalog, such as its
   `columnkinds.golden`, live in agni. Copying another repo's catalog in creates a fixture that goes
