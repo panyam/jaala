@@ -579,7 +579,7 @@ func (f *Federation) restAfter(c Conjunction, k int, prefixes [][]Tuple) (*Conju
 		}
 		return at
 	}
-	rest := Conjunction{Atoms: slices.Clone(c.Atoms[k:])}
+	rest := Conjunction{Atoms: slices.Clone(c.Atoms[k:]), Units: c.Units}
 	inPrefix, inRest := first(c.Atoms[:k]), first(rest.Atoms)
 	for n := range inRest {
 		if _, bound := inPrefix[n]; bound || slices.Contains(c.Inputs, n) {
@@ -622,7 +622,7 @@ func (f *Federation) restAfter(c Conjunction, k int, prefixes [][]Tuple) (*Conju
 			for j, n := range c.Inputs {
 				if at, ok := inPrefix[n]; ok && j < len(b) {
 					t := typeOf(c.Atoms, at)
-					agrees = agrees && joinKey(p[at.atom].Vals[at.pos], t) == joinKey(b[j], t)
+					agrees = agrees && joinKey(c.Units.FoldValue(p[at.atom].Vals[at.pos]), t) == joinKey(c.Units.FoldValue(b[j]), t)
 				}
 			}
 			if agrees {
@@ -634,7 +634,7 @@ func (f *Federation) restAfter(c Conjunction, k int, prefixes [][]Tuple) (*Conju
 			vals := make([]Value, len(rest.Inputs))
 			for j, n := range rest.Inputs {
 				if at, ok := inPrefix[n]; ok {
-					vals[j] = p[at.atom].Vals[at.pos]
+					vals[j] = c.Units.FoldValue(p[at.atom].Vals[at.pos]) // as the engine would send it (#205)
 				} else {
 					vals[j] = b[slices.Index(c.Inputs, n)]
 				}
@@ -699,7 +699,7 @@ func (f *Federation) bindingKey(c Conjunction, vals []Value) string {
 				}
 			}
 		}
-		k := joinKey(vals[j], at)
+		k := joinKey(c.Units.FoldValue(vals[j]), at)
 		fmt.Fprintf(&sb, "%d:%s", len(k), k)
 	}
 	return sb.String()
@@ -802,11 +802,12 @@ func (c Conjunction) after(row []Tuple) Conjunction {
 	}
 	arg := func(x PushArg) PushArg {
 		if v, ok := vals[x.Var]; x.Var > 0 && ok {
+			v = c.Units.FoldValue(v)
 			return PushArg{Const: &v}
 		}
 		return x
 	}
-	var rest Conjunction
+	rest := Conjunction{Units: c.Units}
 	for _, a := range c.Atoms[len(row):] {
 		na := PushAtom{Relation: a.Relation, Args: make([]PushArg, len(a.Args))}
 		for pos, x := range a.Args {
@@ -854,6 +855,7 @@ func (f *Federation) Walk(ctx context.Context, w Walk) iter.Seq2[Tuple, error] {
 		}
 		pending := map[int][]Value{}
 		route := func(v Value, from int) {
+			v = w.Units.FoldValue(v) // a member reached it as it stores it; the next is asked folded (#205)
 			bound := make(map[int]Value, len(w.Bound)+1)
 			for p, c := range w.Bound {
 				bound[p] = c
@@ -889,10 +891,10 @@ func (f *Federation) Walk(ctx context.Context, w Walk) iter.Seq2[Tuple, error] {
 						return
 					}
 					if w.From < len(t.Vals) {
-						walked[i][walkKey(t.Vals[w.From])] = true
+						walked[i][walkKey(w.Units.FoldValue(t.Vals[w.From]))] = true
 					}
 					if w.To < len(t.Vals) {
-						walked[i][walkKey(t.Vals[w.To])] = true
+						walked[i][walkKey(w.Units.FoldValue(t.Vals[w.To]))] = true
 						route(t.Vals[w.To], i)
 					}
 					if !yield(f.cite(i, t), nil) {
@@ -1007,7 +1009,7 @@ func (f *Federation) across(c Conjunction, ok func(Source) bool) bool {
 
 // prefixesOf is c asking for its prefixes alone, with no page.
 func prefixesOf(c Conjunction) Conjunction {
-	return Conjunction{Atoms: c.Atoms, Compare: c.Compare, Filter: c.Filter, Partial: true, PrefixesOnly: true}
+	return Conjunction{Atoms: c.Atoms, Compare: c.Compare, Filter: c.Filter, Partial: true, PrefixesOnly: true, Units: c.Units}
 }
 
 // spanning yields every match of c whose facts lie in more than one member (#253): each member whose

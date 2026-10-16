@@ -519,7 +519,7 @@ func (b *Base) pushAs(g *pushGroup, c ns.Conjunction) ([]ns.Tuple, error) {
 	}
 	ctx := r.context()
 	var rows []ns.Tuple
-	for row, err := range b.pusher.Push(ctx, c) {
+	for row, err := range b.pusher.Push(ctx, b.withUnits(c)) {
 		if err != nil {
 			return nil, pushErr(ctx, g.text, err)
 		}
@@ -533,7 +533,7 @@ func (b *Base) pushAs(g *pushGroup, c ns.Conjunction) ([]ns.Tuple, error) {
 			if want := len(g.lits[i].Pos.Args); len(t.Vals) != want {
 				return nil, fmt.Errorf("query: pushing %s: a row's %s tuple has %d values, want %d", g.text, g.lits[i].Pos.Relation, len(t.Vals), want)
 			}
-			rows = append(rows, normalizeTuples([]ns.Tuple{t}, types[i])[0])
+			rows = append(rows, normalizeTuples(b.units(), []ns.Tuple{t}, types[i])[0])
 		}
 	}
 	b.keepLookup(key, rows)
@@ -690,7 +690,7 @@ func (b *Base) pushBatch(g *pushGroup, vars []Var, bindings [][]ns.Value) error 
 	ctx := r.context()
 	byBinding := map[string][]ns.Tuple{}
 	fetched := 0
-	for row, err := range b.pusher.Push(ctx, c) {
+	for row, err := range b.pusher.Push(ctx, b.withUnits(c)) {
 		if err != nil {
 			return pushErr(ctx, g.text, err)
 		}
@@ -705,7 +705,7 @@ func (b *Base) pushBatch(g *pushGroup, vars []Var, bindings [][]ns.Value) error 
 			if want := len(g.lits[i].Pos.Args); len(t.Vals) != want {
 				return fmt.Errorf("query: pushing %s: a row's %s tuple has %d values, want %d", g.text, g.lits[i].Pos.Relation, len(t.Vals), want)
 			}
-			read[i] = normalizeTuples([]ns.Tuple{t}, types[i])[0]
+			read[i] = normalizeTuples(b.units(), []ns.Tuple{t}, types[i])[0]
 		}
 		var sb strings.Builder
 		for _, p := range places {

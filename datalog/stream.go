@@ -116,7 +116,7 @@ func (b *Base) streamEDB(atom *Atom, bnd *binding, yield func(*binding) error) e
 	n := 0
 	err := streamTuples(b.run, b.src.(ns.StreamSource), rel, func(t ns.Tuple) error {
 		n++
-		if vs, changed := normalizeValues(t.Vals, types); changed {
+		if vs, changed := normalizeValues(b.units(), t.Vals, types); changed {
 			t = ns.Tuple{Vals: vs, Cites: t.Cites}
 		}
 		if !indexed {

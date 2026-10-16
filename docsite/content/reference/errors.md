@@ -229,6 +229,10 @@ A rule that computes a value and feeds it back into its own recursion has no fix
 
 `Vocabulary.AddUnit` refusing a name or a definition, for a host registering units.
 
+`query: unit … isn't a base unit`, `query: unit … isn't defined with … to the first power`, `query: unit … is already written through …`
+
+`Vocabulary.WriteBaseThrough` refusing a pair: the first unit has to be a base unit, the second a unit defined with it to the first power (the standard library writes kg through V), and each base unit is written through one unit at most.
+
 `query: after takes values, as in …, and … is not one`
 
 `after` lists the values a page continues from, one per `order by` column, not variables.

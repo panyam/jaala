@@ -180,9 +180,9 @@ func (b *Base) Work() int64 {
 func (b *Base) edbTuples(rel string) ([]ns.Tuple, error) {
 	if b.edb == nil {
 		t, err := readTuples(b.run, b.src, rel)
-		return normalizeTuples(t, b.argTypesOf(rel)), err
+		return normalizeTuples(b.units(), t, b.argTypesOf(rel)), err
 	}
-	return b.edb.tuples(b.run, rel, b.src, b.argTypesOf(rel))
+	return b.edb.tuples(b.run, rel, b.src, b.units(), b.argTypesOf(rel))
 }
 
 // readTuples reads one relation from the Source for run, through TuplesSeq when the Source streams,

@@ -8,15 +8,20 @@ import "github.com/panyam/jaala/ns"
 // (coerceConstants); text in a number argument reads as its number when it is one; 1.50 reads as 1.5
 // wherever it is. Text that says more than its number, such as 3.3V, keeps its text. Equality can then
 // be strict, a number never equalling text, without a pin stored the wrong way going unmatched.
+//
+// A number's unit is folded as a query's constant is (foldUnits, #205): 5 in mV reads as 0.005 in V,
+// and 1 in A*ohm as 1 in V, so a Source may serve prefixed values and 1000 mV and 1 V are one value
+// wherever values meet. A number whose text only spelled it is written as the folded number; text
+// saying more, such as "5 mV", is kept, as data's spelling is (#148).
 
 // normalizeTuples returns tuples with each value read as its argument's type (coerceValue) and each
 // plain number written canonically (canonicalNumber). A value the type can't read stays as the Source
 // gave it. The Source's slices are never written: a tuple that changes is copied, and when none does
 // tuples itself comes back.
-func normalizeTuples(tuples []ns.Tuple, types []ns.ArgType) []ns.Tuple {
+func normalizeTuples(units *ns.Units, tuples []ns.Tuple, types []ns.ArgType) []ns.Tuple {
 	var out []ns.Tuple
 	for i, t := range tuples {
-		vals, changed := normalizeValues(t.Vals, types)
+		vals, changed := normalizeValues(units, t.Vals, types)
 		if !changed {
 			continue
 		}
@@ -34,7 +39,7 @@ func normalizeTuples(tuples []ns.Tuple, types []ns.ArgType) []ns.Tuple {
 // normalizeValues is one row's values read as types (see normalizeTuples): vals itself when nothing
 // changes, else a copy, and whether it changed. A generator's emitted rows go through it too, typed by
 // its Builtin's Types.
-func normalizeValues(vals []ns.Value, types []ns.ArgType) ([]ns.Value, bool) {
+func normalizeValues(units *ns.Units, vals []ns.Value, types []ns.ArgType) ([]ns.Value, bool) {
 	var out []ns.Value
 	for j, v := range vals {
 		n := v
@@ -43,7 +48,7 @@ func normalizeValues(vals []ns.Value, types []ns.ArgType) ([]ns.Value, bool) {
 				n = c
 			}
 		}
-		n = canonicalNumber(n)
+		n = canonicalNumber(units.FoldValue(n))
 		if sameValue(n, v) {
 			continue
 		}
@@ -70,4 +75,18 @@ func sameValue(a, b ns.Value) bool {
 func (b *Base) argTypesOf(rel string) []ns.ArgType {
 	s, _ := b.schemaOf(rel)
 	return s.Types
+}
+
+// units is the vocabulary's unit table, which folds what the Source serves (ns.Units.FoldValue).
+func (b *Base) units() *ns.Units {
+	if b.reg == nil {
+		return nil
+	}
+	return b.reg.Units()
+}
+
+// withUnits is c carrying the unit table its values were folded by, for the store (ns.Conjunction.Units).
+func (b *Base) withUnits(c ns.Conjunction) ns.Conjunction {
+	c.Units = b.units()
+	return c
 }

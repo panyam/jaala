@@ -17,15 +17,16 @@ type Value struct {
 	// order, where "" precedes everything and so "passed" every upper-bound test, including against a
 	// negative threshold.
 	Absent bool
-	// BaseUnit is the SI BASE symbol this value's number is expressed in ("V", "A", UnitOhm), or ""
-	// for a dimensionless value or a non-numeric one.
+	// BaseUnit is the unit this value's number is expressed in ("V", "A", UnitOhm), or "" for a
+	// dimensionless value or a non-numeric one.
 	//
-	// NEVER A PREFIXED SPELLING. Scale normalization is the host's job and happens before a value
-	// reaches the engine, so a millivolt reading is already volts by the time it reaches a query.
-	// This layer checks DIMENSION (is this volts or amps) and never converts SCALE. Naming the field
-	// for that invariant is deliberate: a projector that set "mV" here would make a
-	// volts-against-millivolts comparison REFUSE rather than convert, which is a fresh silent wrong
-	// answer wearing the fix's clothes. A host should test that it never publishes a prefixed unit.
+	// A Source may serve a prefixed or compound unit ("mV", "kohm", "A*ohm"): the engine folds it as it
+	// reads the value, through the vocabulary's unit table (Units.Fold, jaala#205), so 1000 in mV is
+	// read as 1 in V and equals, keys, groups and orders with a 1 V the Source also serves. Inside the
+	// engine, every BaseUnit is a unit's name, never a prefixed spelling. A Source that answers a
+	// lookup, a pushed conjunction or a filter for the engine is asked by the folded value and has to
+	// answer by it: asked for 1 V, it finds the 1000 mV it holds. A host that normalizes upstream
+	// (agni's C24) keeps working unchanged.
 	//
 	// Distinct from the `param.unit` RELATION, which reports what the vendor PRINTED ("mV") for a
 	// human checking a citation. This says what the number IS in, for a machine comparing it.

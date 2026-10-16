@@ -172,25 +172,58 @@ func genUnits(f genFacts) []string {
 	h := fnv.New64a()
 	fmt.Fprint(h, f.n, f.edges, f.weights)
 	rnd := rand.New(rand.NewSource(int64(h.Sum64())))
+	var units []string
 	switch p := rnd.Float64(); {
 	case p < 0.7:
 		return nil
 	case p < 0.85:
-		return slices.Repeat([]string{"V"}, f.n)
+		units = slices.Repeat([]string{"V"}, f.n)
 	default:
-		units := make([]string, f.n)
+		units = make([]string, f.n)
 		for i := range units {
 			units[i] = []string{"V", "A", ""}[rnd.Intn(3)]
 		}
-		return units
 	}
+	// Half of these spell their volts other ways now and then, which the Base folds back to V as it
+	// reads them (#205). Drawn after the units, so a graph's units are what they were.
+	if rnd.Float64() < 0.5 {
+		for i, u := range units {
+			if u == "V" {
+				units[i] = voltSpellings[rnd.Intn(len(voltSpellings))]
+			}
+		}
+	}
+	return units
+}
+
+// voltSpellings are the ways a weight in volts is served (#205): as it is, prefixed (w V as w*1000
+// mV or w/1000 kV) and as a product the vocabulary names V. Each folds to w V exactly.
+var voltSpellings = []string{"V", "mV", "kV", "A*ohm"}
+
+// folded is the unit u reads as once the Base folds it, V for each of voltSpellings.
+func folded(u string) string {
+	if slices.Contains(voltSpellings, u) {
+		return "V"
+	}
+	return u
 }
 
 // mixedUnits reports whether the weights carry more than one unit, or a unit beside none, which
-// Soufflé can't express: its numbers have no units.
+// Soufflé can't express: its numbers have no units. A unit counts as it reads once folded, so mV and
+// V are one.
 func (f genFacts) mixedUnits() bool {
 	for _, u := range f.units {
-		if u != f.units[0] {
+		if folded(u) != folded(f.units[0]) {
+			return true
+		}
+	}
+	return false
+}
+
+// prefixed reports whether a weight is served in a unit the Base folds (#205).
+func (f genFacts) prefixed() bool {
+	for _, u := range f.units {
+		if folded(u) != u {
 			return true
 		}
 	}
@@ -206,7 +239,14 @@ func (f genFacts) source() *ns.MemSource {
 		if f.units != nil {
 			unit = f.units[i]
 		}
-		src.Add("weight", ns.Tuple{Vals: []ns.Value{name(i), ns.NU(float64(f.weights[i]), unit)}})
+		w := float64(f.weights[i])
+		switch unit {
+		case "mV":
+			w *= 1000
+		case "kV":
+			w /= 1000
+		}
+		src.Add("weight", ns.Tuple{Vals: []ns.Value{name(i), ns.NU(w, unit)}})
 	}
 	for _, e := range f.edges {
 		src.Add("edge", ns.Tuple{Vals: []ns.Value{name(e[0]), name(e[1])}, Cites: []string{fmt.Sprintf("edge:%d-%d", e[0], e[1])}})
@@ -781,6 +821,11 @@ func (c genCase) check() (genOutcome, string) {
 		return genDisagreed, diff
 	}
 	countUnitAnswers(want)
+	if c.facts.prefixed() {
+		if diff := checkFolded(want); diff != "" {
+			return genDisagreed, diff
+		}
+	}
 	if diff := agreeLookingUp(q, b, want, werr, c.opts()); diff != "" {
 		return genDisagreed, diff
 	}
@@ -860,6 +905,29 @@ func countUnitAnswers(rows []Row) {
 	if mixed {
 		mixedAnswers++
 	}
+}
+
+// foldedAnswers counts the answers of programs over weights served in mV, kV or A*ohm that hold a
+// number in V, for the control that folded values reach the goals (#205).
+var foldedAnswers int
+
+// checkFolded fails an answer, over weights served in other spellings of volts, that holds one of
+// those spellings rather than V: every evaluator reads values through one fold, so only this (and the
+// Soufflé step, which sees the folded numbers) would notice it missing.
+func checkFolded(rows []Row) string {
+	inV := false
+	for _, r := range rows {
+		for v, val := range r.Bind {
+			if folded(val.BaseUnit) != val.BaseUnit {
+				return fmt.Sprintf("answer column %s holds %s %s, a spelling the Base folds to %s", v, val.S, val.BaseUnit, folded(val.BaseUnit))
+			}
+			inV = inV || val.BaseUnit == "V"
+		}
+	}
+	if inV {
+		foldedAnswers++
+	}
+	return ""
 }
 
 // agreeLookingUp runs q over b's facts through a Source answering lookups (#126), and the planned
@@ -1091,7 +1159,7 @@ func agreePartitioned(q Query, b *Base, want []Row, werr error, opts []Option) s
 	const n = 3
 	deal := func(rel string, v ns.Value) int {
 		s, _ := b.src.Schema(rel)
-		read := normalizeTuples([]ns.Tuple{{Vals: []ns.Value{v}}}, s.Types[:min(1, len(s.Types))])[0].Vals[0]
+		read := normalizeTuples(stdUnits, []ns.Tuple{{Vals: []ns.Value{v}}}, s.Types[:min(1, len(s.Types))])[0].Vals[0]
 		h := 0
 		for _, r := range valueKey(read) {
 			h = h*31 + int(r)
@@ -1416,7 +1484,7 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 		first, seeds = int64(s), 1
 	}
 	compared, known, skipped, failed := map[string]int{}, map[int]int{}, 0, 0
-	lookedUpPrograms, federatedPrograms, batchedPrograms, pushedPrograms, partitionedPrograms, walkedPrograms, unitAnswers, mixedAnswers = 0, 0, 0, 0, 0, 0, 0, 0
+	lookedUpPrograms, federatedPrograms, batchedPrograms, pushedPrograms, partitionedPrograms, walkedPrograms, unitAnswers, mixedAnswers, foldedAnswers = 0, 0, 0, 0, 0, 0, 0, 0, 0
 	pagedPrograms, summarizedPrograms, batchPushedPrograms, stepWalkedPrograms, streamedPrograms, partitionedBatchPrograms, alonePushedPrograms = 0, 0, 0, 0, 0, 0, 0
 	withUnits := 0
 	for seed := first; seed < first+int64(seeds); seed++ {
@@ -1466,8 +1534,8 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 			issues = append(issues, fmt.Sprintf("#%d %d", k.issue, known[k.issue]))
 		}
 	}
-	t.Logf("%d seeds\n compared (plain/witnessed): %s\n skipped over budget: %d\n known disagreements, counted not failed: %s\n units: %d programs' facts carry them; %d answers hold a number with a unit, %d an aggregate absent over mixed units",
-		seeds, strings.Join(counts, ", "), skipped, strings.Join(issues, ", "), withUnits, unitAnswers, mixedAnswers)
+	t.Logf("%d seeds\n compared (plain/witnessed): %s\n skipped over budget: %d\n known disagreements, counted not failed: %s\n units: %d programs' facts carry them; %d answers hold a number with a unit, %d an aggregate absent over mixed units, %d folded from mV, kV or A*ohm",
+		seeds, strings.Join(counts, ", "), skipped, strings.Join(issues, ", "), withUnits, unitAnswers, mixedAnswers, foldedAnswers)
 	if seeds < 50 {
 		return
 	}
@@ -1515,6 +1583,9 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 	}
 	if unitAnswers < seeds/100 {
 		t.Errorf("control: %d answers held a unit over %d seeds: units aren't reaching the goals", unitAnswers, seeds)
+	}
+	if foldedAnswers == 0 {
+		t.Errorf("control: no answer over weights served in mV, kV or A*ohm held a number in V, over %d seeds", seeds)
 	}
 	// An aggregate over mixed units is rare (about 30 in 5000 seeds' two runs), so CI's 300 seeds
 	// needn't meet one; ./selfcheck.sh's 5000 do, which is what catches a unit-blind aggregate.

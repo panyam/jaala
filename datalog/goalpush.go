@@ -197,11 +197,11 @@ func (b *Base) summarize(g *pushGroup, c ns.Conjunction, s ns.Summary) ([]summar
 	}
 	typeOf := g.varTypes(b, c)
 	read := func(v ns.Value, n int) ns.Value {
-		return normalizeTuples([]ns.Tuple{{Vals: []ns.Value{v}}}, typeOf[n])[0].Vals[0]
+		return normalizeTuples(b.units(), []ns.Tuple{{Vals: []ns.Value{v}}}, typeOf[n])[0].Vals[0]
 	}
 	ctx := r.context()
 	var rows []summaryRow
-	for row, err := range b.summarizer.Summarize(ctx, c, s) {
+	for row, err := range b.summarizer.Summarize(ctx, b.withUnits(c), s) {
 		if err != nil {
 			return nil, pushErr(ctx, g.text, err)
 		}
@@ -224,6 +224,7 @@ func (b *Base) summarize(g *pushGroup, c ns.Conjunction, s ns.Summary) ([]summar
 				if !e.Max.Absent {
 					e.Max = read(e.Max, s.Extremes[i])
 				}
+				_, e.Unit, _ = b.units().Fold(1, e.Unit) // mV's extremes are V's, as their values are (#205)
 				ext[i] = append(ext[i], e)
 			}
 		}

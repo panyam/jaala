@@ -15,6 +15,11 @@ import (
 // group is at least two literals, or one with nothing bound and no constant that the store filters
 // better than a whole read: a variable repeated in it, or a comparison going with it (#263). A literal
 // with a constant or a bound variable is a Lookup.
+//
+// A conjunction's constants, Inputs, Bindings and comparison operands are values as the engine holds
+// them, in folded units (#205), so a store serving prefixed values compares and joins them folded, as
+// a LookupSource matches them: 1 V meets the 1000 mV it holds, and 500 mV passes ?v > 0.4 V. That
+// goes for a FilterSource's filters and a SummarySource's groups too.
 type PushSource interface {
 	// Pushes reports whether the store evaluates c. The planner asks while planning, growing a group
 	// one literal at a time and offering it with its comparisons and then without, so it must be
@@ -93,6 +98,11 @@ type Conjunction struct {
 	// store that pushes c with Inputs also pushes its suffixes with the Inputs they still read.
 	Inputs   []int
 	Bindings [][]Value
+	// Units is the unit table the engine folds values by (#205), set on every conjunction it sends:
+	// the conjunction's values are folded by it, and a store holding prefixed values can fold its own
+	// with Units.Fold to compare. A Federation folds by it the values it carries from one member to
+	// another, so 4 kV from one meets 4000 V in the next. Nil folds nothing.
+	Units *Units
 }
 
 // A Page limits a pushed goal to the matches behind its first Limit answer rows. An answer row is a
@@ -159,7 +169,8 @@ type Summary struct {
 // number there, NaN whether one of those is NaN, and Min and Max the smallest and largest of the rest
 // by value, absent when every one is NaN. A match whose value isn't a number (text, absent) counts in
 // Matches only. A row has one Extreme per unit its numbers are in; a store may report a unit in
-// several, and the engine combines them.
+// several, and the engine combines them. A prefixed Unit, with its Min and Max, is folded as a value
+// is (#205), so extremes in mV and in V combine as one unit.
 type Extreme struct {
 	Unit     string
 	Numbers  int

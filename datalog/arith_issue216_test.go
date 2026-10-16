@@ -202,14 +202,18 @@ func TestIssue216CanonicalRelationModes(t *testing.T) {
 				{"old_result_all_bound", `num.sub(5V, 3.3V, 1.7000000000000002V)`, "", 0, 0},
 				{"scaled_to_b", `num.sub(5000mV, ?b, 1.7V) => ?b`, "b", 3.3, 1},
 				{"scaled_exact_to_a", `num.sub(?a, 5000mV, 1.7V) => ?a`, "a", 6.7, 1},
-				// 3300mV normalizes to 3.3000000000000003V, a different float from 3.3V.
+				// 3.3000000000000003V, what 3300mV read as before #205, is a different float from 3.3V.
 				// Its forward result cannot be simplified while preserving both operands.
-				{"scaled_to_a", `num.sub(?a, 3300mV, 1.7V) => ?a`, "", 0, 0},
-				{"scaled_all_bound", `num.sub(5V, 3300mV, 1.7V)`, "", 0, 0},
-				{"scaled_forward", `num.sub(5V, 3300mV, ?c) => ?c`, "c", 1.6999999999999997, 1},
-				{"scaled_inverse_own_result", `num.sub(?a, 3300mV, 1.6999999999999997V) => ?a`, "a", 5, 1},
+				{"scaled_to_a", `num.sub(?a, 3.3000000000000003V, 1.7V) => ?a`, "", 0, 0},
+				{"scaled_all_bound", `num.sub(5V, 3.3000000000000003V, 1.7V)`, "", 0, 0},
+				{"scaled_forward", `num.sub(5V, 3.3000000000000003V, ?c) => ?c`, "c", 1.6999999999999997, 1},
+				{"scaled_inverse_own_result", `num.sub(?a, 3.3000000000000003V, 1.6999999999999997V) => ?a`, "a", 5, 1},
 				{"scaled_to_b_own_result", `num.sub(5V, ?b, 1.6999999999999997V) => ?b`, "b", 3.3000000000000003, 1},
-				{"scaled_all_bound_own_result", `num.sub(5V, 3300mV, 1.6999999999999997V)`, "", 0, 1},
+				{"scaled_all_bound_own_result", `num.sub(5V, 3.3000000000000003V, 1.6999999999999997V)`, "", 0, 1},
+				// 3300mV reads as the 3.3V it spells (#205), so it answers as 3.3V does.
+				{"milli_to_a", `num.sub(?a, 3300mV, 1.7V) => ?a`, "a", 5, 1},
+				{"milli_all_bound", `num.sub(5V, 3300mV, 1.7V)`, "", 0, 1},
+				{"milli_forward", `num.sub(5V, 3300mV, ?c) => ?c`, "c", 1.7, 1},
 			} {
 				t.Run(c.name, func(t *testing.T) {
 					rows := issue216Eval(t, evaluator.ev, ns.NewMemSource(), c.query)

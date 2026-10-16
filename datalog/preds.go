@@ -69,7 +69,7 @@ func extendBuiltin(bi ns.Builtin, atom *Atom, bnd *binding, b *Base, yield func(
 		if len(vals) != len(atom.Args) {
 			return fmt.Errorf("query: internal: %s emitted %d values for %d arguments", atom.Relation, len(vals), len(atom.Args))
 		}
-		vals, _ = normalizeValues(vals, bi.Types) // read as its declared types, as a relation's tuples are
+		vals, _ = normalizeValues(b.units(), vals, bi.Types) // read as its declared types, as a relation's tuples are
 		if !unify(atom.Args, ns.Tuple{Vals: vals, Cites: cites}, bnd) {
 			return nil
 		}
