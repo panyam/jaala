@@ -14,5 +14,6 @@ The [tutorials]({{.Site.PathPrefix}}/tutorials/) teach the language in order. Th
 7. [Host options](host-options/) covers `Bind`, `Budget`, `Explain` and the context, from Go.
 8. [Modules and the vocabulary](modules-and-vocabulary/) covers paths, private members, docs, signatures and module errors.
 9. [Absent values](absent-values/) covers a field the source didn't state.
+10. [Versions](versions/) covers a source serving several versions of its facts, `At` and `Diff`.
 
-The last three are written in Go, as `Example` functions that `go test` runs, like the [Go tutorial]({{.Site.PathPrefix}}/tutorials/05-go-host/).
+The last four are written in Go, as `Example` functions that `go test` runs, like the [Go tutorial]({{.Site.PathPrefix}}/tutorials/05-go-host/).
