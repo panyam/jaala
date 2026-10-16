@@ -369,7 +369,9 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   applies from 1000 seeds. Run `go test ./datalog` at its default before pushing a new control.
   A control can be satisfied by another path to the same call: #263's count of one-atom pushes read
   above 0 with lone pushes disabled, because a Federation's continuations are one-atom pushes too, so
-  it counts only those with no constant or `Inputs`. Two Go traps that made mutations survive: the
+  it counts only those with no constant or `Inputs`. A path that only a cache hit takes needs a
+  fixture asking one key twice: #317's mutation dropping a kept lookup's versions survived until a
+  second rule asked the first's `edge("c", ?y)` again. Two Go traps that made mutations survive: the
   constant `-0.0` is plain 0 (use `math.Copysign(0, -1)`), and a peak-heap test streaming many tuples
   measures uncollected garbage under `-race` unless it sets `debug.SetGCPercent(5)` while sampling.
   **Inlining hides rewrites**: a single-rule relation is folded into its caller, so a test of how
@@ -771,7 +773,8 @@ GitHub retargets the next to `main` when its base merges; confirm each merge com
 `main` (#275 did): its issue stays open until the lower PR merges, and is closed by hand then. Run each branch's `./selfcheck.sh` in a detached worktree
 (`git worktree add --detach <dir> <branch>`) so the checkout stays free for the next branch, and
 remove the worktree after. A selfcheck run on the working tree while editing it tests half-written
-code. Run it in the background as `./selfcheck.sh > log 2>&1` with nothing after it: a trailing
+code, and so does one whose tree gets a scratch test dropped in (a before/after capture belongs in
+another worktree). Run it in the background as `./selfcheck.sh > log 2>&1` with nothing after it: a trailing
 `; echo exit $?` made the task report 0 for a selfcheck that failed (#209's, which found #273).
 When several branches are in flight (parallel agents), run their selfchecks one at a time, and
 timings only on an otherwise idle machine; never `pkill -f selfcheck.sh`, which kills every run on

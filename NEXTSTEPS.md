@@ -5,17 +5,15 @@ Maintained by /checkpoint: one thread per branch, pruned when the branch merges.
 
 ## At a glance
 
-- No open branches. `main` (c8d4564) holds two merges since v0.1.62: #318 (#312, `ns.SourceAt`, a
-  version served as a store, and `Federation.Timed`) and #320 (docs: stores, predicates and
-  generators, architecture of stores). Unreleased: agni takes tags only, so it can't serve revisions
-  from stores until v0.1.63. Next: tag it when the owner says, after the CI set and `./selfcheck.sh`
-  on merged `main` (#318 and #320 never ran together).
-- No active mission. Ready off-mission: #319 (P3, a recursive rule reading through a one-rule
-  helper isn't walked). Waiting: #317 (`Across` through stores, an `Across` cache) until a host
-  asks `Across` over a history in stores; #288 (session overlays) after #287 and agni#1027's
-  trigger, and it will wrap the per-version Source #318 added. Next: `retriage` to start a mission
-  around agni serving revisions from stores (agni#971, #999, #1007) once agni picks up v0.1.63.
-- This run: dropped the v0.1.60-era notes; merged #315, #316 (v0.1.62), #318, #320.
+- No open branches. `main` holds #328 (#317: `Across` looks a bound call up through an
+  `ns.TimedLookupSource`; #319: a recursion through a renaming helper walks) since v0.1.63. Next:
+  tag v0.1.64 after the CI set and `./selfcheck.sh` on `main`, with the upgrade note on #317 (a
+  rename helper now shows `inlined` in `Explain`).
+- No active mission, and nothing ready. Waiting: #327 (`Across` kept between Evals, and batches,
+  pushes, walks and streams across versions) until a host times `Across` over a store; #288
+  (session overlays) after #287 and agni#1027. Next: `retriage` to start a mission around agni
+  serving revisions from stores (agni#971, #999, #1007) once agni moves past v0.1.62.
+- This run: tagged v0.1.63; merged #328, closing #317 and #319; filed #327.
 
 ## Across threads
 
