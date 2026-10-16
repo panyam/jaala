@@ -53,7 +53,11 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   so `Locate(text, err)` finds the call or variable in the text, and `nl.Explain` writes it for a
   model. A new check builds one (`checkErr(kind, msg)`, `b.arityErr`, `b.unknownErr`), and
   `TestBrokenProgramsFailTheSameWay` requires each broken literal's error to be one Locate finds.
-  `nl` (the card, Explain) imports `ns` and `datalog`, and nothing in jaala imports it.
+  `nl` (the card, Explain, `Translate`) imports `ns` and `datalog`, and nothing in jaala imports it.
+  `Translate` (#325) runs no model: `Model` and `Grounder` are the host's, a refused draft goes back
+  with `Explain`'s text, a `Complete` error or an empty answer (over `Options.Base`) moves straight to
+  the fallback, which starts a fresh conversation, and `Try.Kind` adds `parse`, `eval`, `empty` and
+  `model` to a `CheckError`'s kinds. Its tests script the model (`scripted`), so tries are exact.
 - **`Base` is shared across concurrent `Eval`s.** Anything mutable reachable from it must be
   per-query (the `idb*` fields on Eval's shallow copy), atomic (`work`), or locked (`edbCache`,
   `derivedCache`, the vocabulary's `Memo` entries). `TestConcurrentEvalsShareOneCheck` and

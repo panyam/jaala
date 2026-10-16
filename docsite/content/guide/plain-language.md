@@ -1,6 +1,6 @@
 ---
 title: "Asking through a model"
-description: "What a host hands a model so it can write a program from a question: the vocabulary as a card, and errors that say where the program is wrong and how to fix it."
+description: "What a host hands a model so it can write a program from a question: the vocabulary as a card, errors that say where the program is wrong and how to fix it, and the loop that retries until a program checks."
 prev: {url: "/jaala/guide/versions/", title: "Versions"}
 ---
 
@@ -27,3 +27,13 @@ A program that can't run as written fails `Validate` and `Eval` with a `*datalog
 - `Relation`, `Args`, `Var` and `Rule` say what the error is about.
 
 A `Query` carries no positions: a host can build one in Go, and two parses of one text compare equal. So `datalog.Locate(text, err)` finds the place in the text instead, the call to `Relation` with `Args` arguments (in `Rule`'s clauses when it names one), else the first `?Var`. It returns a `ParseError`'s own position too, so one call places any error. `nl.Explain(text, err)` writes all of it the way a model reads it, the second example above: the message, the line with a caret under the place, and the fix.
+
+## The loop
+
+`nl.Translate` puts the two together ([#325](https://github.com/panyam/jaala/issues/325)). It asks the host's model for a program, parses and checks it, and when it doesn't check, sends the draft back with `Explain`'s text and asks again, up to `Options.MaxTries` times (3 by default). The third example above is a scripted model getting a name wrong once: the second prompt carries the first draft and its error, and the second draft checks. A reply wrapped in a Markdown code fence is read from inside the fence.
+
+jaala runs no model. A host implements `nl.Model`, a name and a `Complete` taking an `nl.Prompt`: a `Prefix` holding the card and a few lines of instructions, the same for every question over one vocabulary so a client can send it as a cached prefix, and the conversation so far as `Turns`. A host that can find the names in a question, as Declaire's `name.find` turns a short name into ranked ids, implements `nl.Grounder`, and the candidates go after the question with their values quoted, so the model copies a value rather than spelling it.
+
+`Options.Fallback` is a second model, usually a bigger one, asked once the first runs out of tries. It starts a fresh conversation with the question, since the first model's drafts would only cost it tokens. With `Options.Base`, a program that checks is run too (with `Options.Eval`'s options, such as a `Budget`): an error is fed back like a check error, and a program answering nothing goes straight to the fallback, told that one did. A `Complete` that fails moves to the fallback as well.
+
+`Translate` returns the accepted `nl.Program` (its text, `Query`, rows when it ran, and the model that wrote it) and an `nl.Trace` of every try, also when it fails: the model, the text, the error and its `Kind`, tokens in, out and cached, and latency. `Kind` is a `CheckError`'s kind, or `parse`, `eval`, `empty` or `model`, so a host counts where its retries went without reading messages.
