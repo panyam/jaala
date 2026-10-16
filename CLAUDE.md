@@ -138,8 +138,12 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   group (`deltaFirst`) solves it literal by literal (`solveUnpushed`); `scanSize` sizes a pushed
   literal 0 so a round keeps starting from it. A Federation of one member pushes what it pushes; one
   built with `NewPartitionedFederation` pushes across members (#238): `pushAcross` asks each member
-  `Holds` allows for the first atom with `Partial` (every prefix of its matches too), with `Inputs` the
-  bindings `routed` sends it (#268), and `continuePrefixes` sends the rest of the conjunction once per
+  `Holds` allows for the first atom with `Partial` (every prefix of its matches too) when another
+  member's `Holds` allows a later atom (`continued`, #307; otherwise the conjunction whole), with
+  `Inputs` the bindings `routed` sends it (#268, trying `Holds` with only the atom's constants before
+  any binding), a conjunction with an atom no member holds is skipped (`heldSomewhere`), and a prefix
+  continues only where its next atom is held (`othersHold`). That leans on `Member.Holds`' promise
+  that fewer bound values never answer false where more would answer true. Then `continuePrefixes` sends the rest of the conjunction once per
   member for every prefix of as many atoms, their values as its `Bindings` (`restAfter`), joining each
   row back to its prefixes by `joinKey`, which must equate what a member's comparison does; a member
   refusing `Inputs` is asked per prefix (`Conjunction.after` substitutes its values). A match is found
