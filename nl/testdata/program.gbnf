@@ -16,7 +16,8 @@ unary ::= operand | "-" variable | "-" call | "-(" sum ")" | "(" sum ")" | call
 operand ::= variable | string | unumber
 call ::= callname "(" (sum (", " sum)*) ")"
 callname ::= ident ("." ident)*
-arith ::= product ((" + " | " - ") product)+ | unary ((" * " | " / ") unary)+ | "-" variable | "-" call | ident ("." ident)+ "(" (sum (", " sum)*) ")"
+arith ::= product ((" + " | " - ") product)+ | unary ((" * " | " / ") unary)+ | "-" variable | "-" call | dcall
+dcall ::= ident ("." ident)+ "(" (sum (", " sum)*) ")"
 bodyagg ::= "?" vname " = " aggregate " : { " (inner (", " inner)*) " }"
 inner ::= atom | "not " atom | comparison
 aggregate ::= aggfn "(" "distinct "? "?" vname ")"

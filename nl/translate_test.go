@@ -253,3 +253,34 @@ func TestTranslateStopsWhenCancelled(t *testing.T) {
 		t.Errorf("cancelled: %v, asked %d times", err, len(m.asked))
 	}
 }
+
+// Every prompt carries the vocabulary's grammar, for a model whose decoder takes one, unless the host
+// picks another or none.
+func TestTranslateHandsTheModelTheVocabularysGrammar(t *testing.T) {
+	v := vocabulary(t)
+	want, err := nl.GrammarFor(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	strict, _ := nl.GrammarFor(v, nl.GoalOnly())
+	for _, c := range []struct {
+		name string
+		o    nl.Options
+		want string
+	}{
+		{"default", nl.Options{}, want},
+		{"chosen", nl.Options{Grammar: strict}, strict},
+		{"none", nl.Options{NoGrammar: true, Grammar: strict}, ""},
+	} {
+		m := model("small", `egde("a", ?b) => ?b`, `edge("a", ?b) => ?b`)
+		if _, _, err := nl.Translate(context.Background(), "q", v, nil, m, c.o); err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if len(m.asked) != 2 || m.asked[0].Grammar != c.want || m.asked[1].Grammar != c.want {
+			t.Errorf("%s: the prompts carried another grammar", c.name)
+		}
+	}
+	if want == strict || !strings.HasPrefix(want, "root ::= ") {
+		t.Fatal("control: the default and goal-only grammars can't be told apart")
+	}
+}
