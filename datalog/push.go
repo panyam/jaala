@@ -56,7 +56,7 @@ func pushConjunctions(b *Base, q Query) Query {
 // pushBody groups body's base literals for the Source: each literal that binds nothing bound before
 // it starts a group, which takes each later literal sharing a variable with the group and none with a
 // literal before it outside the group, for as long as the Source pushes the group (ns.PushSource's
-// Pushes). A group of at least two literals becomes one literal, at its first literal's place, and so
+// Pushes) and until a literal outside it only filters the group (see filtersGroup). A group of at least two literals becomes one literal, at its first literal's place, and so
 // does one literal the store filters better than a whole read (#263, filtersAlone).
 func pushBody(b *Base, body Body) Body {
 	pos, negs := splitNegations(body.Literals)
@@ -103,6 +103,9 @@ func growGroup(b *Base, pos []Literal, i int, bound map[Var]bool, used []bool) *
 				bindAll(lit.Pos, vars)
 				continue
 			}
+		}
+		if filtersGroup(lit.Pos, vars, bound) {
+			break // what follows would join before this filter narrows the group (#291)
 		}
 		bindAll(lit.Pos, outside)
 	}
@@ -187,6 +190,20 @@ func (b *Base) pushable(lit Literal) bool {
 // the group binds.
 func pushOperand(t Term, vars map[Var]bool) bool {
 	return t.Const != nil || (t.Agg == nil && t.Expr == nil && t.Var != "" && vars[t.Var])
+}
+
+// filtersGroup reports whether a, outside a group, reads one of the group's variables and binds
+// nothing new: it only narrows what the group found, so a literal after it joins after the filter. A
+// group growing past it made the store join every row the filter would have dropped (#291: Declaire's
+// http.path pushed edge, attr and an argument edge over every callsite, where http.sends(?c) kept
+// 1,228 of 80,491).
+func filtersGroup(a *Atom, vars, bound map[Var]bool) bool {
+	for _, t := range a.Args {
+		if t.Var != "" && t.Var != "_" && !vars[t.Var] && !bound[t.Var] {
+			return false
+		}
+	}
+	return sharesVar(a, vars)
 }
 
 func sharesVar(a *Atom, vars map[Var]bool) bool {

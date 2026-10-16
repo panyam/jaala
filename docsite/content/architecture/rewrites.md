@@ -36,6 +36,7 @@ Demand stands aside:
 - at a relation whose rule aggregates, which is read in full, since a caller's binding names no value of the body;
 - when demand pushed into a `not` makes the program unstratifiable, by reading negated relations in full instead ([#34](https://github.com/panyam/jaala/issues/34)), and when that still doesn't stratify, by not rewriting at all ([#93](https://github.com/panyam/jaala/issues/93));
 - at a relation it would derive under two adornments, whose copies can cover the whole relation twice ([#96](https://github.com/panyam/jaala/issues/96)), which is read in full while the rest keeps its demand ([#290](https://github.com/panyam/jaala/issues/290));
+- at a call whose bound arguments all come from a generator called with nothing bound, which lists every value, so the demand would be the whole relation ([#291](https://github.com/panyam/jaala/issues/291));
 - at a relation whose rules are only a host's generators, each runnable from the rule's own constants, such as `sends(?c) :- graph.reach(?c, "net/http.Get", "calls")`: read in full it calls each generator once, and demanded, once per value its callers bind ([#290](https://github.com/panyam/jaala/issues/290));
 - from factoring, for a relation with no base rule to start the walk from ([#91](https://github.com/panyam/jaala/issues/91)).
 
