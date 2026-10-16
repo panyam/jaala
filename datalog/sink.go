@@ -294,12 +294,18 @@ type aggregator struct {
 	having    []Compare
 	canonical bool // read each value as canonicalAnswers writes it, as a goal's answers are
 	groups    map[string]*aggGroup
+	// across is, under Across (#181), the versions asked about; each group is then held as segments,
+	// each reduced over the bindings holding in its versions (see addAcross), filed in groups by a
+	// key of their own and listed by their group's key in segs.
+	across ns.VersionSet
+	segs   map[string][]*aggGroup
 }
 
 type aggGroup struct {
 	keyVals []ns.Value
 	cites   map[string]bool
 	accs    []accumulator
+	vs      ns.VersionSet // under Across, the versions this segment of its group holds in
 }
 
 func newAggregator(sel []Term, having []Compare, canonical bool) *aggregator {
@@ -322,10 +328,16 @@ func newAggregator(sel []Term, having []Compare, canonical bool) *aggregator {
 	return ag
 }
 
-func (ag *aggregator) newGroup() *aggGroup {
+// newGroup is an empty group, keyed by bnd's values, or by nothing for a nil bnd.
+func (ag *aggregator) newGroup(bnd *binding) *aggGroup {
 	g := &aggGroup{keyVals: make([]ns.Value, len(ag.keyVars)), cites: map[string]bool{}, accs: make([]accumulator, len(ag.aggs))}
 	for i, a := range ag.aggs {
 		g.accs[i].a = *a.Agg
+	}
+	if bnd != nil {
+		for i, kv := range ag.keyVars {
+			g.keyVals[i], _ = ag.value(bnd, kv)
+		}
 	}
 	return g
 }
@@ -347,19 +359,24 @@ func (ag *aggregator) addN(bnd *binding, n int) { ag.addSummary(bnd, n, nil) }
 // unit rather than a value (#252).
 func (ag *aggregator) addSummary(bnd *binding, n int, ext map[Var][]ns.Extreme) {
 	key := groupKeyOf(ag.keyVars, bnd)
+	if ag.across != nil {
+		ag.addAcross(key, bnd, n, ext)
+		return
+	}
 	g := ag.groups[key]
 	if g == nil {
-		g = ag.newGroup()
-		for i, kv := range ag.keyVars {
-			g.keyVals[i], _ = ag.value(bnd, kv)
-		}
+		g = ag.newGroup(bnd)
 		ag.groups[key] = g
-	} else {
-		// One key, several spellings: keep the one ordering first, so arrival doesn't decide.
-		for i, kv := range ag.keyVars {
-			if v, _ := ag.value(bnd, kv); valueBefore(v, g.keyVals[i]) {
-				g.keyVals[i] = v
-			}
+	}
+	ag.addTo(g, bnd, n, ext)
+}
+
+// addTo adds n bindings like bnd to the group g (see addSummary).
+func (ag *aggregator) addTo(g *aggGroup, bnd *binding, n int, ext map[Var][]ns.Extreme) {
+	// One key, several spellings: keep the one ordering first, so arrival doesn't decide.
+	for i, kv := range ag.keyVars {
+		if v, _ := ag.value(bnd, kv); valueBefore(v, g.keyVals[i]) {
+			g.keyVals[i] = v
 		}
 	}
 	for _, c := range bnd.cites {
@@ -381,49 +398,60 @@ func (ag *aggregator) addSummary(bnd *binding, n int, ext map[Var][]ns.Extreme) 
 // With no group-by column the whole answer is one group, and it exists even when nothing matched, so
 // count over nothing answers 0 rather than no rows, as SQL's COUNT(*) does (agni issue 726).
 func (ag *aggregator) rows() ([]Row, error) {
+	if ag.across != nil {
+		return ag.rowsAcross()
+	}
 	if len(ag.keyVars) == 0 && len(ag.groups) == 0 {
-		ag.groups[""] = ag.newGroup()
+		ag.groups[""] = ag.newGroup(nil)
 	}
 	out := make([]Row, 0, len(ag.groups))
 	for _, g := range ag.groups {
-		row := Row{Bind: make(map[Var]ns.Value, len(ag.keyVars)+len(ag.aggs))}
-		for i, kv := range ag.keyVars {
-			row.Bind[kv] = g.keyVals[i]
-		}
-		cites := make([]string, 0, len(g.cites))
-		for c := range g.cites {
-			cites = append(cites, c)
-		}
-		sort.Strings(cites)
-		row.Cites = cites
-		for i, a := range ag.aggs {
-			v, why := g.accs[i].result()
-			row.Bind[colLabel(a)] = v
-			if why != "" {
-				if row.Why == nil {
-					row.Why = map[Var]string{}
-				}
-				row.Why[colLabel(a)] = why
-			}
-		}
-		keep, err := passesHaving(row, ag.having)
+		row, keep, err := ag.rowOf(g)
 		if err != nil {
 			return nil, err
 		}
-		if !keep {
-			continue
+		if keep {
+			out = append(out, row)
 		}
-		// Drop the columns only a having asked for: Row.Bind is public, and a consumer walking it
-		// would otherwise find a column the query never asked for.
-		for _, h := range ag.having {
-			if lbl := colLabel(h.Left); !ag.selected[lbl] {
-				delete(row.Bind, lbl)
-				delete(row.Why, lbl)
-			}
-		}
-		out = append(out, row)
 	}
 	return dedupSort(out, selKeys(ag.sel)), nil
+}
+
+// rowOf reduces the group g to its row, and whether the having keeps it.
+func (ag *aggregator) rowOf(g *aggGroup) (Row, bool, error) {
+	row := Row{Bind: make(map[Var]ns.Value, len(ag.keyVars)+len(ag.aggs))}
+	for i, kv := range ag.keyVars {
+		row.Bind[kv] = g.keyVals[i]
+	}
+	cites := make([]string, 0, len(g.cites))
+	for c := range g.cites {
+		cites = append(cites, c)
+	}
+	sort.Strings(cites)
+	row.Cites = cites
+	for i, a := range ag.aggs {
+		v, why := g.accs[i].result()
+		row.Bind[colLabel(a)] = v
+		if why != "" {
+			if row.Why == nil {
+				row.Why = map[Var]string{}
+			}
+			row.Why[colLabel(a)] = why
+		}
+	}
+	keep, err := passesHaving(row, ag.having)
+	if err != nil || !keep {
+		return Row{}, false, err
+	}
+	// Drop the columns only a having asked for: Row.Bind is public, and a consumer walking it
+	// would otherwise find a column the query never asked for.
+	for _, h := range ag.having {
+		if lbl := colLabel(h.Left); !ag.selected[lbl] {
+			delete(row.Bind, lbl)
+			delete(row.Why, lbl)
+		}
+	}
+	return row, true, nil
 }
 
 // answerRow is one answer row while the goal is solved: its values in the answer's columns, as

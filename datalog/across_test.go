@@ -11,9 +11,9 @@ import (
 )
 
 // acrossPrograms counts the corpus programs Across answered with a row holding in some versions and
-// not others, the control that agreeAcross's sets tell versions apart; acrossRefused those it refused
-// for aggregating.
-var acrossPrograms, acrossRefused int
+// not others, the control that agreeAcross's sets tell versions apart, and acrossAggregates those of
+// them that aggregate (#181).
+var acrossPrograms, acrossAggregates int
 
 // agreeAcross requires every evaluator's Across answer over b's facts dealt across versions to hold,
 // for each version v, exactly the rows At(v) answers, and under CanonicalCites their citations and
@@ -34,10 +34,6 @@ func agreeAcross(q Query, b *Base, opts []Option) string {
 	partial := false
 	for _, ev := range []Evaluator{Naive{}, SemiNaive{WrittenOrder: true}, SemiNaive{}} {
 		got, err := ev.Eval(bg, q, MustBase(b.reg, timed), append(opts[:len(opts):len(opts)], Across(all))...)
-		if err != nil && strings.Contains(err.Error(), "Across can't evaluate an aggregate") {
-			acrossRefused++
-			return ""
-		}
 		if (err != nil) != anyErr {
 			return fmt.Sprintf("%T across versions errs %v where a version's own answer errs %v on %v", ev, err, anyErr, q)
 		}
@@ -70,6 +66,9 @@ func agreeAcross(q Query, b *Base, opts []Option) string {
 	}
 	if partial {
 		acrossPrograms++
+		if aggregates(q) {
+			acrossAggregates++
+		}
 	}
 	return ""
 }
@@ -139,8 +138,6 @@ func TestAcrossRefusesWhatItCannotAnswer(t *testing.T) {
 		{baseFor(std(versionedGraph())), q, []Option{Across(ns.IntervalSet{})}, "Across needs at least one version"},
 		{baseFor(std(versionedGraph())), q, []Option{Across(ns.Bits(1, 4, 5, 6))}, "Across names versions the Source doesn't serve: 4-6"},
 		{baseFor(std(versionedGraph())), q, []Option{Across(ns.Span(0, 3)), At(1)}, "At and Across can't both be given"},
-		{baseFor(std(versionedGraph())), mustParse(t, `edge(?a, ?b) => count(?a)`), []Option{Across(ns.Span(0, 3))}, "Across can't evaluate an aggregate yet"},
-		{baseFor(std(versionedGraph())), mustParse(t, `n(?a, ?c) :- edge(?a, _), ?c = count(?b) : { edge(?a, ?b) }; n(?a, ?c) => ?a, ?c`), []Option{Across(ns.Span(0, 3))}, "Across can't evaluate an aggregate yet"},
 	} {
 		if _, err := both(tc.q, tc.b, tc.opts...); err == nil || !strings.HasPrefix(err.Error(), "query: ") || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%v: %v, want %q", tc.q, err, tc.want)
@@ -250,5 +247,117 @@ func TestAcrossKeepsEachVersionsSpelling(t *testing.T) {
 		if len(rows) != 2 {
 			t.Errorf("control: %T answered %d rows, want one per spelling", ev, len(rows))
 		}
+	}
+}
+
+// aggregates reports whether q reduces anything, in its goal, a rule head or a rule body.
+func aggregates(q Query) bool {
+	if hasAggregate(q.Select) || len(q.Having) > 0 {
+		return true
+	}
+	for _, r := range q.Rules {
+		if r.aggregates() || strings.Contains(r.String(), ": {") {
+			return true
+		}
+	}
+	return false
+}
+
+// An aggregate across versions is cut where its inputs change: a count per version, segments that
+// reduce alike joined, and the versions nothing holds in answered as over nothing.
+func TestAcrossAggregatesPerSegment(t *testing.T) {
+	src := ns.NewTimedMemSource(ns.Span(0, 5))
+	src.Declare("pin", "part", "net")
+	src.Add("pin", ns.Span(1, 5), nil, ns.S("R1"), ns.S("GND"))
+	src.Add("pin", ns.Span(2, 4), nil, ns.S("R2"), ns.S("GND"))
+	src.Add("pin", ns.Span(3, 5), nil, ns.S("C1"), ns.S("GND"))
+	src.Add("pin", ns.Span(1, 3), nil, ns.S("C1"), ns.S("VCC"))
+	b := baseFor(std(src))
+	for _, tc := range []struct {
+		q    string
+		want []string
+	}{
+		// GND: 1 part in 1, 2 in 2, 3 in 3, 2 in 4. Nothing in 0, so no GND row there.
+		{`pin(?p, ?n) => ?n, count(?p)`, []string{"GND 1 [{1 2}]", "GND 2 [{2 3} {4 5}]", "GND 3 [{3 4}]", "VCC 1 [{1 3}]"}},
+		// With no group column, version 0 counts nothing, as At(0) answers.
+		{`pin(?p, "GND") => count(?p)`, []string{"0 [{0 1}]", "1 [{1 2}]", "2 [{2 3} {4 5}]", "3 [{3 4}]"}},
+		// Distinct counts keep their own seen values per segment: C1 counts once in 3, where it holds twice.
+		{`pin(?p, _) => count(distinct ?p)`, []string{"0 [{0 1}]", "2 [{1 2} {4 5}]", "3 [{2 4}]"}},
+		// A list keeps its own values per segment too.
+		{`pin(?p, "GND") => list(?p)`, []string{" [{0 1}]", "C1 R1 [{4 5}]", "C1 R1 R2 [{3 4}]", "R1 [{1 2}]", "R1 R2 [{2 3}]"}},
+		{`n(?n, count(?p)) :- pin(?p, ?n); n(?n, ?c), ?c > 1 => ?n, ?c`, []string{"GND 2 [{2 3} {4 5}]", "GND 3 [{3 4}]"}},
+		{`m(?n, ?c) :- pin(_, ?n), ?c = count(?p) : { pin(?p, ?n) }; m(?n, ?c), ?c > 1 => ?n, ?c`, []string{"GND 2 [{2 3} {4 5}]", "GND 3 [{3 4}]"}},
+	} {
+		q := mustParse(t, tc.q)
+		for _, ev := range []Evaluator{Naive{}, SemiNaive{WrittenOrder: true}, SemiNaive{}} {
+			rows, err := ev.Eval(bg, q, b, Across(ns.Span(0, 5)))
+			if err != nil {
+				t.Fatalf("%s: %v", tc.q, err)
+			}
+			var got []string
+			for _, r := range rows {
+				var vals []string
+				for _, c := range q.Select {
+					vals = append(vals, r.Bind[colLabel(c)].S)
+				}
+				got = append(got, fmt.Sprintf("%s %v", strings.Join(vals, " "), slices.Collect(r.Versions.Ranges())))
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("%T %s:\n got %v\nwant %v", ev, tc.q, got, tc.want)
+			}
+			for v := range ns.Version(5) {
+				want, _ := Naive{}.Eval(bg, q, b, At(v))
+				if g := binds(rowsAt(rows, v)); !reflect.DeepEqual(g, binds(want)) {
+					t.Errorf("%s at %d: Across %v, At %v", tc.q, v, g, binds(want))
+				}
+			}
+		}
+	}
+}
+
+// A segment split off keeps its own list: three values held in every version, then one each side of a
+// split, each appended where the other's would share spare room.
+func TestAcrossSplitsAListApart(t *testing.T) {
+	src := ns.NewTimedMemSource(ns.Span(0, 2))
+	src.Declare("v", "x")
+	for _, x := range []string{"a", "b", "c"} {
+		src.Add("v", ns.Since(0), nil, ns.S(x))
+	}
+	src.Add("v", ns.Bits(0), nil, ns.S("d"))
+	src.Add("v", ns.Bits(1), nil, ns.S("e"))
+	b := baseFor(std(src))
+	rows, err := Naive{}.Eval(bg, mustParse(t, `v(?x) => list(?x)`), b, Across(ns.Span(0, 2)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, r := range rows {
+		got = append(got, fmt.Sprintf("%s %v", r.Bind["list(x)"].S, slices.Collect(r.Versions.Ranges())))
+	}
+	if want := []string{"a b c d [{0 1}]", "a b c e [{1 2}]"}; !slices.Equal(got, want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+// A segment split off keeps its own distinct values: 5 counted in version 0 is still new in version 1.
+func TestAcrossSplitsADistinctSumApart(t *testing.T) {
+	src := ns.NewTimedMemSource(ns.Span(0, 2))
+	src.DeclareSchema("w", ns.Schema{Arity: 2, Labels: []string{"x", "w"}, Types: []ns.ArgType{{}, {Type: ns.TypeNumber}}})
+	for i, w := range []float64{1, 2, 3} {
+		src.Add("w", ns.Since(0), nil, ns.S(fmt.Sprint(i)), ns.N(w))
+	}
+	src.Add("w", ns.Bits(0), nil, ns.S("d"), ns.N(5))
+	src.Add("w", ns.Bits(1), nil, ns.S("e"), ns.N(5))
+	b := baseFor(std(src))
+	rows, err := Naive{}.Eval(bg, mustParse(t, `w(_, ?w) => sum(distinct ?w)`), b, Across(ns.Span(0, 2)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, r := range rows {
+		got = append(got, fmt.Sprintf("%s %v", r.Bind["sum(distinct w)"].S, slices.Collect(r.Versions.Ranges())))
+	}
+	if want := []string{"11 [{0 2}]"}; !slices.Equal(got, want) {
+		t.Errorf("got %v, want %v", got, want)
 	}
 }

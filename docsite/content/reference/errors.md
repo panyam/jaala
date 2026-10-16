@@ -697,10 +697,6 @@ Some versions given to `Across` are outside the timed source's `Versions()`; the
 
 A query runs at one version or across several, not both.
 
-`query: Across can't evaluate an aggregate yet; ask At at each version`
-
-`Across` doesn't reduce a group across versions yet ([#181](https://github.com/panyam/jaala/issues/181)), in the goal, a rule head or a body aggregate.
-
 `query: evaluation stopped looking up …: …`
 
 The context ended while a source that looks facts up (`ns.LookupSource`) was answering a call.

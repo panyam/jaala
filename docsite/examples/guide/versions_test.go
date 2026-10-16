@@ -80,3 +80,19 @@ func Example_across() {
 	// log [{1 3}]
 	// util [{0 1}]
 }
+
+// An aggregate across revisions is cut where its inputs change, so a
+// count per revision is one query. app has two dependencies in every
+// revision, but not the same two, so the count is two rows citing
+// different facts.
+func Example_acrossCount() {
+	b, ctx := versionedBase(), context.Background()
+	q := datalog.MustParse(`deps.depends_on("app", ?d) => count(?d)`)
+	rows, _ := datalog.SemiNaive{}.Eval(ctx, q, b, datalog.Across(ns.Span(0, 3)))
+	for _, r := range rows {
+		fmt.Println(r.Bind["count(d)"].S, slices.Collect(r.Versions.Ranges()))
+	}
+	// Output:
+	// 2 [{0 1}]
+	// 2 [{1 3}]
+}
