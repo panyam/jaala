@@ -494,8 +494,12 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   rules are folded in `resolveAll` before their signatures are inferred: the scale goes into the number and the unit
   is written by its first name (`A*ohm` is V, at most one name factored out of a composite:
   `ohm/s`). `num.*` write results the same way, so every value inside the engine is in base units
-  and unit strings still compare as strings. Source values are still expected in base units
-  (prefixed ones are #205).
+  and unit strings still compare as strings. A Source's prefixed values are folded as they are read
+  (#205, `Units.FoldValue` in `normalizeValues`, on every path a value comes in by), so `1000 mV`
+  is `1 V` everywhere; stdlib's units are SI products (mass in kg), written through
+  `WriteBaseThrough` so composites keep their names. Every `Conjunction` and `Walk` carries
+  `Units`, and a Federation folds what it carries between members: the corpus's 5000 seeds (not
+  CI's 300) found a partitioned join meeting `0.004 kV` unfolded against `4 V`.
 - **A rule can take an argument from its caller** (`inputs.go`, #200): a head variable its body
   can't bind, which a comparison, a `not` or a generator reads, is an input (`inputsOf`; a call to an
   input relation binds only its other arguments, so `inputRelations` grows to a fixpoint). What a
@@ -557,7 +561,10 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   `edbCache.get` files no index over tuples read before a reset. Work tests that reuse a Base across
   queries see the second one cheaper: give each its own Base, or `LimitDerivedCache(0)`. A probe
   that misses derives and keeps what it read, which can evict what the next probe checks, so a test
-  checks its expected misses last.
+  checks its expected misses last. A host may keep them past the Base (#220): `KeepDerivedIn` adds
+  an `ns.DerivedStore` tier behind the memory one, keyed by `ns.DerivedKey{Relation, Rules,
+  Version}` and used only over a `Versioned` Source; `SemiNaive.Materialize` fills it ahead of a
+  query. A failed store read derives; the store is never called under the cache lock.
 - **SemiNaive drops the rules the goal never reaches before rewriting** (`withoutUnreached`, #90).
   A rewrite renames or removes what they read, which left them reading a relation with no rules.
   They are checked first, as linked, so their mistakes are still reported.
@@ -712,6 +719,9 @@ GitHub retargets the next to `main` when its base merges; confirm each merge com
 remove the worktree after. A selfcheck run on the working tree while editing it tests half-written
 code. Run it in the background as `./selfcheck.sh > log 2>&1` with nothing after it: a trailing
 `; echo exit $?` made the task report 0 for a selfcheck that failed (#209's, which found #273).
+When several branches are in flight (parallel agents), run their selfchecks one at a time, and
+timings only on an otherwise idle machine; never `pkill -f selfcheck.sh`, which kills every run on
+the machine (#220's agent did). A branch rebased onto a moved `main` gets its selfcheck again.
 
 Pushing a branch can get a PR opened for it under the owner's account (#168 was), titled and
 bodied from the commit. Check `gh pr list --head <branch>` before `gh pr create`, and edit that PR
@@ -746,7 +756,10 @@ the branch only is this change's (#161, #168). Diff the whole sorted list of fai
 (`grep '^--- FAIL' | sed 's/ (.*//' | sort -u`), never a `head` of it: a truncated list reported 9
 of agni's 13 environmental failures for #196. A host checkout pins an older tag, so a copy may need
 a small patch to build against `main` (agni's `Bind` call, for #132); patch a copy in the scratchpad,
-never the host's own checkout.
+never the host's own checkout. With no local checkout, `gh repo clone panyam/agni -- --depth 1`
+into the scratchpad. Run the suite before believing what a doc says a host does: #205 assumed agni
+normalizes units upstream (its C24), but agni serves board geometry in `mm` and reads bare
+thresholds in it, so folding changed two of its answers (upgrade note on agni#1035).
 
 To find why a host's question is slow, run it alone: Declaire's `bench -dir <dir> -engine stores
 -time` over a directory holding its `workspace.txtpb` and only that question (#290 did this for x04).
