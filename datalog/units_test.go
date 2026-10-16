@@ -1,6 +1,7 @@
 package datalog
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -420,6 +421,36 @@ func TestArithmeticWaitsForEveryRelationBindingItsInput(t *testing.T) {
 		if got := withUnits(eval(t, levels(), q), "n", "m", "y"); !reflect.DeepEqual(got, want) {
 			t.Fatalf("%s: got %v, want %v", q, got, want)
 		}
+	}
+}
+
+// A host generator waits as an expression does for every relation binding a number it reads (#244):
+// num.mul written as a call, its arguments typed as numbers, doubles n2's bare 1 only once n1's 1 V
+// has met it. control: written as an expression, the same body answers the same.
+func TestAGeneratorWaitsForEveryRelationBindingANumberItReads(t *testing.T) {
+	want := []string{"n1 n1 2[V]", "n1 n2 2[V]", "n2 n1 2[V]", "n2 n2 2", "n3 n3 4[V]"}
+	for _, q := range []string{
+		`level(?n, ?v), num.mul(?v, 2, ?y), level(?m, ?v) => ?n, ?m, ?y`,
+		`pair(?n, ?m, ?v, ?y) :- level(?n, ?v), num.mul(?v, 2, ?y), level(?m, ?v); pair(?n, ?m, _, ?y) => ?n, ?m, ?y`, // inlined
+		`level(?n, ?v), ?y = ?v * 2, level(?m, ?v) => ?n, ?m, ?y`,                                                     // control
+	} {
+		if got := withUnits(eval(t, levels(), q), "n", "m", "y"); !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: got %v, want %v", q, got, want)
+		}
+	}
+	// control: walk types nothing as a number, so it still runs once per node, before the three tags
+	// each node has bind ?x again, as #36 plans it.
+	src := line(4).Declare("tag", "n", "t")
+	for i := 0; i < 4; i++ {
+		for _, tag := range []string{"a", "b", "c"} {
+			src.Add("tag", ns.Tuple{Vals: []ns.Value{ns.S(fmt.Sprintf("v%d", i)), ns.S(tag)}})
+		}
+	}
+	v := std(src)
+	calls := walker(t, v, [][]bool{{true, false}})
+	rows, err := SemiNaive{}.Eval(bg, mustParse(t, `node(?x), walk(?x, ?y), tag(?x, ?t) => ?x, ?y, ?t`), baseFor(v))
+	if err != nil || len(rows) != 3*(3+2+1) || len(*calls) != 4 {
+		t.Errorf("control: %d rows, %d walks, %v; want 18 rows and a walk per node (4)", len(rows), len(*calls), err)
 	}
 }
 

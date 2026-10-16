@@ -321,6 +321,52 @@ func TestAnExistenceProbeRunsBeforeAGenerator(t *testing.T) {
 	}
 }
 
+// A generator called with nothing bound lists every value, so it runs after a relation the engine
+// holds or derives, and its calls then have an argument bound (#293: Declaire's loc.home listed all
+// 136,181 homes ahead of http.pattern's 100). Before a relation the Source looks up it keeps its
+// place, since that relation read with nothing bound is a whole read from the store. control: a
+// generator with an argument bound still runs first, as #36 has it.
+func TestAGeneratorWithNothingBoundRunsAfterAHeldRelation(t *testing.T) {
+	small := func() *ns.MemSource {
+		src := line(10).Declare("small", "n")
+		for _, n := range []string{"v7", "v8"} {
+			src.Add("small", ns.Tuple{Vals: []ns.Value{ns.S(n)}})
+		}
+		return src
+	}
+	const derived = `sm(?x) :- small(?x); sm(?x) :- small(?x), node(?x); `
+	for _, c := range []struct {
+		name, q  string
+		lookedUp bool
+		walks    [][2]bool
+	}{
+		{"held", `walk(?x, ?y), small(?x) => ?x, ?y`, false, [][2]bool{{true, false}, {true, false}}},
+		{"derived", derived + `walk(?x, ?y), sm(?x) => ?x, ?y`, false, [][2]bool{{true, false}, {true, false}}},
+		{"control: looked up", `walk(?x, ?y), small(?x) => ?x, ?y`, true, [][2]bool{{false, false}}},
+		{"control: bound", `walk("v7", ?y), small(?y) => ?y`, false, [][2]bool{{true, false}}},
+	} {
+		v := std(small())
+		calls := walker(t, v, [][]bool{{false, false}, {true, false}})
+		q := mustParse(t, c.q)
+		want, err := both(q, baseFor(v))
+		if err != nil || len(want) == 0 {
+			t.Fatalf("%s: %d rows, %v", c.name, len(want), err)
+		}
+		*calls = nil
+		var src ns.Source = small()
+		if c.lookedUp {
+			src = lookingAt(src)
+		}
+		rows, err := SemiNaive{}.Eval(bg, q, MustBase(v, src))
+		if err != nil || len(rows) != len(want) {
+			t.Fatalf("%s: %d rows, %v; want %d", c.name, len(rows), err, len(want))
+		}
+		if !reflect.DeepEqual(*calls, c.walks) {
+			t.Errorf("%s: walks %v, want %v", c.name, *calls, c.walks)
+		}
+	}
+}
+
 // The same ranking orders a body planned from what its head binds, as demand plans an adorned rule.
 func TestABodyPlannedFromItsHeadRanksTheSameWay(t *testing.T) {
 	v := std(tested())

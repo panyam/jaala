@@ -187,9 +187,12 @@ func planGoal(b *Base, goal Body) Body {
 // planBody orders a body greedily. At each step it takes the first check whose arguments are all
 // bound, since checking early only discards: a comparison, a filter, or a relation whose arguments
 // are all bound, which only asks whether a tuple exists. Failing that, the first generator one of
-// whose Modes is satisfied (#36): a generator call is the host's own work, such as a graph walk, and
-// one placed after a relation runs once per row of it, where a relation bound only by constants is
-// a scan that costs a cheap comparison per row. Failing that, the relation with the most bound
+// whose Modes is satisfied with an argument bound (#36): a generator call is the host's own work, such
+// as a graph walk, and one placed after a relation runs once per row of it, where a relation bound
+// only by constants is a scan that costs a cheap comparison per row. A call with nothing bound lists
+// every value, so it ranks after a relation the engine derives or holds, which costs no more read
+// whole (#293: Declaire's loc.home listed 136,181 homes ahead of http.pattern's 100), and still ahead
+// of one the Source looks up, a whole read from the store. Failing that, the relation with the most bound
 // arguments (a call the Source looks up on a pattern it has no index for counting as none bound,
 // #154), since it fans out least and binds the most for what follows; on a tie with something
 // bound, the base relation estimated to yield fewer tuples per call (see fanOut), else the earliest
@@ -216,20 +219,22 @@ func planBody(b *Base, body Body, entry map[Var]bool) Body {
 				if lit.Pos == nil {
 					continue
 				}
-				if bi, ok := b.reg.Predicate(lit.Pos.Relation); ok && bi.IsGenerator() && bi.Satisfied(boundFlags(lit.Pos, bound)) {
+				flags := boundFlags(lit.Pos, bound)
+				if bi, ok := b.reg.Predicate(lit.Pos.Relation); ok && bi.IsGenerator() && bi.Satisfied(flags) && (count(flags) > 0 || !slices.ContainsFunc(pos, b.readsWhole)) {
 					pick = i
 					break
 				}
 			}
 		}
 		if pick < 0 {
-			best, bestSize := -1, -1
+			best, bestSize, bestGen := -1, -1, false
 			for i, lit := range pos {
 				if isCheck(b, lit) {
 					continue
 				}
 				flags := boundFlags(lit.Pos, bound)
-				if bi, ok := b.reg.Predicate(lit.Pos.Relation); ok && !bi.Satisfied(flags) {
+				bi, gen := b.reg.Predicate(lit.Pos.Relation)
+				if gen && !bi.Satisfied(flags) {
 					continue
 				}
 				n := count(flags)
@@ -243,8 +248,8 @@ func planBody(b *Base, body Body, entry map[Var]bool) Body {
 				if n > 0 {
 					size = fanOut(b, lit.Pos, flags)
 				}
-				if n > best || (size >= 0 && bestSize >= 0 && size < bestSize) {
-					pick, best, bestSize = i, n, size
+				if n > best || (size >= 0 && bestSize >= 0 && size < bestSize) || (n == best && bestGen && b.readsWhole(lit)) {
+					pick, best, bestSize, bestGen = i, n, size, gen
 				}
 			}
 		}
@@ -260,6 +265,22 @@ func planBody(b *Base, body Body, entry map[Var]bool) Body {
 		pos = append(pos[:pick:pick], pos[pick+1:]...)
 	}
 	return Body{Literals: append(out, negs...)}
+}
+
+// readsWhole reports whether lit calls a relation the engine derives or holds, which a call with
+// nothing bound reads at no more than its size: not a predicate, nor a base relation the Source looks
+// up or the goal may stream, read whole from the store (see planBody, #293).
+func (b *Base) readsWhole(lit Literal) bool {
+	if lit.Pos == nil {
+		return false
+	}
+	if _, ok := b.reg.Predicate(lit.Pos.Relation); ok {
+		return false
+	}
+	if _, base := b.schemaOf(lit.Pos.Relation); base {
+		return b.edb != nil && !b.looksUp(lit.Pos.Relation) && (b.run == nil || !b.run.streamable[lit.Pos.Relation])
+	}
+	return true
 }
 
 // fanOut estimates how many tuples a base relation yields per call with the given arguments bound,

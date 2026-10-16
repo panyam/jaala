@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/panyam/jaala/ns"
+	"github.com/panyam/jaala/stdlib"
 )
 
 // pushing is a looking store that also evaluates conjunctions itself (ns.PushSource, #237), by a
@@ -35,6 +36,8 @@ type pushing struct {
 	pagedAfter        [][]ns.Value
 	noInputs          bool // refuses a conjunction with Inputs, as a store before #246
 	noStepWalk        bool // refuses to walk a conjunction, as a store before #250
+	noFilter          bool // names no filter predicate, as a store before #297
+	refuseFilter      bool // names str.glob but refuses a conjunction with filters
 	stepWalks         int
 }
 
@@ -55,11 +58,14 @@ func (p *pushing) alone() int {
 }
 
 func (p *pushing) Pushes(c ns.Conjunction) bool {
-	if p.noCompare && len(c.Compare) > 0 || c.Page != nil && p.noGoal || len(c.Inputs) > 0 && p.noInputs {
+	if p.noCompare && len(c.Compare) > 0 || c.Page != nil && p.noGoal || len(c.Inputs) > 0 && p.noInputs || len(c.Filter) > 0 && p.refuseFilter {
 		return false
 	}
 	return p.refuse == nil || !p.refuse(c)
 }
+
+// PushesFilter implements ns.FilterSource: a pushing store applies str.glob (see globsPass).
+func (p *pushing) PushesFilter(name string) bool { return !p.noFilter && name == "str.glob" }
 
 func (p *pushing) Push(_ context.Context, c ns.Conjunction) iter.Seq2[[]ns.Tuple, error] {
 	return func(yield func([]ns.Tuple, error) bool) {
@@ -282,7 +288,7 @@ func withInputs(c ns.Conjunction, b []ns.Value) ns.Conjunction {
 		return x
 	}
 	out := c
-	out.Inputs, out.Bindings, out.Atoms, out.Compare = nil, nil, nil, nil
+	out.Inputs, out.Bindings, out.Atoms, out.Compare, out.Filter = nil, nil, nil, nil, nil
 	for _, a := range c.Atoms {
 		na := ns.PushAtom{Relation: a.Relation, Args: make([]ns.PushArg, len(a.Args))}
 		for pos, x := range a.Args {
@@ -292,6 +298,13 @@ func withInputs(c ns.Conjunction, b []ns.Value) ns.Conjunction {
 	}
 	for _, cmp := range c.Compare {
 		out.Compare = append(out.Compare, ns.PushComparison{Op: cmp.Op, Left: arg(cmp.Left), Right: arg(cmp.Right)})
+	}
+	for _, f := range c.Filter {
+		nf := ns.PushFilter{Predicate: f.Predicate, Args: make([]ns.PushArg, len(f.Args))}
+		for i, x := range f.Args {
+			nf.Args[i] = arg(x)
+		}
+		out.Filter = append(out.Filter, nf)
 	}
 	return out
 }
@@ -529,8 +542,8 @@ func identityKey(v ns.Value) string {
 
 // evalConjunction is a store's own answer to c: each combination of the facts candidates offers per
 // atom (given the values bound so far) whose values, read as their schema's types, equal the atom's
-// constants (read so too) and agree on each variable, and whose numbers pass c's comparisons. Any
-// other comparison is left to the engine, as a store unsure of the engine's order may. When c is
+// constants (read so too) and agree on each variable, and whose numbers pass c's comparisons and
+// texts its str.glob filters. Any other comparison or filter is left to the engine, as a store unsure of the engine's order may. When c is
 // Partial, each combination satisfying the first k atoms is a row too. sloppy ignores constants and
 // comparisons.
 func evalConjunction(c ns.Conjunction, schema func(string) ns.Schema, candidates func(rel string, bound map[int]ns.Value) []ns.Tuple, sloppy bool) [][]ns.Tuple {
@@ -546,7 +559,7 @@ func evalConjunction(c ns.Conjunction, schema func(string) ns.Schema, candidates
 			if c.PrefixesOnly {
 				return
 			}
-			if sloppy || numbersPass(c.Compare, vals) {
+			if sloppy || numbersPass(c.Compare, vals) && globsPass(c.Filter, vals) {
 				out = append(out, slices.Clone(row))
 			}
 			return
@@ -598,6 +611,27 @@ func evalConjunction(c ns.Conjunction, schema func(string) ns.Schema, candidates
 	}
 	walk(0)
 	return out
+}
+
+// globsPass reports whether vals pass each str.glob filter, as stdlib compiles it; a store leaves
+// any other filter to the engine.
+func globsPass(flts []ns.PushFilter, vals map[int]ns.Value) bool {
+	for _, f := range flts {
+		if f.Predicate != "str.glob" || len(f.Args) != 2 {
+			continue
+		}
+		side := func(a ns.PushArg) ns.Value {
+			if a.Const != nil {
+				return *a.Const
+			}
+			return vals[a.Var]
+		}
+		re, err := stdlib.CompileGlob(side(f.Args[1]).S)
+		if err == nil && !re.MatchString(side(f.Args[0]).S) {
+			return false
+		}
+	}
+	return true
 }
 
 // numbersPass reports whether vals pass each comparison between two numbers.
@@ -1082,5 +1116,130 @@ func TestAPushStopsAtAFilterOnItsVariables(t *testing.T) {
 		if widest != c.atoms {
 			t.Errorf("%s: widest conjunction pushed has %d atoms, want %d (pushed %d)", c.goal, widest, c.atoms, len(p.pushed))
 		}
+	}
+}
+
+// A filter predicate over a pushed group's variables goes to the store with it (#297), as a comparison
+// does: Declaire's x05 pushed 67,650 callsites that two str.glob filters cut to 21. The body keeps the
+// filters, so a store refusing them, or one sloppy about them, answers the same; and the lookup caches
+// key a push by its filters, so a filtered push never answers an unfiltered one. Across a partitioned
+// federation, a member continuing a prefix gets the filters over the atoms it continues.
+func TestAStoreTakesAFilterOverAPushedGroup(t *testing.T) {
+	mem := ns.NewMemSource().Declare("calls", "f", "cs").Declare("callee", "cs", "c")
+	for _, e := range [][2]string{{"app/a", "a1"}, {"app/a", "l1"}, {"app/b", "a2"}, {"lib/x", "l2"}, {"lib/x", "a3"}} {
+		mem.Add("calls", ns.Tuple{Vals: []ns.Value{ns.S(e[0]), ns.S(e[1])}})
+	}
+	for _, e := range [][2]string{{"a1", "auth/login"}, {"l1", "auth/save"}, {"a2", "util/log"}, {"l2", "auth/login"}, {"a3", "auth/save"}} {
+		mem.Add("callee", ns.Tuple{Vals: []ns.Value{ns.S(e[0]), ns.S(e[1])}})
+	}
+	const filtered = `calls(?f, ?cs), callee(?cs, ?c), str.glob(?c, "auth/*"), str.glob(?f, "app/*") => ?f, ?c`
+	const joined = `calls(?f, ?cs), callee(?cs, ?c) => ?f, ?c`
+	want, err := both(mustParse(t, filtered), baseFor(std(mem)))
+	if err != nil || len(want) != 2 {
+		t.Fatalf("control: in memory %v, %v; want app/a's two auth calls", binds(want), err)
+	}
+	globs := func(c ns.Conjunction) int {
+		n := 0
+		for _, f := range c.Filter {
+			if f.Predicate == "str.glob" {
+				n++
+			}
+		}
+		return n
+	}
+	// A store naming no filter, as before #297, or refusing them, gets #291's plan: the group stops at
+	// the glob over ?f, leaving calls alone with nothing to filter it by, so nothing is pushed. One
+	// naming none is never asked with a filter, which it might accept and ignore.
+	for _, c := range []struct {
+		name                           string
+		noFilter, refuseFilter, sloppy bool
+		pushes, filters, yielded       int
+	}{
+		{"takes filters", false, false, false, 1, 2, 2},
+		{"control: names no filter", true, false, false, 0, 0, 0},
+		{"control: refuses filters", false, true, false, 0, 0, 0},
+		{"sloppy", false, false, true, 1, 2, 5},
+	} {
+		st := pushingAt(mem)
+		st.noFilter, st.refuseFilter, st.sloppy = c.noFilter, c.refuseFilter, c.sloppy
+		b := MustBase(std(mem), st)
+		got, err := SemiNaive{}.Eval(bg, mustParse(t, filtered), b)
+		if err != nil || !reflect.DeepEqual(got, want) {
+			t.Fatalf("%s: %v, %v; want %v", c.name, binds(got), err, binds(want))
+		}
+		if len(st.pushed) != c.pushes || c.pushes > 0 && (len(st.pushed[0].Atoms) != 2 || globs(st.pushed[0]) != c.filters) || st.yielded != c.yielded {
+			t.Errorf("%s: pushed %+v, yielding %d rows; want %d push of both atoms with %d globs, yielding %d", c.name, st.pushed, st.yielded, c.pushes, c.filters, c.yielded)
+		}
+		if c.sloppy {
+			continue
+		}
+		all, err := SemiNaive{}.Eval(bg, mustParse(t, joined), b)
+		if err != nil || len(all) != 5 {
+			t.Errorf("%s: then unfiltered on the same Base, %v, %v; want all 5 calls", c.name, binds(all), err)
+		}
+	}
+
+	for _, noInputs := range []bool{false, true} {
+		partitioned(t, mem, filtered, want, noInputs, globs)
+	}
+}
+
+// partitioned runs q over mem dealt to two pushing stores by first argument, a or l, and checks the l
+// store continued app/a's l1 with the glob over ?c (see TestAStoreTakesAFilterOverAPushedGroup); a
+// store refusing Inputs is asked per prefix, its conjunction rewritten with the prefix's values.
+func partitioned(t *testing.T, mem *ns.MemSource, q string, want []Row, noInputs bool, globs func(ns.Conjunction) int) {
+	t.Helper()
+	stores := make([]*pushing, 2)
+	members := make([]ns.Member, 2)
+	for i, prefix := range []string{"a", "l"} {
+		part := ns.NewMemSource().Declare("calls", "f", "cs").Declare("callee", "cs", "c")
+		for _, rel := range []string{"calls", "callee"} {
+			for _, tu := range mem.Tuples(rel) {
+				if strings.HasPrefix(tu.Vals[0].S, prefix) {
+					part.Add(rel, tu)
+				}
+			}
+		}
+		stores[i] = pushingAt(part)
+		stores[i].noInputs = noInputs
+		members[i] = ns.Member{Source: stores[i], Holds: ns.HoldsPrefix(prefix, map[string][]int{"calls": {0}, "callee": {0}})}
+	}
+	f, err := ns.NewPartitionedFederation(members...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := SemiNaive{}.Eval(bg, mustParse(t, q), MustBase(std(f), f))
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("partitioned, noInputs %v: %v, %v; want %v", noInputs, binds(got), err, binds(want))
+	}
+	continued := false
+	for _, c := range stores[1].pushed {
+		if len(c.Atoms) == 1 && c.Atoms[0].Relation == "callee" && globs(c) > 0 {
+			continued = true
+		}
+	}
+	if !continued {
+		t.Errorf("partitioned, noInputs %v: app/a's l1 continued in the lib store as %+v; want callee with its glob over ?c", noInputs, stores[1].pushed)
+	}
+}
+
+// Two rules pushing the same atoms under different comparisons push two groups (#297). Their pushed
+// literals were named by the atoms alone, so the second group replaced the first and both rules were
+// asked with ?w < 1: the planned SemiNaive answered xa where Naive answered all three.
+func TestTwoRulesPushingTheSameAtomsKeepTheirOwnComparisons(t *testing.T) {
+	src := ns.NewMemSource().Declare("edge", "a", "b").DeclareSchema("weight", ns.Schema{Arity: 2, Types: []ns.ArgType{{}, {Type: ns.TypeNumber}}})
+	for i, w := range []float64{0, 5, 3} {
+		n := string(rune('a' + i))
+		src.Add("edge", ns.Tuple{Vals: []ns.Value{ns.S("x" + n), ns.S(n)}})
+		src.Add("weight", ns.Tuple{Vals: []ns.Value{ns.S(n), ns.N(w)}})
+	}
+	q := mustParse(t, `r(?x) :- edge(?x, ?y), weight(?y, ?w), ?w > 2; r(?x) :- edge(?x, ?y), weight(?y, ?w), ?w < 1; r(?x) => ?x`)
+	store := pushingAt(src)
+	got, err := SemiNaive{}.Eval(bg, q, MustBase(std(src), store))
+	if err != nil || col(got, "x") != "xa,xb,xc" {
+		t.Fatalf("pushed %v, %v; want xa,xb,xc", col(got, "x"), err)
+	}
+	if len(store.pushed) != 2 {
+		t.Errorf("control: %d pushes, want one per rule: %+v", len(store.pushed), store.pushed)
 	}
 }
