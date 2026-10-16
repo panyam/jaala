@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/panyam/jaala/datalog"
 	"github.com/panyam/jaala/nl"
@@ -140,4 +141,16 @@ func Example_translate() {
 	// try by scripted: ""
 	// deps.depends_on("app", ?d) => ?d
 	// api log util
+}
+
+// Grammar is the program syntax as GBNF, for a decoder to keep a model's
+// output to text that parses. Its first rules say what a program is.
+func Example_grammar() {
+	for _, line := range strings.SplitN(nl.Grammar(), "\n", 4)[:3] {
+		fmt.Println(line)
+	}
+	// Output:
+	// root ::= (rule sep)* goal
+	// sep ::= "; " | ";\n"
+	// rule ::= head " :- " literals
 }

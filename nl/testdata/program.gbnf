@@ -1,0 +1,37 @@
+root ::= (rule sep)* goal
+sep ::= "; " | ";\n"
+rule ::= head " :- " literals
+head ::= relation "(" (harg (", " harg)*)? ")"
+harg ::= "?" vname (": " decl)? | constant | aggregate | arith
+decl ::= "string" | "number" | "number[" unit "]" | ident | ident " " domain | domain
+domain ::= "{" (string (", " string)*) "}"
+literals ::= literal ((", " | ",\n  ") literal)*
+literal ::= atom | "not " atom | comparison | bodyagg
+atom ::= relation "(" (term (", " term)*)? ")"
+comparison ::= sum " " cmpop " " sum
+cmpop ::= "<=" | ">=" | "!=" | "<" | ">" | "="
+sum ::= product ((" + " | " - ") product)*
+product ::= unary ((" * " | " / ") unary)*
+unary ::= operand | "-" variable | "-" call | "-(" sum ")" | "(" sum ")" | call
+operand ::= variable | string | unumber
+call ::= callname "(" (sum (", " sum)*) ")"
+callname ::= ident ("." ident)*
+arith ::= product ((" + " | " - ") product)+ | unary ((" * " | " / ") unary)+ | "-" variable | "-" call | ident ("." ident)+ "(" (sum (", " sum)*) ")"
+bodyagg ::= "?" vname " = " aggregate " : { " (inner (", " inner)*) " }"
+inner ::= atom | "not " atom | comparison
+aggregate ::= aggfn "(" "distinct "? "?" vname ")"
+aggfn ::= "count" | "min" | "max" | "sum" | "list"
+goal ::= literals (" => " (column (", " column)*) tail)?
+column ::= "?" vname | aggregate | arith
+tail ::= (" having " (having (", " having)*))? (" order by " (order (", " order)*))? (" after " (constant (", " constant)*))? (" limit " [1-9] ([0-9]? [0-9]? [0-9]? [0-9]? [0-9]?))? (" offset " [0-9] ([0-9]? [0-9]? [0-9]? [0-9]? [0-9]?))?
+having ::= aggregate " " cmpop " " term
+order ::= column (" asc" | " desc")?
+term ::= variable | constant
+variable ::= "?" vname | "_"
+vname ::= [a-zA-Z0-9] [a-zA-Z0-9_]* | "_" [a-zA-Z0-9_]+
+constant ::= string | unumber | "-" unumber
+unumber ::= [0-9]+ ("." [0-9]+)? ([eE] [-+]? [0-9] [0-9]?)? unit?
+unit ::= [a-dA-Df-zF-Z] [a-zA-Z]* | [eE] [a-zA-Z]+
+string ::= "\"" ([^"\\\x00-\x1F] | "\\" [^\x00-\x1F])* "\""
+relation ::= ident (("." | "-") ident)*
+ident ::= [a-zA-Z] [a-zA-Z0-9_]*
