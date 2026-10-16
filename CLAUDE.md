@@ -653,8 +653,11 @@ closed (#236 to #241, #246, #250, #252 to #254 by v0.1.50; #263 and #268, from D
 measurement and folding #259, by v0.1.52; #270, a witnessed goal's bindings reaching what its rule
 calls, q09r's `http.route`, after v0.1.52): a conjunction, a walk, a count, a page, a batch of
 bindings (across a partitioned federation too), a walked step and a lone filtered literal each go to
-a store, and every jaala line of its "Done when" holds. Like #219 it stays open for Declaire's run
-(`bench -time` on a federated view). jaala's
+a store, and every jaala line of its "Done when" holds. Declaire's first real-view timing (x04 in
+its `bench/external`, declaire#255: 2m44s on stores against 4.6s on mem) reopened it: #290
+(v0.1.55) read generator-only relations in full, taking x04 to 51.5s, and #291 (a push growing past
+a filter, a demand guard as large as its relation) is the next. Like #219 it stays open for
+Declaire's run (`bench -time` on a federated view). jaala's
 earlier four are closed: `mission_selfcheck` (#86, at v0.1.29) left `./selfcheck.sh` as the check to
 run on `main` after every merge and before every tag; `mission_docsite` (#104) left the docs site
 with every example run by the engine; `mission_aggregate_answers` (#172, at v0.1.42) left Soufflé
@@ -705,3 +708,10 @@ the branch only is this change's (#161, #168). Diff the whole sorted list of fai
 of agni's 13 environmental failures for #196. A host checkout pins an older tag, so a copy may need
 a small patch to build against `main` (agni's `Bind` call, for #132); patch a copy in the scratchpad,
 never the host's own checkout.
+
+To find why a host's question is slow, run it alone: Declaire's `bench -dir <dir> -engine stores
+-time` over a directory holding its `workspace.txtpb` and only that question (#290 did this for x04).
+Declaire's `Runner` passes `Explain` only when its context carries a `*datalog.Report`, so reading
+which relations were demanded and where the time went needs a patched copy of both repos in the
+scratchpad, joined by a `go.work`; the Explain text (`demand [b], 7205 demanded`) then names the
+rewrite to blame.
