@@ -334,7 +334,7 @@ func TestAnEvalStartedBeforeADropKeepsNothing(t *testing.T) {
 
 	src := reversedLine(40)
 	e := newEDBCache()
-	old, err := e.tuples(nil, "edge", src, nil)
+	old, err := e.tuples(nil, "edge", src, nil, nil)
 	if err != nil || len(old) < indexMinFacts {
 		t.Fatalf("control: read %d edges, %v; want enough to index", len(old), err)
 	}
@@ -343,7 +343,7 @@ func TestAnEvalStartedBeforeADropKeepsNothing(t *testing.T) {
 	if len(e.idx) != 0 {
 		t.Errorf("an index over tuples read before the reset was filed")
 	}
-	now, _ := e.tuples(nil, "edge", src, nil)
+	now, _ := e.tuples(nil, "edge", src, nil, nil)
 	e.get("edge", now, 1)
 	if len(e.idx) != 1 {
 		t.Errorf("control: an index over the tuples read again should be filed")

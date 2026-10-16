@@ -1282,8 +1282,12 @@ func corpusCase(seed int64) (genCase, bool) {
 	facts := genGraph(rnd)
 	g := newGenerator(rnd, facts)
 	mixed := facts.mixedUnits()
-	if mixed {
+	switch {
+	case mixed:
 		facts.units = nil
+	case facts.prefixed():
+		// Soufflé reads the numbers as written, so it gets them in V, as the Base folds them (#205).
+		facts.units = slices.Repeat([]string{"V"}, len(facts.units))
 	}
 	return genCase{prog: g.program(), facts: facts}, mixed
 }

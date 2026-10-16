@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode"
 	"unicode/utf8"
 )
@@ -110,6 +111,20 @@ type Units struct {
 	defs     map[string]Unit // a defined unit, expanded into base symbols
 	prefixes map[string]int  // a prefix's power of ten: k is 3
 	order    []string        // defined units in registration order: the first name of a unit is its name
+	// through names, per base unit, the unit answers may write it through (see WriteBaseThrough), and
+	// throughOrder those base units in the order they were named.
+	through      map[string]string
+	throughOrder []string
+	// folds caches Fold per unit text, since a Source's values repeat a handful of units over many
+	// tuples. AddUnit and WriteBaseThrough clear it.
+	folds sync.Map // unit text -> folded
+}
+
+// folded is how Fold rewrites a number in one unit: shifted by scale powers of ten, in unit.
+type folded struct {
+	scale int
+	unit  string
+	ok    bool
 }
 
 // AddUnit names a unit or a prefix. def is "" for a base unit, a power of ten for a prefix ("1e3"
@@ -139,6 +154,7 @@ func (v *Vocabulary) AddUnit(name, def string) error {
 	if def == "" {
 		t.defs[name] = Unit{Dims: map[string]int{name: 1}}
 		t.order = append(t.order, name)
+		t.folds.Clear()
 		v.cache = newMemo()
 		return nil
 	}
@@ -148,6 +164,7 @@ func (v *Vocabulary) AddUnit(name, def string) error {
 		t.defs[name] = u
 		t.order = append(t.order, name)
 	}
+	t.folds.Clear()
 	v.cache = newMemo()
 	return nil
 }
@@ -177,10 +194,48 @@ func (t *Units) Normalize(f float64, unit string) (float64, string, error) {
 // Write is a number in a unit as the engine keeps it, as Normalize returns it.
 func (t *Units) Write(f float64, u Unit) (float64, string, error) {
 	if u.Scale != 0 {
-		f *= math.Pow(10, float64(u.Scale))
+		f = shift(f, u.Scale)
 		u = Unit{Dims: u.Dims}
 	}
 	return f, t.name(u), nil
+}
+
+// shift is f times ten to the n, as the decimal f is written would read with its exponent moved, so
+// 3300 in mV is the 3.3 a V reads as, where 3300*1e-3 is 3.3000000000000003 (jaala#205).
+func shift(f float64, n int) float64 {
+	if math.IsInf(f, 0) || math.IsNaN(f) {
+		return f
+	}
+	mant, exp, _ := strings.Cut(strconv.FormatFloat(f, 'e', -1, 64), "e")
+	e, _ := strconv.Atoi(exp)
+	out, err := strconv.ParseFloat(mant+"e"+strconv.Itoa(e+n), 64)
+	if err != nil && !math.IsInf(out, 0) {
+		return f * math.Pow(10, float64(n))
+	}
+	return out
+}
+
+// Fold is a number read from a Source in unit as the engine keeps it, as Normalize writes it (5 in mV
+// is 0.005 in V), and whether that changed anything (jaala#205). A unit that doesn't parse is kept as
+// it is, a unit of its own, so a Source's value is read and never refused. Cached per unit, and safe
+// for concurrent use once the table is built.
+func (t *Units) Fold(f float64, unit string) (float64, string, bool) {
+	if unit == "" || t == nil {
+		return f, unit, false // with no table, no names and no prefixes: every unit is its own
+	}
+	var fo folded
+	if c, ok := t.folds.Load(unit); ok {
+		fo = c.(folded)
+	} else {
+		if u, err := t.parse(unit); err == nil {
+			fo = folded{scale: u.Scale, unit: t.name(Unit{Dims: u.Dims}), ok: true}
+		}
+		t.folds.Store(unit, fo)
+	}
+	if !fo.ok || fo.scale == 0 && fo.unit == unit {
+		return f, unit, false
+	}
+	return shift(f, fo.scale), fo.unit, true
 }
 
 // SameUnit reports whether two units the engine holds are one unit, through the table's names (so
@@ -199,7 +254,9 @@ func (t *Units) SameUnit(a, b string) bool {
 
 // name is u's first registered name when it has one. Otherwise it's u spelled with at most one named
 // unit factored out, the one leaving the fewest symbols behind (ohm/s, not V/(A*s)), or u's own
-// spelling when no name shortens it.
+// spelling when no name shortens it. A base unit written through another (see WriteBaseThrough) is
+// spelled both ways, and the shorter is written, the one through the unit on a tie: with kg written
+// through V, V/m is V/m rather than kg*m/(A*s^3), and kg*m stays kg*m.
 func (t *Units) name(u Unit) string {
 	if len(u.Dims) == 0 && u.Scale == 0 {
 		return ""
@@ -212,28 +269,87 @@ func (t *Units) name(u Unit) string {
 			return n
 		}
 	}
-	size := func(x Unit) int {
-		s := 0
-		for _, e := range x.Dims {
-			s += max(e, -e)
-		}
-		return s
+	if len(t.throughOrder) == 0 {
+		return t.spell(u, "").String()
 	}
-	best, bestName := u, ""
+	var best Unit
+	for i, base := range t.throughOrder {
+		if s := t.spell(u, base); i == 0 || s.size() < best.size() {
+			best = s
+		}
+	}
+	return best.String()
+}
+
+// spell is u with at most one named unit factored out (see name), in base symbols, or with base
+// written through the unit WriteBaseThrough named for it when base isn't "".
+func (t *Units) spell(u Unit, base string) Unit {
+	in, via := func(x Unit) Unit { return x }, ""
+	if base != "" {
+		via = t.through[base]
+		r := t.defs[via].Div(Unit{Dims: map[string]int{base: 1}}) // base is via over r
+		in = func(x Unit) Unit {
+			k := x.Dims[base]
+			if k == 0 {
+				return x
+			}
+			y := x.Div(Unit{Dims: map[string]int{base: k}}).Div(r.Pow(k))
+			y.Dims[via] += k
+			return y
+		}
+	}
+	w := in(u)
+	best, bestName := w, ""
 	for _, n := range t.order {
 		def := t.defs[n]
-		if len(def.Dims) == 1 && def.Dims[n] == 1 {
-			continue // a base unit is already its own symbol
+		if def.Scale != 0 || len(def.Dims) == 1 && def.Dims[n] == 1 || n == via {
+			continue // a base unit is already its own symbol, as is the one written through, and u holds no scale
 		}
-		if rest := u.Div(def); size(rest)+1 < size(best) {
+		def = in(def)
+		if rest := w.Div(def); rest.size()+1 < best.size() {
 			best, bestName = rest, n
 		}
 	}
-	if bestName == "" {
-		return u.String()
+	if bestName != "" {
+		best.Dims[bestName]++
 	}
-	best.Dims[bestName]++
-	return best.String()
+	return best
+}
+
+// size is how many symbols u is written with, powers counted.
+func (u Unit) size() int {
+	s := 0
+	for _, e := range u.Dims {
+		s += max(e, -e)
+	}
+	return s
+}
+
+// WriteBaseThrough lets answers write the base unit base through unit, a unit defined with base to
+// the first power: stdlib writes kg through V, so that once V is kg*m^2/(A*s^3) an electrical unit
+// is still written in volts (V/m, not kg*m/(A*s^3)). A unit is spelled both with base and through
+// unit, and the shorter is written, the one through unit on a tie. It changes no unit's value, only
+// how one with no name of its own is written.
+func (v *Vocabulary) WriteBaseThrough(base, unit string) error {
+	t := v.units
+	if t == nil || !t.defs[base].Same(Unit{Dims: map[string]int{base: 1}}) {
+		return fmt.Errorf("query: unit %q isn't a base unit", base)
+	}
+	def, ok := t.defs[unit]
+	if !ok || def.Scale != 0 || def.Dims[base] != 1 {
+		return fmt.Errorf("query: unit %q isn't defined with %q to the first power", unit, base)
+	}
+	if via, dup := t.through[base]; dup {
+		return fmt.Errorf("query: unit %q is already written through %q", base, via)
+	}
+	if t.through == nil {
+		t.through = map[string]string{}
+	}
+	t.through[base] = unit
+	t.throughOrder = append(t.throughOrder, base)
+	t.folds.Clear()
+	v.cache = newMemo()
+	return nil
 }
 
 func (t *Units) symbol(s string) (Unit, bool) {

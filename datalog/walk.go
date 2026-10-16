@@ -230,7 +230,7 @@ func (b *Base) walk(atom *Atom, s walkStep, starts []ns.Value) error {
 	r := b.run
 	types := b.argTypesOf(s.rel)
 	norm := func(v ns.Value, p int) ns.Value {
-		return normalizeTuples([]ns.Tuple{{Vals: []ns.Value{v}}}, types[min(p, len(types)):min(p+1, len(types))])[0].Vals[0]
+		return normalizeTuples(b.units(), []ns.Tuple{{Vals: []ns.Value{v}}}, types[min(p, len(types)):min(p+1, len(types))])[0].Vals[0]
 	}
 	w := ns.Walk{Relation: s.rel, From: s.from, To: s.to, Bound: s.consts, Start: starts}
 	byFrom := map[string][]ns.Tuple{}
@@ -246,7 +246,7 @@ func (b *Base) walk(atom *Atom, s walkStep, starts []ns.Value) error {
 		if len(t.Vals) != len(atom.Args) {
 			continue
 		}
-		t = normalizeTuples([]ns.Tuple{t}, types)[0]
+		t = normalizeTuples(b.units(), []ns.Tuple{t}, types)[0]
 		k := valueKey(t.Vals[s.from])
 		byFrom[k] = append(byFrom[k], t)
 		fetched++
@@ -456,7 +456,7 @@ func (b *Base) walkStep(g *pushGroup, c ns.Conjunction, s stepWalk, in Var, star
 			if want := len(g.lits[i].Pos.Args); len(t.Vals) != want {
 				return fmt.Errorf("query: pushing %s: a row's %s tuple has %d values, want %d", g.text, g.lits[i].Pos.Relation, len(t.Vals), want)
 			}
-			read[i] = normalizeTuples([]ns.Tuple{t}, types[i])[0]
+			read[i] = normalizeTuples(b.units(), []ns.Tuple{t}, types[i])[0]
 		}
 		next := newBinding()
 		if !unifyRow(g.lits, read, next) {

@@ -65,7 +65,7 @@ func (l *looking) answer(rel string, bound map[int]ns.Value) []ns.Tuple {
 		return all
 	}
 	s, _ := l.Source.Schema(rel)
-	read := normalizeTuples(all, s.Types)
+	read := normalizeTuples(stdUnits, all, s.Types)
 	var out []ns.Tuple
 	for k, t := range all {
 		ok := true

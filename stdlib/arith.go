@@ -222,19 +222,22 @@ func negate(units func() *ns.Units) ns.Builtin {
 	}
 }
 
-// Units registers the SI prefixes (T, G, M, k, m, u and µ, n, p), base units for current, potential,
-// length, mass and time (A, V, m, g, s), and the electrical units over them: ohm (and Ω) = V/A, W =
-// V*A, J = W*s, C = A*s, F = C/V, H = V*s/A, and Hz = 1/s. A host adds its own with
-// Vocabulary.AddUnit, and a symbol nobody defines is a unit of its own.
+// Units registers the SI prefixes (T, G, M, k, m, u and µ, n, p), the seven SI base units (kg, m, s,
+// A, K, mol, cd), the gram as a thousandth of a kg, and the electrical units decomposed into them: V =
+// kg*m^2/(A*s^3), ohm (and Ω) = V/A, W = V*A, J = W*s, C = A*s, F = C/V, H = V*s/A, and Hz = 1/s
+// (jaala#205). Since every one is a product of base units, two spellings of one dimension are one
+// unit, so a host naming N = kg*m/s^2 finds N*m is J. kg is written through V (WriteBaseThrough), so a
+// unit with no name is written as it was before the decomposition, in volts: V^2, V/m, ohm/s. A host
+// adds its own with Vocabulary.AddUnit, and a symbol nobody defines is a unit of its own.
 func Units(v *ns.Vocabulary) error {
 	for _, u := range [][2]string{
 		{"T", "1e12"}, {"G", "1e9"}, {"M", "1e6"}, {"k", "1e3"}, {"m", "1e-3"}, {"u", "1e-6"}, {"µ", "1e-6"}, {"n", "1e-9"}, {"p", "1e-12"},
-		{"A", ""}, {"V", ""}, {"m", ""}, {"g", ""}, {"s", ""},
-		{"ohm", "V/A"}, {"Ω", "V/A"}, {"W", "V*A"}, {"J", "W*s"}, {"C", "A*s"}, {"F", "C/V"}, {"H", "V*s/A"}, {"Hz", "1/s"},
+		{"kg", ""}, {"m", ""}, {"s", ""}, {"A", ""}, {"K", ""}, {"mol", ""}, {"cd", ""}, {"g", "1e-3*kg"},
+		{"V", "kg*m^2/(A*s^3)"}, {"ohm", "V/A"}, {"Ω", "V/A"}, {"W", "V*A"}, {"J", "W*s"}, {"C", "A*s"}, {"F", "C/V"}, {"H", "V*s/A"}, {"Hz", "1/s"},
 	} {
 		if err := v.AddUnit(u[0], u[1]); err != nil {
 			return err
 		}
 	}
-	return nil
+	return v.WriteBaseThrough("kg", "V")
 }

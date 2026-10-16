@@ -120,13 +120,13 @@ func (p *pushing) Walk(_ context.Context, w ns.Walk) iter.Seq2[ns.Tuple, error] 
 		}
 		sch, _ := p.Source.Schema(w.Relation)
 		all := p.Source.Tuples(w.Relation)
-		read := normalizeTuples(all, sch.Types)
+		read := normalizeTuples(stdUnits, all, sch.Types)
 		facts := walkFacts(w, func(bound map[int]ns.Value) []ns.Tuple {
 			var out []ns.Tuple
 			for k, t := range read {
 				ok := true
 				for i, v := range bound {
-					ok = ok && i < len(t.Vals) && valueEq(t.Vals[i], normalizeTuples([]ns.Tuple{{Vals: []ns.Value{v}}}, sch.Types[min(i, len(sch.Types)):min(i+1, len(sch.Types))])[0].Vals[0])
+					ok = ok && i < len(t.Vals) && valueEq(t.Vals[i], normalizeTuples(stdUnits, []ns.Tuple{{Vals: []ns.Value{v}}}, sch.Types[min(i, len(sch.Types)):min(i+1, len(sch.Types))])[0].Vals[0])
 				}
 				if ok {
 					out = append(out, all[k])
@@ -337,7 +337,7 @@ func forBindings(c ns.Conjunction, schema func(string) ns.Schema, rows [][]ns.Tu
 func rowValues(c ns.Conjunction, schema func(string) ns.Schema, row []ns.Tuple) map[int]ns.Value {
 	vals := map[int]ns.Value{}
 	for k, a := range c.Atoms[:len(row)] {
-		read := normalizeTuples([]ns.Tuple{row[k]}, schema(a.Relation).Types)[0]
+		read := normalizeTuples(stdUnits, []ns.Tuple{row[k]}, schema(a.Relation).Types)[0]
 		for pos, x := range a.Args {
 			if _, ok := vals[x.Var]; x.Var > 0 && !ok {
 				vals[x.Var] = read.Vals[pos]
@@ -489,15 +489,16 @@ func summaryOf(c ns.Conjunction, s ns.Summary, schema func(string) ns.Schema, ro
 }
 
 // addExtreme folds a match's value, read as its type, into a row's extremes by unit: a number joins
-// its unit's count, NaN or bounds, which the row reports as stored, as a store would; anything else
-// adds nothing. bound holds each of the row's bounds as read, by kind and unit, to compare by.
+// the count, NaN or bounds of its unit as stored (mV apart from V, #205), which the row reports as
+// stored, as a store would; anything else adds nothing. bound holds each of the row's bounds as read,
+// by kind and unit, to compare by.
 func addExtreme(es []ns.Extreme, read, raw ns.Value, bound func(kind, unit string) *ns.Value) []ns.Extreme {
 	if read.Absent || read.Num == nil {
 		return es
 	}
-	i := slices.IndexFunc(es, func(e ns.Extreme) bool { return e.Unit == read.BaseUnit })
+	i := slices.IndexFunc(es, func(e ns.Extreme) bool { return e.Unit == raw.BaseUnit })
 	if i < 0 {
-		es = append(es, ns.Extreme{Unit: read.BaseUnit, Min: ns.Absent(), Max: ns.Absent()})
+		es = append(es, ns.Extreme{Unit: raw.BaseUnit, Min: ns.Absent(), Max: ns.Absent()})
 		i = len(es) - 1
 	}
 	e := &es[i]
@@ -507,10 +508,10 @@ func addExtreme(es []ns.Extreme, read, raw ns.Value, bound func(kind, unit strin
 	case x != x:
 		e.NaN = true
 	default:
-		if lo := bound("min", read.BaseUnit); e.Min.Absent || x < *lo.Num {
+		if lo := bound("min", raw.BaseUnit); e.Min.Absent || x < *lo.Num {
 			e.Min, *lo = raw, read
 		}
-		if hi := bound("max", read.BaseUnit); e.Max.Absent || x > *hi.Num {
+		if hi := bound("max", raw.BaseUnit); e.Max.Absent || x > *hi.Num {
 			e.Max, *hi = raw, read
 		}
 	}
@@ -570,7 +571,7 @@ func evalConjunction(c ns.Conjunction, schema func(string) ns.Schema, candidates
 		bound := map[int]ns.Value{}
 		for i, x := range a.Args {
 			if x.Const != nil {
-				consts[i] = normalizeTuples([]ns.Tuple{{Vals: []ns.Value{*x.Const}}}, types[min(i, len(types)):min(i+1, len(types))])[0].Vals[0]
+				consts[i] = normalizeTuples(stdUnits, []ns.Tuple{{Vals: []ns.Value{*x.Const}}}, types[min(i, len(types)):min(i+1, len(types))])[0].Vals[0]
 				if !sloppy {
 					bound[i] = consts[i]
 				}
@@ -580,7 +581,7 @@ func evalConjunction(c ns.Conjunction, schema func(string) ns.Schema, candidates
 			}
 		}
 		for _, t := range candidates(a.Relation, bound) {
-			read := normalizeTuples([]ns.Tuple{t}, types)[0]
+			read := normalizeTuples(stdUnits, []ns.Tuple{t}, types)[0]
 			var set []int
 			ok := true
 			for i, x := range a.Args {

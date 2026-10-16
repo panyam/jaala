@@ -225,3 +225,13 @@ func col(rows []Row, v string) string {
 	sort.Strings(out)
 	return strings.Join(out, ",")
 }
+
+// stdUnits is stdlib's unit table, which a test store folds its values by as the engine does (#205), so
+// it answers a lookup or a pushed comparison by the value the engine asks for.
+var stdUnits = func() *ns.Units {
+	v := ns.MustVocabulary(nil)
+	if err := stdlib.Units(v); err != nil {
+		panic(err)
+	}
+	return v.Units()
+}()

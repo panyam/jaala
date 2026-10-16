@@ -94,7 +94,9 @@ type StreamSource interface {
 // numbers when the numbers are equal (a bound N(1) matches a stored 1.0), two texts when the text is,
 // and a number never text. Read as its type means what the engine does with what Lookup returns: in a
 // number argument text is read as its number, and in a text or entity argument a number as its text,
-// so a pin stored as N(3) matches a bound "3". A source whose stored kinds match its declared types
+// so a pin stored as N(3) matches a bound "3". A number's unit is folded as well (Units.Fold, #205):
+// a bound NU(1, "V") matches a stored NU(1000, "mV"), so a source serving prefixed values compares
+// them folded, or returns more. A source whose stored kinds match its declared types, in base units,
 // compares as stored. A source unsure how its index compares can return more.
 //
 // What Lookup returns is kept for the rest of the Eval that asked, and by the Base for later Evals, up

@@ -63,9 +63,15 @@ A unit nobody named is still a unit, written as what it is:
 
 {{ demo "demos/guide/arithmetic-composite.yaml" }}
 
-The standard library names the SI prefixes and an electrical set (A, V, ohm and Ω, W, J, C, F, H, Hz), and a host adds its own with `Vocabulary.AddUnit`: a base unit, a prefix, or a name for a product, such as `speed` for `m/s`. A unit's first name is how answers write it. A literal's unit is letters only, so a compound one is written as arithmetic, `3m / 1s`.
+The standard library names the SI prefixes, the seven SI base units (kg, m, s, A, K, mol, cd), the gram as a thousandth of a kg, and an electrical set (A, V, ohm and Ω, W, J, C, F, H, Hz) defined over the base units, and a host adds its own with `Vocabulary.AddUnit`: a base unit, a prefix, or a name for a product, such as `speed` for `m/s`. A unit's first name is how answers write it. Since V is kg·m²/(A·s³), a unit a host names over kg, m and s meets the electrical ones: with `N` as `kg*m/s^2`, `N*m` is `J`. An unnamed unit is still written in volts where it can be (`V/m`, not `kg*m/(A*s^3)`), since the library writes kg through V (`Vocabulary.WriteBaseThrough`), and mass is in kg, so `5g` is `0.005kg`. A literal's unit is letters only, so a compound one is written as arithmetic, `3m / 1s`.
 
-A source still serves its values in base units, so `5mV` arrives as `0.005V`. A source serving prefixed values, compared by what they mean, is [#205](https://github.com/panyam/jaala/issues/205).
+A prefix moves the decimal point, so `3300mV` is the `3.3V` a reading in volts holds, not the 3.3000000000000003 that multiplying by 0.001 gives.
+
+A source may serve prefixed values too ([#205](https://github.com/panyam/jaala/issues/205)): `1000mV` from a source is read as `1V`, so it joins, groups, dedups and orders with the source's volts. A number whose text only spelled it reads as the folded number; text saying more, such as `5 mV`, is kept as the data wrote it.
+
+{{ demo "demos/guide/arithmetic-prefixed-source.yaml" }}
+
+A store that looks values up, evaluates a pushed conjunction or filters for jaala holds what it holds, but is asked by the folded value: a lookup for `1V` has to find the `1000mV` it serves.
 
 ## What arithmetic can't do yet
 

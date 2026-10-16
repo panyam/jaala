@@ -58,7 +58,7 @@ func (b *Base) lookup(atom *Atom, bnd *binding) (rows []ns.Tuple, ok bool, err e
 	if err != nil {
 		return nil, true, lookupErr(ctx, atom.Relation, err)
 	}
-	rows = normalizeTuples(rows, b.argTypesOf(atom.Relation))
+	rows = normalizeTuples(b.units(), rows, b.argTypesOf(atom.Relation))
 	b.keepLookup(key, rows)
 	if r.explain != nil {
 		b.explainLookup(atom, mask, len(rows))
@@ -129,7 +129,7 @@ func (b *Base) lookupBatch(bl ns.BatchLookupSource, atom *Atom, mask patternMask
 	}
 	types, fetched := b.argTypesOf(atom.Relation), 0
 	for k, v := range vals {
-		rows := normalizeTuples(res[k], types)
+		rows := normalizeTuples(b.units(), res[k], types)
 		b.keepLookup(lookupKey(atom.Relation, mask, v), rows)
 		fetched += len(rows)
 	}
