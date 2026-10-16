@@ -5,8 +5,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/panyam/jaala/ns"
 )
@@ -55,20 +53,18 @@ func (e *Expr) String() string {
 
 // parseOperand reads a comparison's operand: a term as parseTerm reads it, or an expression. A plain
 // term parses exactly as before, so its errors don't move.
-func parseOperand(s string) (Term, error) {
+func parseOperand(s span) (Term, error) {
 	t, err := parseTerm(s)
 	if err == nil {
 		return t, nil
 	}
 	p := &exprParser{s: s}
 	e, perr := p.expr()
-	if perr == nil {
-		if p.skip(); p.i < len(p.s) {
-			perr = fmt.Errorf("query: expression %q: unexpected %q", strings.TrimSpace(s), p.s[p.i:])
-		}
+	if perr == nil && p.i < p.n() {
+		perr = p.unexpected()
 	}
 	if perr != nil || e.Expr == nil {
-		if perr != nil && strings.ContainsAny(s, "+-*/(") {
+		if perr != nil && strings.ContainsAny(s.raw(), "+-*/(") {
 			return Term{}, perr
 		}
 		return Term{}, err
@@ -76,28 +72,31 @@ func parseOperand(s string) (Term, error) {
 	return e, nil
 }
 
+// exprParser reads an expression from the tokens of s, from toks[i] on.
 type exprParser struct {
-	s string
+	s span
 	i int
 }
 
-func (p *exprParser) skip() {
-	for p.i < len(p.s) && p.s[p.i] == ' ' {
-		p.i++
+func (p *exprParser) n() int { return p.s.hi - p.s.lo }
+
+// peek is the next token's text when it is a symbol, and "" otherwise.
+func (p *exprParser) peek() string {
+	if p.i < p.n() && p.s.is(p.i, p.s.src.toks[p.s.lo+p.i].text) {
+		return p.s.src.toks[p.s.lo+p.i].text
 	}
+	return ""
 }
 
-func (p *exprParser) peek() byte {
-	if p.skip(); p.i < len(p.s) {
-		return p.s[p.i]
-	}
-	return 0
+func (p *exprParser) unexpected() error {
+	t := p.s.src.toks[p.s.lo+p.i]
+	return p.s.tokens(p.i, p.i+1).errorf("query: expression %q: unexpected %q", p.s.text(), p.s.src.text[t.pos:p.s.to])
 }
 
 func (p *exprParser) expr() (Term, error) {
 	t, err := p.term()
-	for err == nil && (p.peek() == '+' || p.peek() == '-') {
-		op := string(p.s[p.i])
+	for err == nil && (p.peek() == "+" || p.peek() == "-") {
+		op := p.peek()
 		p.i++
 		var r Term
 		if r, err = p.term(); err == nil {
@@ -109,8 +108,8 @@ func (p *exprParser) expr() (Term, error) {
 
 func (p *exprParser) term() (Term, error) {
 	t, err := p.unary()
-	for err == nil && (p.peek() == '*' || p.peek() == '/') {
-		op := string(p.s[p.i])
+	for err == nil && (p.peek() == "*" || p.peek() == "/") {
+		op := p.peek()
 		p.i++
 		var r Term
 		if r, err = p.unary(); err == nil {
@@ -121,7 +120,7 @@ func (p *exprParser) term() (Term, error) {
 }
 
 func (p *exprParser) unary() (Term, error) {
-	if p.peek() != '-' {
+	if p.peek() != "-" {
 		return p.primary()
 	}
 	p.i++
@@ -138,61 +137,62 @@ func (p *exprParser) unary() (Term, error) {
 	return Term{Expr: &Expr{Op: "neg", Args: []Term{t}}}, nil
 }
 
+// primary reads a parenthesised expression, a string, a call, or a term. A term or a call's name is
+// the run of words, numbers, variables and dots with nothing between them, so ?a.b is one term (and
+// refused) and num.add one name.
 func (p *exprParser) primary() (Term, error) {
-	switch c := p.peek(); {
-	case c == 0:
-		return Term{}, fmt.Errorf("query: expression %q ends early", strings.TrimSpace(p.s))
-	case c == '(':
+	if p.i == p.n() {
+		return Term{}, p.s.tokens(p.i, p.i).errorf("query: expression %q ends early", p.s.text())
+	}
+	toks := p.s.toks()
+	switch t := toks[p.i]; {
+	case p.peek() == "(":
 		p.i++
-		t, err := p.expr()
+		e, err := p.expr()
 		if err != nil {
 			return Term{}, err
 		}
-		if p.peek() != ')' {
-			return Term{}, fmt.Errorf("query: expression %q: unclosed (", strings.TrimSpace(p.s))
+		if p.peek() != ")" {
+			return Term{}, p.s.tokens(p.i, p.i).errorf("query: expression %q: unclosed (", p.s.text())
 		}
 		p.i++
-		return t, nil
-	case c == '"':
-		end := strings.IndexByte(p.s[p.i+1:], '"')
-		if end < 0 {
-			return Term{}, fmt.Errorf("query: unterminated string %q", p.s[p.i:])
+		return e, nil
+	case t.kind == tokString:
+		p.i++
+		if !t.flag {
+			return Term{}, p.s.tokens(p.i-1, p.i).errorf("query: unterminated string %q", t.text)
 		}
-		t := Term{Const: &ns.Value{S: p.s[p.i+1 : p.i+1+end]}}
-		p.i += end + 2
-		return t, nil
+		return Term{Const: &ns.Value{S: t.text[1 : len(t.text)-1]}}, nil
 	}
 	start := p.i
-	for p.i < len(p.s) {
-		r, w := utf8.DecodeRuneInString(p.s[p.i:])
-		if !(unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' || r == '.' || r == '?') {
-			break
-		}
-		p.i += w
+	for p.i < len(toks) && (toks[p.i].kind != tokSymbol && toks[p.i].kind != tokString || toks[p.i].text == ".") &&
+		(p.i == start || toks[p.i].pos == toks[p.i-1].end) {
+		p.i++
 	}
-	word := p.s[start:p.i]
-	if word == "" {
-		return Term{}, fmt.Errorf("query: expression %q: unexpected %q", strings.TrimSpace(p.s), p.s[p.i:])
+	if p.i == start {
+		return Term{}, p.unexpected()
 	}
-	if p.peek() == '(' && word[0] != '?' && isRelation(word) {
+	run := p.s.tokens(start, p.i)
+	word := run.text()
+	if p.peek() == "(" && word[0] != '?' && isRelation(word) {
 		p.i++
 		var args []Term
-		for p.peek() != ')' {
+		for p.peek() != ")" {
 			a, err := p.expr()
 			if err != nil {
 				return Term{}, err
 			}
 			args = append(args, a)
-			if p.peek() == ',' {
+			if p.peek() == "," {
 				p.i++
-			} else if p.peek() != ')' {
-				return Term{}, fmt.Errorf("query: expression %q: want , or ) after %s's argument", strings.TrimSpace(p.s), word)
+			} else if p.peek() != ")" {
+				return Term{}, p.s.tokens(p.i, p.i).errorf("query: expression %q: want , or ) after %s's argument", p.s.text(), word)
 			}
 		}
 		p.i++
 		return Term{Expr: &Expr{Op: "call", Func: word, Args: args}}, nil
 	}
-	return parseTerm(word)
+	return parseTerm(run)
 }
 
 // lowerExpressions writes each comparison over an expression as calls to the functions it uses,

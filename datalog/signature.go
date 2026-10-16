@@ -1,7 +1,6 @@
 package datalog
 
 import (
-	"fmt"
 	"github.com/panyam/jaala/ns"
 	"slices"
 	"sort"
@@ -17,21 +16,22 @@ import (
 //	vocab  = "{" string { "," string } "}" ;  (* may also follow any of the above *)
 //
 // "string" and "number" are therefore not available as entity kinds.
-func parseArgType(s string) (ns.ArgType, error) {
-	s = strings.TrimSpace(s)
+func parseArgType(sp span) (ns.ArgType, error) {
+	sp = sp.trim()
+	s := sp.text()
 	var t ns.ArgType
-	if i := strings.IndexByte(s, '{'); i >= 0 {
-		if !strings.HasSuffix(s, "}") {
-			return t, fmt.Errorf("query: unterminated vocabulary in %q", s)
+	if i := sp.find("{"); i >= 0 {
+		if !sp.is(sp.hi-sp.lo-1, "}") {
+			return t, sp.errorf("query: unterminated vocabulary in %q", s)
 		}
-		for _, item := range splitTop(s[i+1:len(s)-1], ",") {
-			item = strings.TrimSpace(item)
-			if len(item) < 2 || item[0] != '"' || item[len(item)-1] != '"' {
-				return t, fmt.Errorf("query: vocabulary entry %q must be a \"string\"", item)
+		for _, item := range sp.tokens(i+1, sp.hi-sp.lo-1).split(",") {
+			item = item.trim()
+			if toks := item.toks(); len(toks) != 1 || toks[0].kind != tokString || !toks[0].flag {
+				return t, item.errorf("query: vocabulary entry %q must be a \"string\"", item.text())
 			}
-			t.Domain = append(t.Domain, item[1:len(item)-1])
+			t.Domain = append(t.Domain, item.text()[1:len(item.text())-1])
 		}
-		s = strings.TrimSpace(s[:i])
+		s = sp.before(i).text()
 		if s == "" {
 			t.Type = ns.TypeString
 			return t, nil
@@ -39,10 +39,10 @@ func parseArgType(s string) (ns.ArgType, error) {
 	}
 	switch {
 	case s == "":
-		return t, fmt.Errorf("query: empty type declaration")
+		return t, sp.errorf("query: empty type declaration")
 	case s[0] == '?':
 		if !isIdent(s[1:]) {
-			return t, fmt.Errorf("query: bad kind variable %q", s)
+			return t, sp.errorf("query: bad kind variable %q", s)
 		}
 		t.KindFrom = s[1:]
 	case s == ns.TypeString || s == ns.TypeNumber:
@@ -53,13 +53,13 @@ func parseArgType(s string) (ns.ArgType, error) {
 		open := strings.IndexByte(s, '(')
 		owner := strings.TrimSpace(s[open+1 : len(s)-1])
 		if open < 0 || len(owner) < 2 || owner[0] != '?' || !isIdent(owner[1:]) || !isIdent(strings.TrimSpace(s[:open])) {
-			return t, fmt.Errorf("query: bad type declaration %q (an owner is written kind(?var))", s)
+			return t, sp.errorf("query: bad type declaration %q (an owner is written kind(?var))", s)
 		}
 		t.Kind, t.Owner = strings.TrimSpace(s[:open]), owner[1:]
 	case isIdent(s):
 		t.Kind = s
 	default:
-		return t, fmt.Errorf("query: bad type declaration %q", s)
+		return t, sp.errorf("query: bad type declaration %q", s)
 	}
 	return t, nil
 }

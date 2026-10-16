@@ -9,7 +9,7 @@ In each message, `…` stands for the part that names your relation, variable or
 
 ## Reading the query
 
-The parser reads the text before anything else runs, so these come first and say where the text went wrong.
+The parser reads the text before anything else runs, so these come first and say where the text went wrong. Each is a `*datalog.ParseError`, whose `Line` and `Column` give where the piece it's about starts.
 
 `query: no goal clause (a query needs one clause without … to ask)`
 
@@ -102,6 +102,12 @@ A variable whose name has anything else in it, such as `?a.b` or the `?)(` a str
 A string is missing its closing `"`.
 
 {{ demo "demos/errors/unterminated-string.yaml" }}
+
+`query: … is more than one string; a "string" can't hold a quote`
+
+Two strings where a term goes, as `"api" "cli"` without a comma between them. Earlier versions read that as the one string `api" "cli`.
+
+{{ demo "demos/errors/more-than-one-string.yaml" }}
 
 `query: bare identifier … — a term must be a ?variable, a "string", or a number`
 

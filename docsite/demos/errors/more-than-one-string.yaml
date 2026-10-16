@@ -1,0 +1,3 @@
+fixture: "deps"
+query: "package(?p), ?p = \"api\" \"cli\" => ?p"
+expect_error: "is more than one string"
