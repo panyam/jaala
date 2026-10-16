@@ -558,7 +558,9 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   generator is satisfied, and while something still to run binds a variable it would solve for
   (`awaitsOperand`, #273: num.mul solving `?e * 0 = 0` answers nothing, so a function runs backwards
   only for what nothing else binds; once the body runs out, a call waits only on calls that could run then,
-  or two waiting on each other ran in whichever order they were left, `?w = ?x * 2 + 1` erring in Naive),
+  or two waiting on each other ran in whichever order they were left, `?w = ?x * 2 + 1` erring in Naive;
+  `planBody` holds such a call too (#331), since `magic` makes a demand rule from the planned prefix and
+  a demand rule has nothing left to wait for: `num.mul(?n, 0, ?p)` planned first demanded no count),
   so written order doesn't matter in Naive, and `checkComputedRecursion`
   refuses a computing rule that reaches itself (#207), on the program as linked only (`checkRules`;
   the fixpoints call `strataOf`), since the demand rewrite's cycles make a computing rule look
