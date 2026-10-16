@@ -81,10 +81,10 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   it as `Prompt.Grammar`.
 - **`frontends/nlmodels` is a module of its own** (#330): thin clients for local models already
   running, `llamacpp` (sends the grammar, `cache_prompt`) and `ollama` (no GBNF, so no grammar).
-  CI's `nlmodels` job tests it; the root's `./...` doesn't reach it. It requires jaala with `replace
-  github.com/panyam/jaala => ../../` while it needs `frontends/nl` API no tag holds, and is tagged
-  (`frontends/nlmodels/v0.1.N`, the module's directory as the prefix) only after that jaala tag and
-  a commit dropping the replace (Releasing). Its old path, `github.com/panyam/jaala/nlmodels`, shipped
+  CI's `nlmodels` job tests it; the root's `./...` doesn't reach it. It requires a published jaala
+  tag; a change needing `frontends/nl` API no tag holds puts `replace github.com/panyam/jaala =>
+  ../../` back until `make bump-root` after the next jaala tag, and `make tag` won't tag it while the
+  replace is there (Releasing). Its old path, `github.com/panyam/jaala/nlmodels`, shipped
   once (nlmodels/v0.1.65) with no consumer, and nothing is tagged under that prefix again. `./selfcheck.sh` runs a real
   `llama-server` on llama.cpp's 1 MB test model when `make llama` has fetched it: every reply must
   stay inside the grammar as `internal/gbnf` reads it. The model (`frontends/nlmodels/testdata/stories260K.gguf`)
@@ -762,18 +762,22 @@ unless `sliced`, and counts what it `shipped`. `pushing` (a
 
 ## Releasing
 
-Merge the PR, then run the CI set and `./selfcheck.sh` on the merged `main` (PRs that merged
-together were never tested together), then put an annotated tag on the merge commit and push it
-(`git tag -a v0.1.N <merge-sha>`, `git push origin v0.1.N`). The owner picks the version. So far
-releases are patch bumps on v0.1.x, breaking changes included, pre-1.0. agni consumes tags only
-(`go get github.com/panyam/jaala@vX`), never a `replace`. The tag's annotation is the release
-notes: write it as a short list of what changed, then publish the page with
-`gh release create v0.1.N --title v0.1.N --notes-from-tag --latest` (from v0.1.32; earlier tags
-have no page), and put the upgrade note on the issue a host filed or the PR's own issue. When
-`frontends/nlmodels` changed, release it after: a commit pointing its `go.mod` at the new jaala tag
-without the replace (its CI job then builds against the tag), then `git tag -a
-frontends/nlmodels/v0.1.N` on that commit. A consumer ignores `replace`, so an `nlmodels` tag requiring an older jaala would build
-without what it calls.
+Merge the PR, then start the CI set and `./selfcheck.sh` on the merged `main` (PRs that merged
+together were never tested together). The owner picks the version; so far releases are patch bumps
+on v0.1.x, breaking changes included, pre-1.0, and a tag needn't wait for the checks: when they
+fail, fix it and tag the next patch. agni consumes tags only (`go get github.com/panyam/jaala@vX`),
+never a `replace`.
+
+Release with `make tag-push V=v0.1.N NOTES=notes.txt` on the merge commit (`scripts/`, after
+mcpkit's). It tags jaala and every module in the Makefile's `SUB_MODS_TO_TAG`
+(`frontends/nlmodels`, tagged `frontends/nlmodels/v0.1.N`) at the same commit, pushes jaala's tag
+alone and then the others (GitHub raises no push event for several tags in one push, mcpkit #1391),
+and publishes the release page from jaala's annotation, which is the release notes: a short list
+of what changed, from NOTES. `make tag` alone tags without pushing. It refuses a sub-module still
+replacing jaala with its checkout, since a consumer ignores `replace`: when a sub-module needs jaala
+API no tag holds, release jaala first, then `make bump-root V=<that tag>` (points the sub-modules
+at it and drops the replace), commit, and tag the sub-modules. Put the upgrade note on the issue a
+host filed or the PR's own issue.
 
 ## Issues and missions
 
