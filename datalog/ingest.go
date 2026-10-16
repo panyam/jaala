@@ -9,10 +9,11 @@ import "github.com/panyam/jaala/ns"
 // wherever it is. Text that says more than its number, such as 3.3V, keeps its text. Equality can then
 // be strict, a number never equalling text, without a pin stored the wrong way going unmatched.
 //
-// A number's unit is folded as a query's constant is (foldUnits, #205): 5 in mV reads as 0.005 in V,
-// and 1 in A*ohm as 1 in V, so a Source may serve prefixed values and 1000 mV and 1 V are one value
-// wherever values meet. A number whose text only spelled it is written as the folded number; text
-// saying more, such as "5 mV", is kept, as data's spelling is (#148).
+// When the vocabulary folds a Source's units (ns.Vocabulary.FoldSourceUnits, #205, opt-in since #303),
+// a number's unit is folded as a query's constant is (foldUnits): 5 in mV reads as 0.005 in V, and 1
+// in A*ohm as 1 in V, so 1000 mV and 1 V are one value wherever values meet. A number whose text only
+// spelled it is written as the folded number; text saying more, such as "5 mV", is kept, as data's
+// spelling is (#148). Otherwise a Source's unit is read as it is served, a tag compared by its text.
 
 // normalizeTuples returns tuples with each value read as its argument's type (coerceValue) and each
 // plain number written canonically (canonicalNumber). A value the type can't read stays as the Source
@@ -77,9 +78,10 @@ func (b *Base) argTypesOf(rel string) []ns.ArgType {
 	return s.Types
 }
 
-// units is the vocabulary's unit table, which folds what the Source serves (ns.Units.FoldValue).
+// units is the unit table the Base reads a Source's values through (ns.Units.FoldValue): the
+// vocabulary's when it folds a Source's units (FoldSourceUnits, #303), else nil, which folds nothing.
 func (b *Base) units() *ns.Units {
-	if b.reg == nil {
+	if !b.reg.FoldsSourceUnits() {
 		return nil
 	}
 	return b.reg.Units()

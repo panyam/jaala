@@ -67,11 +67,26 @@ The standard library names the SI prefixes, the seven SI base units (kg, m, s, A
 
 A prefix moves the decimal point, so `3300mV` is the `3.3V` a reading in volts holds, not the 3.3000000000000003 that multiplying by 0.001 gives.
 
-A source may serve prefixed values too ([#205](https://github.com/panyam/jaala/issues/205)): `1000mV` from a source is read as `1V`, so it joins, groups, dedups and orders with the source's volts. A number whose text only spelled it reads as the folded number; text saying more, such as `5 mV`, is kept as the data wrote it.
+To jaala a unit is a tag: two numbers order and aggregate together when their units are the same text, and what `mV` means is the vocabulary's. So a source's values are read in the unit it serves them in, and a host keeping lengths in millimetres writes a bare threshold in millimetres ([#303](https://github.com/panyam/jaala/issues/303)):
+
+{{ demo "demos/guide/arithmetic-source-unit-tag.yaml" }}
+
+A host whose source mixes scales for one quantity asks jaala to fold them as it reads them, with `Vocabulary.FoldSourceUnits` ([#205](https://github.com/panyam/jaala/issues/205)). Then `1000mV` from a source is read as `1V`, so it joins, groups, dedups and orders with the source's volts. A number whose text only spelled it reads as the folded number; text saying more, such as `5 mV`, is kept as the data wrote it.
 
 {{ demo "demos/guide/arithmetic-prefixed-source.yaml" }}
 
-A store that looks values up, evaluates a pushed conjunction or filters for jaala holds what it holds, but is asked by the folded value: a lookup for `1V` has to find the `1000mV` it serves.
+A store that looks values up, evaluates a pushed conjunction or filters for such a host holds what it holds, but is asked by the folded value: a lookup for `1V` has to find the `1000mV` it serves.
+
+A unit's scale needn't be a power of ten. A host names durations over seconds, or a binary prefix, with an exact factor, and a query's literals read them:
+
+```go
+v.AddUnit("min", "60*s")
+v.AddUnit("h", "60*min")
+v.AddUnit("B", "")
+v.AddUnit("Ki", "1024") // a prefix: 2KiB is 2048 B
+```
+
+With those, `build(?b, ?d), ?d > 1min, ?d < 1h` reads `1min` as 60 s and `1h` as 3600 s, and a source serving `1.5` in `min` reads as 90 s once the vocabulary folds a source's units.
 
 ## What arithmetic can't do yet
 

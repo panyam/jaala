@@ -105,7 +105,9 @@ func (b *Base) checkBoundValue(t *typer, goal Body, v Var, val ns.Value) (ns.Val
 			}
 		}
 	}
-	return b.units().FoldValue(stored), nil // 5 mV bound is 0.005 V, as one bound value is (foldUnits, #205)
+	// 5 mV bound is 0.005 V, as one bound value is (foldUnits, #205): a host's bound value is a query's
+	// constant, folded whether or not the vocabulary folds a Source's values (#303).
+	return b.reg.Units().FoldValue(stored), nil
 }
 
 func mentions(a *Atom, v Var) bool {

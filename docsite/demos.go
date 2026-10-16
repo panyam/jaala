@@ -124,6 +124,9 @@ func factsCaption(s demo.Spec) string {
 			parts = append(parts, `Facts: <code>`+preText(facts)+`</code>`)
 		}
 	}
+	if s.FoldSourceUnits && len(parts) > 0 {
+		parts = append(parts, `read with their units folded (<code>FoldSourceUnits</code>)`)
+	}
 	return strings.Join(parts, " ")
 }
 

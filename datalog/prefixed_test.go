@@ -43,7 +43,7 @@ func TestAPrefixedSourceValueEqualsItsBaseValue(t *testing.T) {
 				{`reading(?p, ?v), ?v > 0.5V => ?p`, []string{"p"}, []string{"TP1", "TP2", "TP3", "TP4"}},
 				{`reading(?p, ?v) => max(?v)`, []string{"max(v)"}, []string{"3.3[V]"}},
 			} {
-				got := withUnits(eval(t, src.src(), c.query), c.cols...)
+				got := withUnits(evalFolding(t, src.src(), c.query), c.cols...)
 				if !reflect.DeepEqual(got, c.want) {
 					t.Errorf("%s = %q, want %q", c.query, got, c.want)
 				}

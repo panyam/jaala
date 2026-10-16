@@ -808,7 +808,7 @@ func (c genCase) check() (genOutcome, string) {
 	if err != nil {
 		return genInvalid, err.Error()
 	}
-	b := baseFor(std(c.facts.source()))
+	b := baseFor(folding(c.facts.source())) // prefixed weights read folded (#205, #303)
 	if err := Validate(q, b.reg); err != nil {
 		return genInvalid, err.Error()
 	}

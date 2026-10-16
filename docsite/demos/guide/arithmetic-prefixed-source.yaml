@@ -1,5 +1,6 @@
 facts: |
   reading("TP1", 1000mV); reading("TP2", 1V); reading("TP3", 3300mV); reading("TP4", 3.3V)
+fold_source_units: true
 query: |
   reading(?a, ?v), reading(?b, ?v), ?a < ?b => ?a, ?b
 expect: [[TP1, TP2], [TP3, TP4]]

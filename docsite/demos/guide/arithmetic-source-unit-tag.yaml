@@ -1,0 +1,5 @@
+facts: |
+  track_width("SIG", 0.08mm); track_width("PWR", 0.5mm)
+query: |
+  track_width(?net, ?w), ?w < 0.1 => ?net, ?w
+expect: [[SIG, 0.08mm]]

@@ -1031,7 +1031,7 @@ func prepareSouffle(c genCase, prefix string) (souffleCase, string, error) {
 		return souffleCase{}, "", err
 	}
 	src := c.facts.source()
-	b := baseFor(std(src))
+	b := baseFor(folding(src))
 	opts := c.opts()
 	rows, err := (Naive{}).Eval(bg, q, b, append(opts, Budget(genBudget))...)
 	var over *BudgetExceeded

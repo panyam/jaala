@@ -27,6 +27,9 @@ type Spec struct {
 	Bind map[string]string `yaml:"bind" json:"bind,omitempty"`
 	// Cites shows each row's citations next to it.
 	Cites bool `yaml:"cites" json:"cites,omitempty"`
+	// FoldSourceUnits has the facts' units folded as they are read, as a host opts in with
+	// ns.Vocabulary.FoldSourceUnits (jaala#303): 1000mV in the facts is then 1V.
+	FoldSourceUnits bool `yaml:"fold_source_units" json:"foldSourceUnits,omitempty"`
 	// Expect pins the answer's rows, in order, as the table shows them.
 	Expect [][]string `yaml:"expect" json:"expect,omitempty"`
 	// ExpectError pins the example to fail with an error containing this text.
@@ -102,6 +105,9 @@ func Run(s Spec) (Table, error) {
 	}
 	if err := stdlib.Register(v); err != nil {
 		return Table{}, err
+	}
+	if s.FoldSourceUnits {
+		v.FoldSourceUnits()
 	}
 	base, err := datalog.NewBase(v, src)
 	if err != nil {
