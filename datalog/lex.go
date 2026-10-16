@@ -59,8 +59,8 @@ func blankComments(s string) string {
 	}
 	b := []byte(s)
 	inQuote, inComment := false, false
-	for i, c := range b {
-		switch {
+	for i := 0; i < len(b); i++ {
+		switch c := b[i]; {
 		case inComment:
 			if c == '\n' {
 				inComment = false
@@ -69,12 +69,29 @@ func blankComments(s string) string {
 			}
 		case c == '"':
 			inQuote = !inQuote
+		case c == '\\' && inQuote:
+			i++ // the next character is the string's, a quote included (#314)
 		case c == '#' && !inQuote:
 			inComment = true
 			b[i] = ' '
 		}
 	}
 	return string(b)
+}
+
+// stringEnd returns the index in s of the quote that ends the string s starts inside, or -1. A backslash
+// keeps the character after it in the string, so \" is a quote inside it; both stay as written, since a
+// string takes no escapes (#314).
+func stringEnd(s string) int {
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '\\':
+			i++
+		case '"':
+			return i
+		}
+	}
+	return -1
 }
 
 // lexRange reads the tokens of text[from:to], with offsets into text.
@@ -89,7 +106,7 @@ func lexRange(text string, from, to int) []token {
 			i += w
 			continue
 		case r == '"':
-			end := strings.IndexByte(s[i+1:], '"')
+			end := stringEnd(s[i+1:])
 			closed := end >= 0
 			if closed {
 				i += end + 2
