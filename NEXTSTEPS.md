@@ -17,8 +17,7 @@ Maintained by /checkpoint: one thread per branch, pruned when the branch merges.
   (#280 blocked by #279); an agent-queries mission waits on Declaire's `make exercise-mcp-agent`
   rerun.
 - This run: dropped feat/push-stops-at-filter-291 (PR #294), fix/operand-wait-deadlock (PR #296)
-  and feat/generator-ranking-and-filter-push-293 (PR #298), all merged; their remote branches are
-  still on origin.
+  and feat/generator-ranking-and-filter-push-293 (PR #298), all merged, branches gone from origin.
 
 ## Across threads
 
