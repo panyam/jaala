@@ -13,7 +13,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/panyam/jaala/nl"
+	"github.com/panyam/jaala/frontends/nl"
 )
 
 // A Client asks one llama-server. The zero value isn't usable; New fills in the defaults.

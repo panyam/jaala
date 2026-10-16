@@ -307,7 +307,11 @@ func (b *Base) arityErr(msg string, atom *Atom) *CheckError {
 // verb is the vocabulary's description of the name, after args.
 func (b *Base) unknownErr(atom *Atom, format string, args ...any) *CheckError {
 	desc := b.reg.Unknown(atom.Relation)
-	return checkErr(KindUnknown, fmt.Sprintf(format, append(args, desc)...)).call(atom.Relation, len(atom.Args)).fix(unknownFix(desc))
+	fix := unknownFix(desc)
+	if fix == "" {
+		fix = b.relatedFix(atom)
+	}
+	return checkErr(KindUnknown, fmt.Sprintf(format, append(args, desc)...)).call(atom.Relation, len(atom.Args)).fix(fix)
 }
 
 // unboundOperand is the CheckError for a comparison reaching an operand nothing bound, naming the
@@ -334,4 +338,20 @@ func unboundOperand(c Compare, bnd *binding) *CheckError {
 // unknownAggregateErr is the CheckError for an aggregate function jaala doesn't have.
 func unknownAggregateErr(f string) *CheckError {
 	return checkErr(KindUnknown, fmt.Sprintf("query: unknown aggregate %q (want count/min/max/sum/list)", f)).fix("use count, min, max, sum or list")
+}
+
+// relatedFix is the Fix for a name nothing plausibly misspells (#336): the members taking as many
+// arguments, written as calls, those sharing a word with the name first, or failing those, that
+// nothing by that name exists, so a model stops inventing names.
+func (b *Base) relatedFix(atom *Atom) string {
+	rel := shownName(atom.Relation)
+	related := b.reg.Related(rel, len(atom.Args))
+	if len(related) == 0 {
+		return fmt.Sprintf("nothing is named %s, and no member takes %d arguments; use one the vocabulary lists", rel, len(atom.Args))
+	}
+	calls := make([]string, len(related))
+	for i, r := range related {
+		calls[i] = b.signatureFix(r)
+	}
+	return fmt.Sprintf("nothing is named %s; members taking %d arguments include %s", rel, len(atom.Args), strings.Join(calls, ", "))
 }

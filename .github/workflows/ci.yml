@@ -37,12 +37,12 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: nlmodels
+        working-directory: frontends/nlmodels
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: nlmodels/go.mod
+          go-version-file: frontends/nlmodels/go.mod
       - name: gofmt
         run: |
           out=$(gofmt -l .)

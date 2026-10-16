@@ -343,3 +343,72 @@ func DidYouMeanValue(allowed []string, got string) string {
 // at all, and "" otherwise. It is v.Hint, for a host that validates names itself, such as one
 // checking a rule that arrived over its own wire format, so its errors read the same as the engine's.
 func DidYouMean(v *Vocabulary, name string) string { return v.Hint(name) }
+
+// Related lists, for a name the vocabulary doesn't hold and nothing plausibly misspells, the members
+// a caller might have meant instead (#336): those taking arity arguments (any, when arity is
+// negative), relations before predicates, and among them first the ones whose path or doc shares a
+// word with name, at most four. It reads only what was registered, never Check, so an engine may call
+// it while resolving modules.
+func (v *Vocabulary) Related(name string, arity int) []string {
+	if v == nil {
+		return nil
+	}
+	words := map[string]bool{}
+	for _, w := range splitWords(name) {
+		words[w] = true
+	}
+	type cand struct {
+		path   string
+		shares bool
+	}
+	var rels, preds []cand
+	consider := func(path string, takes func(int) bool, doc string, into *[]cand) {
+		if arity >= 0 && !takes(arity) {
+			return
+		}
+		shares := false
+		for _, w := range append(splitWords(path), splitWords(doc)...) {
+			shares = shares || words[w]
+		}
+		*into = append(*into, cand{path, shares})
+	}
+	for _, p := range v.candidates() {
+		m := v.members[p]
+		switch m.kind {
+		case kindBase:
+			consider(p, func(n int) bool { return n == m.schema.Arity }, m.schema.Doc, &rels)
+		case kindPredicate:
+			consider(p, m.pred.Accepts, m.pred.Doc, &preds)
+		case kindDerived:
+			_, leaf := splitPath(p)
+			for _, d := range v.mods[m.module].Members {
+				if d.Name == leaf {
+					consider(p, func(n int) bool { return n == d.Arity }, d.Doc, &rels)
+				}
+			}
+		}
+	}
+	var out []string
+	for _, pass := range []bool{true, false} {
+		for _, c := range append(rels, preds...) {
+			if c.shares == pass && len(out) < 4 {
+				out = append(out, c.path)
+			}
+		}
+	}
+	return out
+}
+
+// splitWords is a name's or a doc's words, lower case, of three letters or more, so `a`, `of` and
+// `the` never make two names look related.
+func splitWords(s string) []string {
+	var out []string
+	for _, w := range strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9')
+	}) {
+		if len(w) >= 3 {
+			out = append(out, w)
+		}
+	}
+	return out
+}

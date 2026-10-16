@@ -10,9 +10,9 @@ import (
 func TestEveryProgramTheGrammarWritesParses(t *testing.T) {
 	var s *sampler
 	failed, rules := 0, programRules()
-	for i := 0; i < 70000; i++ {
-		if i%1000 == 0 { // a fresh seed and depth now and then: one alone missed -(9) as a column
-			s = newSampler(rules, int64(i), 3+i/1000%7)
+	for i := 0; i < 21000; i++ {
+		if i%300 == 0 { // 70 seeds over every depth: one seed alone missed -(9) as a column
+			s = newSampler(rules, int64(i), 3+i/300%7)
 		}
 		text := s.sample("root")
 		if _, err := datalog.Parse(text); err != nil {

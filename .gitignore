@@ -1,4 +1,4 @@
 *.test
 *.out
 /coverage*
-nlmodels/testdata/*.gguf
+frontends/nlmodels/testdata/*.gguf
