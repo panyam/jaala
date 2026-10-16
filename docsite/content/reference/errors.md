@@ -687,6 +687,10 @@ The host's source failed to serve a relation. jaala doesn't cache a failed read.
 
 `At` or `Diff` named a version outside the timed source's `Versions()`.
 
+`query: version …: …`
+
+The timed source serves each version as a source of its own (`ns.SourceAt`), and version `…`'s failed: its `SourceAt` returned an error, or the source it returned doesn't serve a relation the vocabulary holds, at its arity (the rest of the message is what `NewBase` says). A failed version isn't kept, so the next query at it asks again.
+
 `query: Across needs a Source that serves versions (ns.TimedSource)`
 
 `Across` was given to a query over a base whose source serves one version.
@@ -806,6 +810,10 @@ A member's source lists a relation it can't describe.
 `query: federation: … has a different schema in member … than in member …`
 
 Two members serve one relation with different arities, labels or types. The engine would read their facts as one relation, so they have to agree. `Doc` may differ.
+
+`query: federation: no member serves versions (ns.TimedSource)`
+
+`Federation.Timed` was called on a federation none of whose members is a timed source, so it has no versions to serve.
 
 ## Internal
 

@@ -47,6 +47,52 @@ type TimedSource interface {
 	TimedTuples(ctx context.Context, rel string) ([]TimedTuple, error)
 }
 
+// SourceAt is optionally implemented by a TimedSource that serves each version's facts as a Source of
+// its own (#312): the facts holding in v, with v's citations, through whichever of the interfaces a
+// plain Source may implement it does (LookupSource, PushSource, StreamSource, WalkSource, SummarySource
+// and the rest). An Eval under datalog.At(v) then reads version v as it reads any Source, asking the
+// store for what a query binds rather than reading TimedTuples whole, and never calls TimedTuples.
+// Across and Diff still read TimedTuples.
+//
+// The engine calls SourceAt once for each version whose caches it holds (datalog's LimitVersions), and
+// again after it drops them, so a host whose versions live in one store returns a small view of it, the
+// store and v, rather than copying anything. The returned Source serves the TimedSource's relations with
+// the same schemas; one that is Versioned keys its version's kept relations (KeepDerivedIn) by its own
+// version too. An error fails the Eval that asked, and the next Eval at v asks again.
+type SourceAt interface {
+	TimedSource
+	SourceAt(v Version) (Source, error)
+}
+
+// versionView is a TimedSource's facts at version v as a plain Source, for a federation member that
+// doesn't implement SourceAt. Every read reads TimedTuples whole.
+type versionView struct {
+	ts TimedSource
+	v  Version
+}
+
+func (s versionView) Schema(rel string) (Schema, bool) { return s.ts.Schema(rel) }
+func (s versionView) Relations() []string              { return s.ts.Relations() }
+
+func (s versionView) Tuples(rel string) []Tuple {
+	t, _ := s.TuplesContext(context.Background(), rel)
+	return t
+}
+
+func (s versionView) TuplesContext(ctx context.Context, rel string) ([]Tuple, error) {
+	timed, err := s.ts.TimedTuples(WithVersion(ctx, s.v), rel)
+	if err != nil {
+		return nil, err
+	}
+	var out []Tuple
+	for _, t := range timed {
+		if t.Versions != nil && t.Versions.Contains(s.v) {
+			out = append(out, Tuple{Vals: t.Vals, Cites: t.CitesAt(s.v)})
+		}
+	}
+	return out, nil
+}
+
 type versionKey struct{}
 
 // WithVersion is ctx carrying v, the version an Eval reads its TimedSource at. The engine sets it on

@@ -1152,3 +1152,112 @@ func (f *Federation) WalkConjunction(ctx context.Context, c Conjunction, in, out
 		}
 	}
 }
+
+// A TimedFederation is a Federation whose facts hold over versions (#312), so one Base answers At(v)
+// and Across over facts kept in several stores, such as a design's netlist store serving each revision
+// beside a datasheet store that doesn't change between them. Made by Federation.Timed, it is a
+// TimedSource and a SourceAt, and as a plain Source it is the Federation it was made from.
+type TimedFederation struct {
+	*Federation
+}
+
+// Timed is f serving versions: a member that is a TimedSource holds its facts in their versions, and
+// any other member holds its facts in every version. Its versions are those every TimedSource member
+// serves. It is refused when no member is a TimedSource.
+func (f *Federation) Timed() (*TimedFederation, error) {
+	for _, m := range f.members {
+		if _, ok := m.Source.(TimedSource); ok {
+			return &TimedFederation{f}, nil
+		}
+	}
+	return nil, fmt.Errorf("query: federation: no member serves versions (ns.TimedSource)")
+}
+
+// Versions implements TimedSource: the versions every member that is a TimedSource serves.
+func (t *TimedFederation) Versions() VersionSet {
+	var vs VersionSet
+	for _, m := range t.members {
+		if ts, ok := m.Source.(TimedSource); ok {
+			if vs == nil {
+				vs = ts.Versions()
+			} else {
+				vs = vs.Intersect(ts.Versions())
+			}
+		}
+	}
+	return vs
+}
+
+// TimedTuples implements TimedSource: the members' facts of rel in member order, a member that isn't a
+// TimedSource holding each of its facts in every version the federation serves. A member's failure fails
+// the read, wrapped with the member's name.
+func (t *TimedFederation) TimedTuples(ctx context.Context, rel string) ([]TimedTuple, error) {
+	var all VersionSet
+	var out []TimedTuple
+	for _, i := range t.serving[rel] {
+		src := t.members[i].Source
+		if ts, ok := src.(TimedSource); ok {
+			tt, err := ts.TimedTuples(ctx, rel)
+			if err != nil {
+				return nil, fmt.Errorf("member %s: %w", t.name(i), err)
+			}
+			for _, x := range tt {
+				out = append(out, t.citeTimed(i, x))
+			}
+			continue
+		}
+		var ts []Tuple
+		if cs, ok := src.(ContextSource); ok {
+			var err error
+			if ts, err = cs.TuplesContext(ctx, rel); err != nil {
+				return nil, fmt.Errorf("member %s: %w", t.name(i), err)
+			}
+		} else {
+			ts = src.Tuples(rel)
+		}
+		if all == nil {
+			all = t.Versions()
+		}
+		for _, x := range t.cited(i, ts) {
+			out = append(out, TimedTuple{Vals: x.Vals, Versions: all, Cites: []TimedCites{{Versions: all, Cites: x.Cites}}})
+		}
+	}
+	return out, nil
+}
+
+// citeTimed is x with member i's Name before each of its citations, as cite writes a Tuple's.
+func (t *TimedFederation) citeTimed(i int, x TimedTuple) TimedTuple {
+	if t.members[i].Name == "" {
+		return x
+	}
+	cites := make([]TimedCites, len(x.Cites))
+	for j, c := range x.Cites {
+		cites[j] = TimedCites{Versions: c.Versions, Cites: t.cite(i, Tuple{Cites: c.Cites}).Cites}
+	}
+	return TimedTuple{Vals: x.Vals, Versions: x.Versions, Cites: cites}
+}
+
+// SourceAt implements SourceAt: a Federation over the members at v, with their names and Holds, and
+// partitioned when t is. A TimedSource member is its own SourceAt(v), or its facts at v read from
+// TimedTuples when it has none; any other member is itself.
+func (t *TimedFederation) SourceAt(v Version) (Source, error) {
+	members := append([]Member(nil), t.members...)
+	for i, m := range members {
+		switch ts := m.Source.(type) {
+		case SourceAt:
+			src, err := ts.SourceAt(v)
+			if err != nil {
+				return nil, fmt.Errorf("member %s: %w", t.name(i), err)
+			}
+			members[i].Source = src
+		case TimedSource:
+			members[i].Source = versionView{ts, v}
+		}
+	}
+	f, err := NewFederation(members...)
+	if err != nil {
+		return nil, err
+	}
+	f.partitioned = t.partitioned
+	return f, nil
+}

@@ -106,6 +106,19 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   two members serve is two facts, as in one Source serving it twice. The corpus runs every program
   over a three-member federation too (`agreeFederated`), whose limited answers without an `order by`
   are checked as a subset, since the tuples arrive in another order (#194).
+- **A version's Base reads the Source its TimedSource serves for it** (`versions.go`, #179, #312).
+  `At(v)` runs on a Base kept per version (`versionCache`, `LimitVersions`). Over an `ns.SourceAt`
+  it is `NewBase` over `SourceAt(v)`, so lookups, pushes, walks and the rest reach the version's
+  store and `TimedTuples` is never read; otherwise it reads v's facts from `TimedTuples`
+  (`atSource`, read once for every version). `SourceAt` runs outside the cache lock and an error
+  isn't kept. A version's caches are keyed by `versionTag` (the TimedSource's version, v, and the
+  version Source's own), carried on `Base.versioned` rather than asserted off `src`, since wrapping a
+  host's Source to add `Version` would hide its store interfaces. `Federation.Timed` makes a
+  `TimedFederation`: a plain member holds in every version, and at v it is a Federation of the
+  members at v (`versionView` for a timed member without `SourceAt`), partitioned when the original
+  is. `Across` and `Diff` still read `TimedTuples` whole. The corpus runs `agreeAt` over
+  `storing(timed)` too (a `pushing` store per version, through a timed Federation every third seed),
+  failing if `TimedTuples` is read; `atStoredPrograms` is its control.
 - **A Source may say which lookups it answers from an index** (`ns.IndexedLookups`, #154).
   `planBody` ranks a looked-up call on a pattern the Source says is unindexed as if nothing were
   bound (`scansOnLookup`), so an indexed call runs first; nothing else reads it, so a Source held in

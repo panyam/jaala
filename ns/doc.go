@@ -36,5 +36,7 @@
 // Source over several, for facts kept in several stores: each relation is the union of its members',
 // and a lookup goes only to the members whose Holds says they can match. A TimedSource serves several
 // versions of its facts, each fact once with its VersionSet (an IntervalSet for linear history, a
-// BitSet for history that branches), so one Base answers at any version.
+// BitSet for history that branches), so one Base answers at any version; one implementing SourceAt
+// serves each version as a Source of its own, so a question at a version reaches its store, and
+// Federation.Timed joins timed members with members that don't change between versions.
 package ns
