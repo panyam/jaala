@@ -218,12 +218,15 @@ func (s walker) Walk(_ context.Context, w ns.Walk) iter.Seq2[ns.Tuple, error] {
 
 // A recursive rule following a relation probes it round by round, a call
 // per level. A store that walks is asked once for the whole walk instead.
-// The recursive rule reads imports itself: deps.depends_on reads it through
-// _step, which isn't inlined into a recursive rule, so it's probed per round.
+// deps.depends_on reads imports through _step, a helper that only renames
+// it, so _step is inlined into the recursive rule and the walk is found too.
 func Example_storeWalk() {
 	reach := `reach(?a, ?b) :- imports(?a, ?b); reach(?a, ?c) :- reach(?a, ?b), imports(?b, ?c); `
 	answer(storeBase(walker{looker{source(), "store"}}), reach+`reach("app", ?d) => ?d`, "d")
+	answer(storeBase(walker{looker{source(), "store"}}), `deps.depends_on("app", ?d) => ?d`, "d")
 	// Output:
+	// store: walk imports from app
+	// api log util
 	// store: walk imports from app
 	// api log util
 }

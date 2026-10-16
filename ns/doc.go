@@ -37,6 +37,7 @@
 // and a lookup goes only to the members whose Holds says they can match. A TimedSource serves several
 // versions of its facts, each fact once with its VersionSet (an IntervalSet for linear history, a
 // BitSet for history that branches), so one Base answers at any version; one implementing SourceAt
-// serves each version as a Source of its own, so a question at a version reaches its store, and
+// serves each version as a Source of its own, so a question at a version reaches its store, one
+// implementing TimedLookupSource answers a bound call across every version at once, and
 // Federation.Timed joins timed members with members that don't change between versions.
 package ns

@@ -65,6 +65,34 @@ func TestAWalkIsOneCall(t *testing.T) {
 	}
 }
 
+// A recursive rule reading the walked relation through a helper that only renames it walks as one
+// reading it itself (#319): the helper is inlined into the recursive rule. control: a helper that also
+// compares stays a derived relation there, so its relation is looked up a level at a time.
+func TestARecursionThroughARenamingHelperWalks(t *testing.T) {
+	const rec = `walk(?a, ?b) :- _step(?a, ?b); walk(?a, ?c) :- walk(?a, ?b), _step(?b, ?c); `
+	for _, c := range []struct {
+		name, step      string
+		walks, lookedUp bool
+	}{
+		{"renames", `_step(?a, ?b) :- next(?a, ?b); `, true, false},
+		{"compares", `_step(?a, ?b) :- next(?a, ?b), ?a != ?b; `, false, true},
+	} {
+		q := mustParse(t, rec+c.step+`walk("n0", ?x) => ?x`)
+		want, err := both(q, baseFor(std(walkChain(6))))
+		if err != nil || len(want) != 6 {
+			t.Fatalf("%s, in memory: %v %v", c.name, binds(want), err)
+		}
+		src := pushingAt(walkChain(6))
+		got, err := SemiNaive{}.Eval(bg, q, MustBase(std(walkChain(6)), src))
+		if err != nil || !reflect.DeepEqual(binds(got), binds(want)) {
+			t.Errorf("%s: walked %v %v, in memory %v", c.name, binds(got), err, binds(want))
+		}
+		if (src.walks() == 1) != c.walks || (src.lookups["next"] >= 6) != c.lookedUp {
+			t.Errorf("%s: walked %d times and looked up next %d times", c.name, src.walks(), src.lookups["next"])
+		}
+	}
+}
+
 // A fact the store sends that the walk doesn't reach is never kept as its value's whole answer: z1's
 // one fact the sloppy store adds would otherwise answer next("z1", ?x) for later queries on the Base.
 func TestAWalkKeepsOnlyWhatItReached(t *testing.T) {

@@ -1,10 +1,13 @@
 package datalog
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/panyam/jaala/ns"
@@ -12,17 +15,99 @@ import (
 
 // acrossPrograms counts the corpus programs Across answered with a row holding in some versions and
 // not others, the control that agreeAcross's sets tell versions apart, and acrossAggregates those of
-// them that aggregate (#181).
-var acrossPrograms, acrossAggregates int
+// them that aggregate (#181). acrossLookedPrograms counts those whose Across asked a lookingTimed store
+// for a bound call (#317).
+var acrossPrograms, acrossAggregates, acrossLookedPrograms int
+
+// lookingTimed is a TimedMemSource that answers LookupTimed (#317), counting its lookups and its
+// TimedTuples reads by relation. sloppy answers each lookup with the relation's every fact, and fail
+// fails each lookup.
+type lookingTimed struct {
+	*ns.TimedMemSource
+	mu      sync.Mutex
+	lookups map[string]int
+	wholes  map[string]int
+	sloppy  bool
+	fail    error
+}
+
+func lookingTimedAt(src *ns.TimedMemSource) *lookingTimed {
+	return &lookingTimed{TimedMemSource: src, lookups: map[string]int{}, wholes: map[string]int{}}
+}
+
+func (l *lookingTimed) TimedTuples(ctx context.Context, rel string) ([]ns.TimedTuple, error) {
+	l.mu.Lock()
+	l.wholes[rel]++
+	l.mu.Unlock()
+	return l.TimedMemSource.TimedTuples(ctx, rel)
+}
+
+func (l *lookingTimed) LookupTimed(ctx context.Context, rel string, bound map[int]ns.Value) ([]ns.TimedTuple, error) {
+	l.mu.Lock()
+	l.lookups[rel]++
+	fail := l.fail
+	l.mu.Unlock()
+	if fail != nil {
+		return nil, fail
+	}
+	all, err := l.TimedMemSource.TimedTuples(ctx, rel)
+	if err != nil || l.sloppy {
+		return all, err
+	}
+	s, _ := l.Schema(rel)
+	var out []ns.TimedTuple
+	for _, t := range all {
+		vals, _ := normalizeValues(stdUnits, t.Vals, s.Types)
+		ok := true
+		for i, v := range bound {
+			ok = ok && valueEq(vals[i], v)
+		}
+		if ok {
+			out = append(out, t)
+		}
+	}
+	return out, nil
+}
+
+func (l *lookingTimed) looked() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	n := 0
+	for _, c := range l.lookups {
+		n += c
+	}
+	return n
+}
+
+// lookingTimedOver is a lookingTimed over timed, sloppy on every other seed and behind a timed
+// Federation on every third.
+func lookingTimedOver(timed *ns.TimedMemSource, seed int) (*lookingTimed, ns.Source) {
+	lt := lookingTimedAt(timed)
+	lt.sloppy = seed%2 == 1
+	if seed%3 != 0 {
+		return lt, lt
+	}
+	f, err := ns.NewFederation(ns.Member{Source: lt})
+	if err != nil {
+		panic(err)
+	}
+	tf, err := f.Timed()
+	if err != nil {
+		panic(err)
+	}
+	return lt, tf
+}
 
 // agreeAcross requires every evaluator's Across answer over b's facts dealt across versions to hold,
 // for each version v, exactly the rows At(v) answers, and under CanonicalCites their citations and
 // witnesses at v too (#180).
-func agreeAcross(q Query, b *Base, opts []Option) string {
+func agreeAcross(q Query, b *Base, opts []Option, seed int) string {
 	if anyRows(q) {
 		q.Limit = 0
 	}
 	timed, at := timedOver(b.src)
+	lt, looked := lookingTimedOver(timed, seed)
+	sources := map[string]ns.Source{"read from TimedTuples": timed, "looked up": looked}
 	all := ns.Span(0, timedVersions)
 	var wants [][]Row
 	anyErr := false
@@ -33,21 +118,23 @@ func agreeAcross(q Query, b *Base, opts []Option) string {
 	}
 	partial := false
 	for _, ev := range []Evaluator{Naive{}, SemiNaive{WrittenOrder: true}, SemiNaive{}} {
-		got, err := ev.Eval(bg, q, MustBase(b.reg, timed), append(opts[:len(opts):len(opts)], Across(all))...)
-		if (err != nil) != anyErr {
-			return fmt.Sprintf("%T across versions errs %v where a version's own answer errs %v on %v", ev, err, anyErr, q)
-		}
-		if err != nil {
-			continue
-		}
-		for v := range ns.Version(timedVersions) {
-			if g := binds(rowsAt(got, v)); !reflect.DeepEqual(g, binds(wants[v])) {
-				return fmt.Sprintf("%T across versions holds at %d other rows than a Source holding only its facts on %v\n only v: %v\n Across: %v", ev, v, q, binds(wants[v]), g)
+		for how, src := range sources {
+			got, err := ev.Eval(bg, q, MustBase(b.reg, src), append(opts[:len(opts):len(opts)], Across(all))...)
+			if (err != nil) != anyErr {
+				return fmt.Sprintf("%T across versions %s errs %v where a version's own answer errs %v on %v", ev, how, err, anyErr, q)
 			}
-		}
-		for _, r := range got {
-			if !ns.SameVersions(r.Versions, all) {
-				partial = true
+			if err != nil {
+				continue
+			}
+			for v := range ns.Version(timedVersions) {
+				if g := binds(rowsAt(got, v)); !reflect.DeepEqual(g, binds(wants[v])) {
+					return fmt.Sprintf("%T across versions %s holds at %d other rows than a Source holding only its facts on %v\n only v: %v\n Across: %v", ev, how, v, q, binds(wants[v]), g)
+				}
+			}
+			for _, r := range got {
+				if !ns.SameVersions(r.Versions, all) {
+					partial = true
+				}
 			}
 		}
 	}
@@ -56,13 +143,18 @@ func agreeAcross(q Query, b *Base, opts []Option) string {
 	}
 	canon := append(opts[:len(opts):len(opts)], CanonicalCites())
 	for _, ev := range []Evaluator{Naive{}, SemiNaive{WrittenOrder: true}, SemiNaive{}} {
-		got, _ := ev.Eval(bg, q, MustBase(b.reg, timed), append(canon, Across(all))...)
-		for v := range ns.Version(timedVersions) {
-			want, _ := Naive{}.Eval(bg, q, MustBase(b.reg, at(v)), canon...)
-			if g := rowsAt(got, v); (len(g) > 0 || len(want) > 0) && !reflect.DeepEqual(g, want) {
-				return fmt.Sprintf("%T across versions cites differently at %d under CanonicalCites on %v\n only v: %v\n Across: %v", ev, v, q, want, g)
+		for how, src := range sources {
+			got, _ := ev.Eval(bg, q, MustBase(b.reg, src), append(canon, Across(all))...)
+			for v := range ns.Version(timedVersions) {
+				want, _ := Naive{}.Eval(bg, q, MustBase(b.reg, at(v)), canon...)
+				if g := rowsAt(got, v); (len(g) > 0 || len(want) > 0) && !reflect.DeepEqual(g, want) {
+					return fmt.Sprintf("%T across versions %s cites differently at %d under CanonicalCites on %v\n only v: %v\n Across: %v", ev, how, v, q, want, g)
+				}
 			}
 		}
+	}
+	if lt.looked() > 0 {
+		acrossLookedPrograms++
 	}
 	if partial {
 		acrossPrograms++
@@ -359,5 +451,86 @@ func TestAcrossSplitsADistinctSumApart(t *testing.T) {
 	}
 	if want := []string{"11 [{0 2}]"}; !slices.Equal(got, want) {
 		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+// Across over a TimedLookupSource asks it for what a query binds rather than reading TimedTuples whole
+// (#317), and holds the rows in each version, with their citations and witnesses, that Across reading
+// TimedTuples does. s's second rule finds its lookup kept by the first, so a kept lookup holds its
+// versions too: c->d holds only in 0. control: hiding LookupTimed reads TimedTuples and looks nothing up.
+func TestAcrossLooksUpATimedLookupSource(t *testing.T) {
+	all := ns.Span(0, 3)
+	for _, text := range []string{
+		reachRules + `reach("a", ?x) => ?x`,
+		`edge("a", ?m), node(?n), edge(?n, ?m) => ?n, ?m`,
+		`s(?y) :- edge("c", ?y); s(?y) :- node(?n), edge("c", ?y); s(?y) => ?y`,
+	} {
+		q := mustParse(t, text)
+		for _, ev := range []Evaluator{Naive{}, SemiNaive{WrittenOrder: true}, SemiNaive{}} {
+			for _, opts := range [][]Option{nil, {Witnesses()}, {CanonicalCites()}} {
+				want, err := ev.Eval(bg, q, baseFor(std(versionedGraph())), append(opts, Across(all))...)
+				if err != nil || len(want) == 0 {
+					t.Fatalf("%T reading TimedTuples: %v %v", ev, want, err)
+				}
+				lt := lookingTimedAt(versionedGraph())
+				got, err := ev.Eval(bg, q, baseFor(std(lt)), append(opts, Across(all))...)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for v := range ns.Version(3) {
+					if g, w := rowsAt(got, v), rowsAt(want, v); !reflect.DeepEqual(g, w) {
+						t.Errorf("%T %v with %d options at %d: looked up %v, read whole %v", ev, q, len(opts), v, g, w)
+					}
+				}
+				if ev == (SemiNaive{}) && (lt.looked() == 0 || lt.wholes["edge"] != 0) {
+					t.Errorf("%v: the planned SemiNaive looked up %d times and read edge's TimedTuples %d times", q, lt.looked(), lt.wholes["edge"])
+				}
+			}
+		}
+		hidden := lookingTimedAt(versionedGraph())
+		if _, err := (SemiNaive{}).Eval(bg, q, baseFor(std(timedOnly{hidden})), Across(all)); err != nil || hidden.looked() != 0 || hidden.wholes["edge"] == 0 {
+			t.Errorf("control: without LookupTimed, looked up %d times and read edge whole %d: %v", hidden.looked(), hidden.wholes["edge"], err)
+		}
+	}
+}
+
+// A failed LookupTimed fails the Across Eval, wrapped with the relation's name, and isn't kept: the
+// next Eval asks again.
+func TestAFailedTimedLookupFailsAcrossAndIsntKept(t *testing.T) {
+	lt := lookingTimedAt(versionedGraph())
+	lt.fail = errors.New("store down")
+	b := baseFor(std(lt))
+	q := mustParse(t, `edge("a", ?x) => ?x`)
+	_, err := SemiNaive{}.Eval(bg, q, b, Across(ns.Span(0, 3)))
+	if err == nil || !strings.HasPrefix(err.Error(), "query: ") || !strings.Contains(err.Error(), "edge") || !errors.Is(err, lt.fail) {
+		t.Fatalf("a failing lookup: %v", err)
+	}
+	lt.fail = nil
+	rows, err := SemiNaive{}.Eval(bg, q, b, Across(ns.Span(0, 3)))
+	if err != nil || col(rows, "x") != "b" || lt.looked() != 2 {
+		t.Errorf("after the store came back: %v %v, looked up %d times, want b and a second lookup", col(rows, "x"), err, lt.looked())
+	}
+}
+
+// A derived witness node holds in the versions its copy of the tuple does (#317): r(a, 5) is derived
+// from n in both versions and kept as 5 V from m in 1, so the copy spelled 5 holds in 0 alone, and its
+// node says so rather than the versions it was first derived for.
+func TestAcrossWitnessHoldsInItsCopysVersions(t *testing.T) {
+	src := ns.NewTimedMemSource(ns.Span(0, 2))
+	src.DeclareSchema("n", ns.Schema{Arity: 2, Labels: []string{"x", "v"}, Types: []ns.ArgType{{}, {Type: ns.TypeNumber}}})
+	src.DeclareSchema("m", ns.Schema{Arity: 2, Labels: []string{"x", "v"}, Types: []ns.ArgType{{}, {Type: ns.TypeNumber}}})
+	src.Add("n", ns.Since(0), nil, ns.S("a"), ns.N(5))
+	src.Add("m", ns.Bits(1), nil, ns.S("a"), ns.NU(5, "V"))
+	q := mustParse(t, `r(?x, ?v) :- n(?x, ?v); r(?x, ?v) :- m(?x, ?v); r(?x, ?v), n(?x, _) => ?x, ?v`)
+	for _, ev := range []Evaluator{Naive{}, SemiNaive{WrittenOrder: true}, SemiNaive{}} {
+		rows, err := ev.Eval(bg, q, baseFor(std(src)), Across(ns.Span(0, 2)), Witnesses())
+		if err != nil || len(rows) != 2 {
+			t.Fatalf("%T: %d rows, %v, want one per spelling", ev, len(rows), err)
+		}
+		for _, r := range rows {
+			if w := r.Witness[0]; !ns.SameVersions(w.Versions, r.Versions) {
+				t.Errorf("%T: the row %v holding in %v has r's node holding in %v", ev, r.Bind["v"], slices.Collect(r.Versions.Ranges()), slices.Collect(w.Versions.Ranges()))
+			}
+		}
 	}
 }

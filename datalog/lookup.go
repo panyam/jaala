@@ -28,11 +28,12 @@ func (b *Base) lookable(rel string) bool {
 
 // lookup asks the Source for rel's facts matching atom's bound arguments, once per Eval for each
 // pattern and values, and not at all when an earlier Eval's answer is still kept (#212). ok is false
-// when nothing is bound, so the caller reads the relation whole.
-func (b *Base) lookup(atom *Atom, bnd *binding) (rows []ns.Tuple, ok bool, err error) {
+// when nothing is bound, so the caller reads the relation whole. Under Across, sets are the versions
+// each row holds in (#317), and nil otherwise.
+func (b *Base) lookup(atom *Atom, bnd *binding) (rows []ns.Tuple, sets []ns.VersionSet, ok bool, err error) {
 	mask, vals, any := boundArgs(atom.Args, bnd)
 	if !any {
-		return nil, false, nil
+		return nil, nil, false, nil
 	}
 	r := b.run
 	key := lookupKey(atom.Relation, mask, vals)
@@ -40,10 +41,13 @@ func (b *Base) lookup(atom *Atom, bnd *binding) (rows []ns.Tuple, ok bool, err e
 		if r.explain != nil {
 			b.explainLookupHit(atom, mask, kept)
 		}
-		return rows, true, nil
+		if b.across != nil {
+			sets = b.across.lookedSets(key)
+		}
+		return rows, sets, true, nil
 	}
 	if err := b.countWork(); err != nil {
-		return nil, true, err
+		return nil, nil, true, err
 	}
 	bound := make(map[int]ns.Value, len(vals))
 	j := 0
@@ -54,16 +58,23 @@ func (b *Base) lookup(atom *Atom, bnd *binding) (rows []ns.Tuple, ok bool, err e
 		}
 	}
 	ctx := r.context()
-	rows, err = b.looker.Lookup(ctx, atom.Relation, bound)
+	if b.across != nil {
+		rows, sets, err = b.across.lookup(ctx, atom.Relation, bound)
+	} else {
+		rows, err = b.looker.Lookup(ctx, atom.Relation, bound)
+	}
 	if err != nil {
-		return nil, true, lookupErr(ctx, atom.Relation, err)
+		return nil, nil, true, lookupErr(ctx, atom.Relation, err)
 	}
 	rows = normalizeTuples(b.units(), rows, b.argTypesOf(atom.Relation))
+	if b.across != nil {
+		b.across.keepLooked(key, sets)
+	}
 	b.keepLookup(key, rows)
 	if r.explain != nil {
 		b.explainLookup(atom, mask, len(rows))
 	}
-	return rows, true, nil
+	return rows, sets, true, nil
 }
 
 // lookedUp returns what this Eval or, failing that, an earlier one kept for a lookup's key (kept says

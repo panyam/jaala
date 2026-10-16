@@ -106,6 +106,22 @@ func (r revisions) SourceAt(v ns.Version) (ns.Source, error) {
 	return revisionStore{r.TimedMemSource, v}, nil
 }
 
+// LookupTimed answers a bound call across every revision at once
+// (ns.TimedLookupSource), each fact with the revisions it holds in, which
+// is what Across asks. A real store would ask its database for the rows
+// with their revision ranges.
+func (r revisions) LookupTimed(ctx context.Context, rel string, bound map[int]ns.Value) ([]ns.TimedTuple, error) {
+	fmt.Println("history looks up", rel, bound[0].S)
+	all, err := r.TimedTuples(ctx, rel)
+	var out []ns.TimedTuple
+	for _, t := range all {
+		if v, ok := bound[0]; !ok || t.Vals[0].S == v.S {
+			out = append(out, t)
+		}
+	}
+	return out, err
+}
+
 // revisionStore is one revision's facts, answering lookups. A real store
 // would ask its database for the revision's rows.
 type revisionStore struct {
@@ -154,4 +170,26 @@ func Example_atFromStores() {
 	// Output:
 	// revision 2 looks up imports api
 	// log MIT
+}
+
+// Across over a timed source that looks up across revisions asks it for
+// what the query binds, rather than reading every revision's facts whole.
+// The rows hold in the revisions they do when read whole.
+func Example_acrossFromStores() {
+	src := revisions{history()}
+	v, _ := vocabulary(src)
+	b, ctx := datalog.MustBase(v, src), context.Background()
+	q := datalog.MustParse(`deps.depends_on("app", ?d) => ?d`)
+	rows, _ := datalog.SemiNaive{}.Eval(ctx, q, b, datalog.Across(ns.Span(0, 3)))
+	for _, r := range rows {
+		fmt.Println(r.Bind["d"].S, slices.Collect(r.Versions.Ranges()))
+	}
+	// Output:
+	// history looks up imports app
+	// history looks up imports api
+	// history looks up imports log
+	// history looks up imports util
+	// api [{0 3}]
+	// log [{1 3}]
+	// util [{0 1}]
 }

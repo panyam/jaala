@@ -112,7 +112,7 @@ func Example_explain() {
 		fmt.Println(" ", l.Literal, l.Access, "passed", l.Passed)
 	}
 	// Output:
-	// deps._step demand [bf] 3 tuples
+	// deps._step inlined [] 0 tuples
 	// deps.depends_on demand [bf] 3 tuples
 	// goal: deps.depends_on/bf("app", ?d)
 	//   deps.depends_on/bf("app", ?d) [derived scan] passed 3
