@@ -35,8 +35,9 @@ func checkModesFrom(b *Base, where string, body Body, inputs map[Var][]ns.Value)
 			continue
 		}
 		if bi, ok := b.reg.Predicate(a.Relation); ok && bi.IsGenerator() && !bi.Satisfied(boundFlags(a, bound)) {
-			return fmt.Errorf("query: %s calls %s, and nothing binds what %s needs first: it needs %s",
-				where, a, a.Relation, modesText(bi, a))
+			return checkErr(KindUnbound, fmt.Sprintf("query: %s calls %s, and nothing binds what %s needs first: it needs %s",
+				where, a, a.Relation, modesText(bi, a))).call(a.Relation, len(a.Args)).
+				fix(fmt.Sprintf("add a relation to the body that binds what %s needs (%s)", shownName(a.Relation), modesText(bi, a)))
 		}
 	}
 	return nil
@@ -51,7 +52,7 @@ func checkFilters(b *Base, body Body, inputs map[Var][]ns.Value) error {
 	for _, lit := range body.Literals {
 		if a := lit.Pos; a != nil {
 			if bi, ok := b.reg.Predicate(a.Relation); ok && !bi.IsGenerator() && slices.Contains(boundFlags(a, bound), false) {
-				return unboundFilter(a.Relation)
+				return unboundFilter(a)
 			}
 		}
 	}

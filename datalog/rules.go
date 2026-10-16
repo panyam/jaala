@@ -107,21 +107,21 @@ func (b *Base) checkRulesAs(rules []Rule, linked bool) (map[string][]Rule, [][]s
 	for _, r := range rules {
 		rel := r.Head.Relation
 		if _, ok := b.schemaOf(rel); ok {
-			return nil, nil, fmt.Errorf("query: rule head %q redefines a fact relation", rel)
+			return nil, nil, checkErr(KindDefinition, fmt.Sprintf("query: rule head %q redefines a fact relation", rel)).inRule(rel)
 		}
 		if _, ok := b.reg.Predicate(rel); ok {
-			return nil, nil, fmt.Errorf("query: rule head %q redefines a built-in relation", rel)
+			return nil, nil, checkErr(KindDefinition, fmt.Sprintf("query: rule head %q redefines a built-in relation", rel)).inRule(rel)
 		}
 		ar := len(r.Head.Args)
 		if prev, ok := b.idbArity[rel]; ok && prev != ar {
-			return nil, nil, fmt.Errorf("query: rule %q defined with %d and %d args (arity must be consistent)", rel, prev, ar)
+			return nil, nil, checkErr(KindArity, fmt.Sprintf("query: rule %q defined with %d and %d args (arity must be consistent)", rel, prev, ar)).inRule(rel).call(rel, ar)
 		}
 		b.idbArity[rel] = ar
 		byHead[rel] = append(byHead[rel], r)
 	}
 	for _, r := range rules {
 		if rs := byHead[r.Head.Relation]; len(rs) > 1 && r.aggregates() {
-			return nil, nil, fmt.Errorf("query: rule %q aggregates, so it must be the relation's only rule (%d define it)", r.Head.Relation, len(rs))
+			return nil, nil, checkErr(KindAggregate, fmt.Sprintf("query: rule %q aggregates, so it must be the relation's only rule (%d define it)", r.Head.Relation, len(rs))).inRule(r.Head.Relation)
 		}
 	}
 	for _, r := range rules {
@@ -168,10 +168,14 @@ func (b *Base) validateRule(r Rule) error {
 		// misspelled relation from one nobody installed, and answering "unknown" there would be a
 		// statement about the query that the vocabulary has no standing to make (see Validate).
 		if len(b.reg.BaseRelations()) > 0 && !b.knownRelation(rel) {
-			if isAggHelper(r.Head.Relation) {
-				return fmt.Errorf("query: %s reads %s", whereRule(r), b.reg.Unknown(rel))
+			a := lit.Pos
+			if a == nil {
+				a = lit.Neg
 			}
-			return fmt.Errorf("query: rule %q reads %s", r.Head.Relation, b.reg.Unknown(rel))
+			if isAggHelper(r.Head.Relation) {
+				return b.unknownErr(a, "query: %s reads %s", whereRule(r))
+			}
+			return b.unknownErr(a, "query: rule %q reads %s", r.Head.Relation).inRule(r.Head.Relation)
 		}
 	}
 	inputs := inputsBound(r, b.inputRels, b.reg) // a caller's arguments (#200), which every call has to bind
@@ -198,10 +202,13 @@ func (b *Base) validateRule(r Rule) error {
 		if arg.Var == "_" {
 			// A tuple needs a value in every place, so a rule with _ in its head derived nothing, while
 			// the demand rewrite read the _ as matching anything (#89).
-			return fmt.Errorf("query: rule %q has _ in its head, which gives that place no value; use a variable its body binds, or a constant", r.Head.Relation)
+			return checkErr(KindDefinition, fmt.Sprintf("query: rule %q has _ in its head, which gives that place no value; use a variable its body binds, or a constant", r.Head.Relation)).
+				inRule(r.Head.Relation).call(r.Head.Relation, len(r.Head.Args)).fix("put a variable the body binds, or a constant, in place of the _")
 		}
 		if arg.Var != "" && !bound[arg.Var] {
-			return fmt.Errorf("query: rule %q head variable ?%s is not bound by a positive body relation", r.Head.Relation, arg.Var)
+			return checkErr(KindUnbound, fmt.Sprintf("query: rule %q head variable ?%s is not bound by a positive body relation", r.Head.Relation, arg.Var)).
+				inRule(r.Head.Relation).call(r.Head.Relation, len(r.Head.Args)).about(arg.Var).
+				fix(fmt.Sprintf("add a relation to %s's body that binds ?%s, or drop ?%s from its head", shownName(r.Head.Relation), arg.Var, arg.Var))
 		}
 	}
 	if err := checkComparisonsFrom(r.Body, inputs); err != nil {
@@ -232,7 +239,7 @@ func checkComparisonsFrom(body Body, inputs map[Var][]ns.Value) error {
 		if c := lit.Compare; c != nil {
 			for _, t := range []Term{c.Left, c.Right} {
 				if t.Var != "" && !bound[t.Var] {
-					return fmt.Errorf("query: comparison operand is unbound (a variable must appear in a relation before it is compared)")
+					return unboundOperand(*c, nil)
 				}
 			}
 		}
@@ -258,7 +265,7 @@ func checkNoAggregates(where string, body Body) error {
 	for _, lit := range body.Literals {
 		for _, t := range literalTerms(lit) {
 			if t.Agg != nil {
-				return fmt.Errorf("query: %s uses %s in a literal; an aggregate can only stand in a rule head or the answer", where, t)
+				return checkErr(KindAggregate, fmt.Sprintf("query: %s uses %s in a literal; an aggregate can only stand in a rule head or the answer", where, t))
 			}
 		}
 	}
@@ -587,9 +594,9 @@ func stratify(rules []Rule, arity map[string]int) ([][]string, error) {
 			// A body aggregate's zero clause negates its reduction, which climbs as the aggregate does,
 			// so a cycle through one is reported as through the aggregate.
 			if cycle := strictCycle(edges, func(e depEdge) bool { return e.neg && !isAggReduce(e.to) }); len(cycle) > 0 {
-				return nil, fmt.Errorf("query: rules are not stratifiable (recursion through negation: %s)", strings.Join(cycle, ", "))
+				return nil, checkErr(KindStratify, fmt.Sprintf("query: rules are not stratifiable (recursion through negation: %s)", strings.Join(cycle, ", ")))
 			}
-			return nil, fmt.Errorf("query: rules are not stratifiable (recursion through an aggregate: %s)", strings.Join(strictCycle(edges, func(e depEdge) bool { return e.agg }), ", "))
+			return nil, checkErr(KindStratify, fmt.Sprintf("query: rules are not stratifiable (recursion through an aggregate: %s)", strings.Join(strictCycle(edges, func(e depEdge) bool { return e.agg }), ", ")))
 		}
 	}
 	byStratum := map[int][]string{}

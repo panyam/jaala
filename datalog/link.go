@@ -29,12 +29,12 @@ func Link(q Query, reg *ns.Vocabulary) (Query, error) {
 		head := r.Head.Relation
 		switch {
 		case strings.Contains(head, "."):
-			return Query{}, fmt.Errorf("query: rule head %q is a qualified path; a query defines only its own bare relations, and a shared one is registered with AddModule", head)
+			return Query{}, checkErr(KindDefinition, fmt.Sprintf("query: rule head %q is a qualified path; a query defines only its own bare relations, and a shared one is registered with AddModule", head)).inRule(head).fix(fmt.Sprintf("name the rule %s, without a module", head[strings.LastIndexByte(head, '.')+1:]))
 		case reg.IsModule(head):
-			return Query{}, fmt.Errorf("query: rule head %q is a module, not a relation", head)
+			return Query{}, checkErr(KindDefinition, fmt.Sprintf("query: rule head %q is a module, not a relation", head)).inRule(head).fix("give the rule a name no module uses")
 		}
 		if id, ok := reg.DefiningModule(head); ok {
-			return Query{}, fmt.Errorf("query: rule head %q redefines a derived relation registered in module %q", head, reg.Modules()[id].Path)
+			return Query{}, checkErr(KindDefinition, fmt.Sprintf("query: rule head %q redefines a derived relation registered in module %q", head, reg.Modules()[id].Path)).inRule(head).fix("give the rule a name of its own, or call the module's relation instead of defining it")
 		}
 	}
 	var pending []string

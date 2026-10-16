@@ -428,7 +428,7 @@ func checkComputedRecursion(rules []Rule) error {
 		}
 		for _, a := range ruleAtoms(r.Body) {
 			if reaches(a.Relation, r.Head.Relation) {
-				return fmt.Errorf("query: rule %q computes with arithmetic and reads %s, which reaches it again, so it might never finish", displayName(r.Head.Relation), displayName(a.Relation))
+				return checkErr(KindStratify, fmt.Sprintf("query: rule %q computes with arithmetic and reads %s, which reaches it again, so it might never finish", displayName(r.Head.Relation), displayName(a.Relation))).inRule(r.Head.Relation).call(a.Relation, len(a.Args))
 			}
 		}
 	}

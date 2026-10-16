@@ -1,0 +1,31 @@
+# Every relation and predicate a program can call, by module: name(arg: type, ...) # what it holds.
+# ~type is inferred from the relation's rules, "in" marks an argument the caller must bind, [, arg] is optional.
+# A predicate says what it needs bound before it runs: "filter" needs every argument.
+absent(value) filter # reports whether the field carried no value at all, which is different from an empty string and from zero; `not absent(?x)` reads "this field is stated"
+edge(from: node, to: node) # A directed edge between two nodes.
+node(name: node) # Every node.
+weight(node: node, w: number)
+
+module graph
+graph.heavy(n: ~node, w: ~number, in min) # heavy is a node weighing more than min.
+graph.reach(a: ~node, b: ~node) # reach is every node a node gets to by edges.
+
+module graph.loops
+graph.loops.self(n: node)
+
+module num
+num.add(a: number, b: number, c: number) needs a+b or a+c or b+c # c = a + b, run from any two of the three; units follow the vocabulary's table
+num.div(a: number, b: number, c: number) needs a+b or a+c or b+c # c = a / b, run from any two of the three; units follow the vocabulary's table
+num.mul(a: number, b: number, c: number) needs a+b or a+c or b+c # c = a * b, run from any two of the three; units follow the vocabulary's table
+num.neg(a: number, b: number) needs a or b # b = -a, run from either; the unit carries over
+num.sub(a: number, b: number, c: number) needs a+b or a+c or b+c # c = a - b, run from any two of the three; units follow the vocabulary's table
+num.unit(number: number, unit: string) needs number # binds the number's unit ("V", "A"), or absent for a number without one; the number must be bound
+num.value(number: number, value: number) needs number # binds the number without its unit, so 5 V and 5 A both bind 5; the number must be bound
+
+module str
+str.contains(string: string, substring: string) filter # reports whether a string contains a substring
+str.distance(string: string, other: string, distance: number) needs string+other # binds the edit (Levenshtein) distance between two strings, in characters; both strings must be bound
+str.glob(string: string, pattern: string) filter # reports whether the whole string matches a SQLite-style glob (`*` any run, `?` one character, `[a-z]` or `[^a-z]` one of a class, `[[]` a literal `[`)
+str.match(string: string, regex: string) filter # reports whether the string matches an unanchored regular expression
+str.prefix(string: string, prefix: string) filter # reports whether a string starts with a prefix
+str.suffix(string: string, suffix: string) filter # reports whether a string ends with a suffix

@@ -18,8 +18,10 @@ import (
 
 // unboundFilter is the error for a filter tested with an argument unbound, which checkModes gives
 // before running and extendBuiltin while running.
-func unboundFilter(rel string) error {
-	return fmt.Errorf("query: %s needs all arguments bound (a variable must appear in a relation before %s tests it)", rel, rel)
+func unboundFilter(atom *Atom) error {
+	rel := atom.Relation
+	return checkErr(KindUnbound, fmt.Sprintf("query: %s needs all arguments bound (a variable must appear in a relation before %s tests it)", rel, rel)).
+		call(rel, len(atom.Args)).fix(fmt.Sprintf("bind every argument of %s with a relation in the same body, or pass it a constant", shownName(rel)))
 }
 
 // extendBuiltin runs a builtin under the current binding.
@@ -36,7 +38,7 @@ func extendBuiltin(bi ns.Builtin, atom *Atom, bnd *binding, b *Base, yield func(
 		for i, a := range atom.Args {
 			v, ok := resolve(a, bnd)
 			if !ok {
-				return unboundFilter(atom.Relation)
+				return unboundFilter(atom)
 			}
 			args[i] = v
 		}
@@ -130,8 +132,13 @@ func (b *Base) checkArgValues(atom *Atom, s ns.Schema) error {
 		if slices.Contains(allowed, got) {
 			continue
 		}
-		return fmt.Errorf("query: %s's %q argument cannot be %q%s (it holds one of: %s)",
-			atom.Relation, label, got, ns.DidYouMeanValue(allowed, got), strings.Join(allowed, ", "))
+		hint, values := ns.DidYouMeanValue(allowed, got), strings.Join(allowed, ", ")
+		fix := strings.TrimPrefix(hint, ", ")
+		if fix == "" {
+			fix = "use one of: " + values
+		}
+		return checkErr(KindType, fmt.Sprintf("query: %s's %q argument cannot be %q%s (it holds one of: %s)",
+			atom.Relation, label, got, hint, values)).call(atom.Relation, len(atom.Args)).fix(fix)
 	}
 	return nil
 }
@@ -147,26 +154,26 @@ func (b *Base) checkAtom(atom *Atom) error {
 	rel := atom.Relation
 	if bi, ok := b.reg.Predicate(rel); ok {
 		if !bi.Accepts(len(atom.Args)) {
-			return fmt.Errorf("query: %s takes %s args, got %d", rel, bi.ArityLabel(), len(atom.Args))
+			return b.arityErr(fmt.Sprintf("query: %s takes %s args, got %d", rel, bi.ArityLabel(), len(atom.Args)), atom)
 		}
 		return nil
 	}
 	if s, ok := b.schemaOf(rel); ok {
 		if len(atom.Args) != s.Arity {
-			return fmt.Errorf("query: relation %q takes %d args, got %d", rel, s.Arity, len(atom.Args))
+			return b.arityErr(fmt.Sprintf("query: relation %q takes %d args, got %d", rel, s.Arity, len(atom.Args)), atom)
 		}
 		return b.checkArgValues(atom, s)
 	}
 	if b.isIDB(rel) {
 		if len(atom.Args) != b.idbArity[rel] {
-			return fmt.Errorf("query: relation %q takes %d args, got %d", rel, b.idbArity[rel], len(atom.Args))
+			return b.arityErr(fmt.Sprintf("query: relation %q takes %d args, got %d", rel, b.idbArity[rel], len(atom.Args)), atom)
 		}
 		if s, ok := b.derivedSchema(rel); ok {
 			return b.checkArgValues(atom, s)
 		}
 		return nil
 	}
-	return fmt.Errorf("query: %s", b.reg.Unknown(rel))
+	return b.unknownErr(atom, "query: %s")
 }
 
 // extendEDB fans an EDB atom over the tuples of its relation, unifying each into the binding.

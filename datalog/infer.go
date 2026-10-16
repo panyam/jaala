@@ -268,7 +268,7 @@ func (t *typer) declared(rel string) ([]ns.ArgType, error) {
 				}
 				m := headIndex(r.Head, Var(*ref))
 				if m < 0 {
-					return nil, fmt.Errorf("query: %s's type %q names ?%s, which is not in its head", displayName(rel), d, *ref)
+					return nil, checkErr(KindType, fmt.Sprintf("query: %s's type %q names ?%s, which is not in its head", displayName(rel), d, *ref)).inRule(rel)
 				}
 				*ref = labels[m]
 			}
@@ -276,7 +276,7 @@ func (t *typer) declared(rel string) ([]ns.ArgType, error) {
 				out = make([]ns.ArgType, len(labels))
 			}
 			if !out[i].IsZero() && (!sameShape(out[i], d) || !slices.Equal(out[i].Domain, d.Domain)) {
-				return nil, fmt.Errorf("query: %s declares its %q argument as both %q and %q", displayName(rel), labels[i], out[i], d)
+				return nil, checkErr(KindType, fmt.Sprintf("query: %s declares its %q argument as both %q and %q", displayName(rel), labels[i], out[i], d)).inRule(rel)
 			}
 			out[i] = d
 		}
@@ -311,7 +311,7 @@ func (t *typer) signature(rel string) ([]ns.ArgSig, error) {
 		inferred := t.ofHead(rel, j, nil)
 		if j < len(declared) && !declared[j].IsZero() {
 			if why := contradicts(declared[j], inferred); why != "" {
-				return nil, fmt.Errorf("query: %s declares ?%s: %s, but its rules make it %s", displayName(rel), name, declared[j], why)
+				return nil, checkErr(KindType, fmt.Sprintf("query: %s declares ?%s: %s, but its rules make it %s", displayName(rel), name, declared[j], why)).inRule(rel).about(Var(name))
 			}
 			out[j] = ns.ArgSig{Name: name, ArgType: declared[j]}
 			continue

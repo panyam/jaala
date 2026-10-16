@@ -47,6 +47,13 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   fragments of them. New cases get new wording; existing wording doesn't move. A new message also
   goes in the docsite's error catalogue (`content/reference/errors.md`), or `make -C docsite check`
   fails (`TestErrorCatalogueListsEveryMessage`).
+- **A check error is a `*CheckError`** (`checkerror.go`, #321): a `Kind`, what it is about
+  (`Relation` and `Args`, `Var`, `Rule`) and a `Fix` when the engine can tell, its message unchanged.
+  A Query carries no positions (the slicer, parse and fuzz tests compare Queries with `DeepEqual`),
+  so `Locate(text, err)` finds the call or variable in the text, and `nl.Explain` writes it for a
+  model. A new check builds one (`checkErr(kind, msg)`, `b.arityErr`, `b.unknownErr`), and
+  `TestBrokenProgramsFailTheSameWay` requires each broken literal's error to be one Locate finds.
+  `nl` (the card, Explain) imports `ns` and `datalog`, and nothing in jaala imports it.
 - **`Base` is shared across concurrent `Eval`s.** Anything mutable reachable from it must be
   per-query (the `idb*` fields on Eval's shallow copy), atomic (`work`), or locked (`edbCache`,
   `derivedCache`, the vocabulary's `Memo` entries). `TestConcurrentEvalsShareOneCheck` and

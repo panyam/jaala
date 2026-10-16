@@ -54,7 +54,7 @@ func unlikeUnits(where string, c Compare, left, right string) error {
 	if !orderingOps[c.Op] || left == "" || right == "" || left == right {
 		return nil
 	}
-	return fmt.Errorf("query: %s %s %s in %s compares number[%s] with number[%s], which never holds", c.Left, c.Op, c.Right, where, left, right)
+	return checkErr(KindType, fmt.Sprintf("query: %s %s %s in %s compares number[%s] with number[%s], which never holds", c.Left, c.Op, c.Right, where, left, right))
 }
 
 // unitOf is a term's unit when it is known: a constant's own (one the host bound can carry one), or
