@@ -35,12 +35,14 @@ func (c *counting) whole(rel string) int {
 // looking is a counting Source that also answers Lookup, by scanning with the engine's equality over
 // each value read as its argument's declared type, as the LookupSource contract asks. sloppy
 // returns the whole relation from every lookup, which the contract allows; fail makes every lookup
-// fail with it.
+// fail with it. It compares values folded by stdlib's units, as an engine folding a Source's units
+// asks (#205); asStored compares them as it holds them, for one that doesn't (#303).
 type looking struct {
 	*counting
-	sloppy  bool
-	fail    error
-	lookups map[string]int
+	sloppy   bool
+	asStored bool
+	fail     error
+	lookups  map[string]int
 }
 
 func lookingAt(src ns.Source) *looking {
@@ -65,7 +67,11 @@ func (l *looking) answer(rel string, bound map[int]ns.Value) []ns.Tuple {
 		return all
 	}
 	s, _ := l.Source.Schema(rel)
-	read := normalizeTuples(stdUnits, all, s.Types)
+	units := stdUnits
+	if l.asStored {
+		units = nil
+	}
+	read := normalizeTuples(units, all, s.Types)
 	var out []ns.Tuple
 	for k, t := range all {
 		ok := true

@@ -38,8 +38,9 @@ type Walk struct {
 	From, To int
 	Bound    map[int]Value
 	Start    []Value
-	// Units is the table the engine folds values by, as a Conjunction's (#205): a Federation folds by it
-	// a value one member reached before walking it in another. Nil folds nothing.
+	// Units is the table the engine folds a Source's values by, as a Conjunction's (#205), nil when the
+	// vocabulary doesn't fold them (#303): a Federation folds by it a value one member reached before
+	// walking it in another. Nil folds nothing.
 	Units *Units
 }
 

@@ -56,6 +56,14 @@ func std(src ns.Source) *ns.Vocabulary {
 	return v
 }
 
+// folding is std(src) folding the Source's units as it reads them (FoldSourceUnits, #303), as the
+// corpus and the prefixed tests read their stores.
+func folding(src ns.Source) *ns.Vocabulary {
+	v := std(src)
+	v.FoldSourceUnits()
+	return v
+}
+
 // sources is the Source each test vocabulary was built from. Tests register fixtures sequentially,
 // before any goroutine they start, so it needs no lock.
 var sources = map[*ns.Vocabulary]ns.Source{}
@@ -201,6 +209,16 @@ func binds(rows []Row) []map[Var]ns.Value {
 func eval(t *testing.T, src ns.Source, text string) []Row {
 	t.Helper()
 	rows, err := both(mustParse(t, text), baseFor(std(src)))
+	if err != nil {
+		t.Fatalf("Eval(%q): %v", text, err)
+	}
+	return rows
+}
+
+// evalFolding is eval over a vocabulary that folds the Source's units (folding).
+func evalFolding(t *testing.T, src ns.Source, text string) []Row {
+	t.Helper()
+	rows, err := both(mustParse(t, text), baseFor(folding(src)))
 	if err != nil {
 		t.Fatalf("Eval(%q): %v", text, err)
 	}

@@ -17,9 +17,10 @@ import (
 // with a constant or a bound variable is a Lookup.
 //
 // A conjunction's constants, Inputs, Bindings and comparison operands are values as the engine holds
-// them, in folded units (#205), so a store serving prefixed values compares and joins them folded, as
-// a LookupSource matches them: 1 V meets the 1000 mV it holds, and 500 mV passes ?v > 0.4 V. That
-// goes for a FilterSource's filters and a SummarySource's groups too.
+// them. When it folds a Source's units (Conjunction.Units set, #205, #303) they are in folded units,
+// so a store serving prefixed values compares and joins them folded, as a LookupSource matches them:
+// 1 V meets the 1000 mV it holds, and 500 mV passes ?v > 0.4 V. That goes for a FilterSource's
+// filters and a SummarySource's groups too.
 type PushSource interface {
 	// Pushes reports whether the store evaluates c. The planner asks while planning, growing a group
 	// one literal at a time and offering it with its comparisons and then without, so it must be
@@ -98,10 +99,11 @@ type Conjunction struct {
 	// store that pushes c with Inputs also pushes its suffixes with the Inputs they still read.
 	Inputs   []int
 	Bindings [][]Value
-	// Units is the unit table the engine folds values by (#205), set on every conjunction it sends:
-	// the conjunction's values are folded by it, and a store holding prefixed values can fold its own
-	// with Units.Fold to compare. A Federation folds by it the values it carries from one member to
-	// another, so 4 kV from one meets 4000 V in the next. Nil folds nothing.
+	// Units is the unit table the engine folds a Source's values by (#205), set on every conjunction
+	// it sends when the vocabulary folds a Source's units (Vocabulary.FoldSourceUnits, #303) and nil
+	// otherwise: the conjunction's values are folded by it, and a store holding prefixed values can
+	// fold its own with Units.Fold to compare. A Federation folds by it the values it carries from one
+	// member to another, so 4 kV from one meets 4000 V in the next. Nil folds nothing.
 	Units *Units
 }
 

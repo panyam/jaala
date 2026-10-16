@@ -494,12 +494,19 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   rules are folded in `resolveAll` before their signatures are inferred: the scale goes into the number and the unit
   is written by its first name (`A*ohm` is V, at most one name factored out of a composite:
   `ohm/s`). `num.*` write results the same way, so every value inside the engine is in base units
-  and unit strings still compare as strings. A Source's prefixed values are folded as they are read
-  (#205, `Units.FoldValue` in `normalizeValues`, on every path a value comes in by), so `1000 mV`
-  is `1 V` everywhere; stdlib's units are SI products (mass in kg), written through
-  `WriteBaseThrough` so composites keep their names. Every `Conjunction` and `Walk` carries
-  `Units`, and a Federation folds what it carries between members: the corpus's 5000 seeds (not
-  CI's 300) found a partitioned join meeting `0.004 kV` unfolded against `4 V`.
+  and unit strings still compare as strings. A unit is a tag to the engine; what it means is the
+  vocabulary's (#303). A Source's values are folded as they are read only when the vocabulary opts
+  in (`Vocabulary.FoldSourceUnits`, #205; `b.units()` is nil otherwise, on every path a value comes
+  in by), so `1000 mV` is then `1 V` everywhere, and otherwise a Source's `mm` stays `mm` (agni
+  read its bare thresholds that way, and v0.1.59's default fold changed its answers). A host-bound
+  set is a query's constant and always folds. stdlib's units are SI products (mass in kg), written
+  through `WriteBaseThrough` so composites keep their names. A scale is a power of ten times an
+  exact factor (`normFactor`'s one form, so `60*s` and `6e1*s` are one unit), so a host names
+  `min` as `60*s`. `Conjunction.Units` and `Walk.Units` are set only when the vocabulary folds,
+  and a Federation folds what it carries between members by them: the corpus's 5000 seeds (not
+  CI's 300) found a partitioned join meeting `0.004 kV` unfolded against `4 V`. The corpus and the
+  prefixed tests run over `folding(src)`; the `looking` store's `asStored` answers an engine that
+  doesn't fold.
 - **A rule can take an argument from its caller** (`inputs.go`, #200): a head variable its body
   can't bind, which a comparison, a `not` or a generator reads, is an input (`inputsOf`; a call to an
   input relation binds only its other arguments, so `inputRelations` grows to a fixpoint). What a

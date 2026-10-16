@@ -1250,8 +1250,10 @@ var orderingOps = map[string]bool{"<": true, "<=": true, ">": true, ">=": true}
 // 3. UNLIKE DIMENSIONS HAVE NO ORDER. Volts are not smaller or larger than amps. Both sides must
 // carry a base unit for this to fire, because a bare literal cannot state one: `?vmax < 5.0` has to
 // keep working, so an empty BaseUnit is polymorphic rather than a dimension of its own. SCALE is not
-// this layer's problem and never reaches it (the host normalizes it), so this compares "V" against "A"
-// and never "mV" against "V".
+// this layer's problem: a unit here is a tag compared by its text. A query's constants are folded
+// before evaluation (foldUnits), and a Source's values too when the vocabulary folds them
+// (FoldSourceUnits, #205, #303), so mV and V are then one unit; otherwise a Source's mV is a tag
+// unlike V, as a host serving mm reads its own lengths in mm.
 //
 // ALL THREE EVALUATE TO NO MATCH RATHER THAN AN ERROR. An error aborts the whole query, so one
 // max-only row among many would make a legitimate range query unusable. No-match leaves that row

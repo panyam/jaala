@@ -46,6 +46,9 @@ type Vocabulary struct {
 	cache *memo
 	// units names units and prefixes (AddUnit), nil until one is added.
 	units *Units
+	// foldSource is whether a Source's values are folded through units as they are read
+	// (FoldSourceUnits, jaala#303).
+	foldSource bool
 }
 
 // memberKind is what defines a path.
@@ -210,6 +213,7 @@ func (v *Vocabulary) Clone() *Vocabulary {
 	out := &Vocabulary{
 		members: make(map[string]member, len(v.members)), modules: make(map[string]int, len(v.modules)),
 		langs: make(map[string]Language, len(v.langs)), hinter: v.hinter, cache: newMemo(),
+		units: v.units.clone(), foldSource: v.foldSource,
 	}
 	for k, m := range v.members {
 		out.members[k] = m

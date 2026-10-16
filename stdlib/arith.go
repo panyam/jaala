@@ -170,7 +170,7 @@ func binary(doc string, units func() *ns.Units, f numFn, fu unitFn, toB numFn, t
 				if x, ok := toB(c, a); ok {
 					if u, ok := toBu(uc, ua); ok {
 						if value, ok := numberValue(x, u); ok {
-							u.Scale = 0 // Write has put the value in base units
+							u = u.Unscaled() // Write has put the value in base units
 							if matches(a, ua, *value.Num, u, c) {
 								return out(1, value)
 							}
@@ -182,7 +182,7 @@ func binary(doc string, units func() *ns.Units, f numFn, fu unitFn, toB numFn, t
 				if x, ok := toA(c, b); ok {
 					if u, ok := toAu(uc, ub); ok {
 						if value, ok := numberValue(x, u); ok {
-							u.Scale = 0 // validate the value actually emitted, in the same unit scale
+							u = u.Unscaled() // validate the value actually emitted, in the same unit scale
 							if matches(*value.Num, u, b, ub, c) {
 								return out(0, value)
 							}
@@ -228,7 +228,9 @@ func negate(units func() *ns.Units) ns.Builtin {
 // (jaala#205). Since every one is a product of base units, two spellings of one dimension are one
 // unit, so a host naming N = kg*m/s^2 finds N*m is J. kg is written through V (WriteBaseThrough), so a
 // unit with no name is written as it was before the decomposition, in volts: V^2, V/m, ohm/s. A host
-// adds its own with Vocabulary.AddUnit, and a symbol nobody defines is a unit of its own.
+// adds its own with Vocabulary.AddUnit, and a symbol nobody defines is a unit of its own. The table
+// folds a query's literals (3300mV is 3.3 V) and num.*'s results; a Source's values are folded by it
+// only when the host also calls Vocabulary.FoldSourceUnits (jaala#303).
 func Units(v *ns.Vocabulary) error {
 	for _, u := range [][2]string{
 		{"T", "1e12"}, {"G", "1e9"}, {"M", "1e6"}, {"k", "1e3"}, {"m", "1e-3"}, {"u", "1e-6"}, {"µ", "1e-6"}, {"n", "1e-9"}, {"p", "1e-12"},
