@@ -67,8 +67,8 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   is #322's exercise until Declaire's arm runs: the guide's vocabulary, a scripted small model and
   fallback (`byQuestion`), and the report in `frontends/nl/testdata/eval.golden` (`-update`).
 - **`nl.Grammar()` is GBNF built from a rule table** (`frontends/nl/grammar.go`, #323), and every text it
-  accepts must parse: `TestEveryProgramTheGrammarWritesParses` samples 70,000 programs from the table
-  over several seeds and depths (one seed alone missed `-(9)` as a column). The other direction lives
+  accepts must parse: `TestEveryProgramTheGrammarWritesParses` samples 21,000 programs from the table
+  over 70 seeds and every depth (one seed alone missed `-(9)` as a column). The other direction lives
   in `datalog`'s tests, which can reach the corpus: they read `frontends/nl/testdata/program.gbnf` (`go
   test ./frontends/nl -update` writes it) with a small Earley recognizer and require every corpus, fuzz-seed and docs
   program, printed in jaala's spelling, to be accepted. A grammar change regenerates the file, or
