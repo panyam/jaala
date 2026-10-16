@@ -19,8 +19,10 @@ func slicerDiffs(text string) (diff, msg string) {
 	q, err := Parse(text)
 	sq, serr := slParse(text)
 	switch {
-	case err == nil && serr != nil && readsAsWritten(q):
+	case err == nil && serr != nil && (readsAsWritten(q) || agreesWithoutExponents(text)):
 		return "", "" // the slicer refused a spelling of a query it reads, as #276 allows
+	case err == nil && serr == nil && unknownAggregate(sq) && readsAsWritten(q):
+		return "", "" // the slicer read an expression with whitespace in it as an aggregate nothing evaluates
 	case (err == nil) != (serr == nil):
 		diff = "accepts differently: " + errText(err) + " | slicer: " + errText(serr)
 	case err == nil && !reflect.DeepEqual(q, sq):
@@ -34,16 +36,52 @@ func slicerDiffs(text string) (diff, msg string) {
 }
 
 // readsAsWritten reports whether the slicer reads q, written out, as q: the text the tokenizer accepted
-// spelled a query the slicer knew, with whitespace it didn't skip (?a *\n2) or an exponent it cut at
-// its sign (?a * 1e-3), and means what that query means.
+// spelled a query the slicer knew, with whitespace it didn't skip (?a *\n2), and means what that query
+// means.
 func readsAsWritten(q Query) bool {
 	sq, err := slParse(queryString(q))
-	return err == nil && reflect.DeepEqual(q, sq) || err != nil && exponentInExpression.MatchString(err.Error())
+	return err == nil && reflect.DeepEqual(q, sq)
 }
 
-// exponentInExpression is the slicer refusing a number like 1e-3 inside arithmetic, which it read up to
-// the sign and then as 1e: `bare identifier "1e"`.
-var exponentInExpression = regexp.MustCompile(`bare identifier "[+-]?[0-9]+(\.[0-9]+)?[eE]"`)
+// agreesWithoutExponents reports whether the parsers agree on text with every exponent written as a
+// plain decimal, the other allowances included (0(1e-2\r*3) has whitespace in it too). The slicer cut
+// a number like 1e-3 inside arithmetic at its sign, and refused it in whichever words the piece it was
+// reading led to (`bare identifier "1e"`, the whole head argument, `malformed aggregate` for one in
+// parentheses).
+func agreesWithoutExponents(text string) bool {
+	plain := exponent.ReplaceAllStringFunc(text, func(n string) string {
+		f, err := strconv.ParseFloat(n, 64)
+		if err != nil {
+			return n
+		}
+		return strconv.FormatFloat(f, 'f', -1, 64)
+	})
+	if plain == text {
+		return false
+	}
+	diff, _ := slicerDiffs(plain)
+	return diff == ""
+}
+
+var exponent = regexp.MustCompile(`\b[0-9]+(\.[0-9]+)?[eE][+-]?[0-9]+`)
+
+// unknownAggregate reports whether q has an aggregate Validate refuses as unknown: the slicer read
+// `-\n(?a)`, an expression its reader didn't skip whitespace in, as the aggregate `-` over ?a.
+func unknownAggregate(q Query) bool {
+	terms := append([]Term(nil), q.Select...)
+	for _, h := range q.Having {
+		terms = append(terms, h.Left)
+	}
+	for _, o := range q.OrderBy {
+		terms = append(terms, o.Term)
+	}
+	for _, t := range terms {
+		if t.Agg != nil && !validAggFunc(t.Agg.Func) {
+			return true
+		}
+	}
+	return false
+}
 
 // queryString writes q as text Parse reads back as q.
 func queryString(q Query) string {
