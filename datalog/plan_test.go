@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -364,6 +365,57 @@ func TestAGeneratorWithNothingBoundRunsAfterAHeldRelation(t *testing.T) {
 		if !reflect.DeepEqual(*calls, c.walks) {
 			t.Errorf("%s: walks %v, want %v", c.name, *calls, c.walks)
 		}
+	}
+}
+
+// A generator bound only where its all-free mode would take it is a full walk per call, so it ranks
+// as nothing bound and waits for what binds its input (#304: agni's esd_ok started from the TVS parts
+// and walked every net from each of their 220 pins, where its derived needs_esd, empty, would have
+// ended the clause). control: with the guard holding a value, every walk runs from a bound start, once
+// per TVS pin (the guard is derived, so planning can't tell it is smaller than the index).
+func TestAGeneratorBoundOnlyOutsideItsModesWaitsForItsInput(t *testing.T) {
+	tvs := func() *ns.MemSource {
+		src := line(10).Declare("part", "ref", "net").Declare("class", "ref", "kind").Declare("small", "n")
+		src.Add("small", ns.Tuple{Vals: []ns.Value{ns.S("v2")}})
+		for i := 0; i < 8; i++ {
+			ref := ns.S(fmt.Sprintf("D%d", i))
+			src.Add("class", ns.Tuple{Vals: []ns.Value{ref, ns.S("tvs")}})
+			src.Add("part", ns.Tuple{Vals: []ns.Value{ref, ns.S(fmt.Sprintf("v%d", i+1))}})
+		}
+		return src
+	}
+	const body = `ok(?n) :- guard(?n), walk(?n, ?r), part(?t, ?r), class(?t, "tvs"); ok(?n) => ?n`
+	for _, c := range []struct {
+		name, guard string
+		rows        int
+		walks       [][2]bool
+	}{
+		{"empty guard", `guard(?n) :- small(?n), ?n = "v9"; guard(?n) :- node(?n), small(?n), ?n = "v9"; `, 0, nil},
+		{"control: guard holds v2", `guard(?n) :- small(?n); guard(?n) :- node(?n), small(?n); `, 1, slices.Repeat([][2]bool{{true, true}}, 8)},
+	} {
+		v := std(tvs())
+		calls := walker(t, v, [][]bool{{true, false}, {false, false}})
+		q := mustParse(t, c.guard+body)
+		if want, err := both(q, baseFor(v)); err != nil || len(want) != c.rows {
+			t.Fatalf("%s: %d rows, %v; want %d", c.name, len(want), err, c.rows)
+		}
+		*calls = nil
+		if rows, err := (SemiNaive{}).Eval(bg, q, baseFor(v)); err != nil || len(rows) != c.rows {
+			t.Fatalf("%s: planned %d rows, %v; want %d", c.name, len(rows), err, c.rows)
+		}
+		if !reflect.DeepEqual(*calls, c.walks) {
+			t.Errorf("%s: walks %v, want %v", c.name, *calls, c.walks)
+		}
+	}
+	v := std(tvs())
+	walker(t, v, [][]bool{{true, false}, {false, false}})
+	q := mustParse(t, `guard(?n), walk(?n, ?r), part(?t, ?r), class(?t, "tvs")`)
+	var order []string
+	for _, l := range planBody(baseFor(v), q.Goal, nil).Literals {
+		order = append(order, l.Pos.Relation)
+	}
+	if got := strings.Join(order, " "); got != "class part guard walk" {
+		t.Errorf("planned %s, want class part guard walk (walk once guard binds its start)", got)
 	}
 }
 

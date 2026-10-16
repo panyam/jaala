@@ -187,7 +187,8 @@ func planGoal(b *Base, goal Body) Body {
 // planBody orders a body greedily. At each step it takes the first check whose arguments are all
 // bound, since checking early only discards: a comparison, a filter, or a relation whose arguments
 // are all bound, which only asks whether a tuple exists. Failing that, the first generator one of
-// whose Modes is satisfied with an argument bound (#36): a generator call is the host's own work, such
+// whose Modes is satisfied with an argument bound (#36), where a variable only a mode requiring nothing
+// would take doesn't count, since each call is then a full walk (generatorBound, #304): a generator call is the host's own work, such
 // as a graph walk, and one placed after a relation runs once per row of it, where a relation bound
 // only by constants is a scan that costs a cheap comparison per row. A call with nothing bound lists
 // every value, so it ranks after a relation the engine derives or holds, which costs no more read
@@ -220,7 +221,7 @@ func planBody(b *Base, body Body, entry map[Var]bool) Body {
 					continue
 				}
 				flags := boundFlags(lit.Pos, bound)
-				if bi, ok := b.reg.Predicate(lit.Pos.Relation); ok && bi.IsGenerator() && bi.Satisfied(flags) && (count(flags) > 0 || !slices.ContainsFunc(pos, b.readsWhole)) {
+				if bi, ok := b.reg.Predicate(lit.Pos.Relation); ok && bi.IsGenerator() && bi.Satisfied(flags) && (generatorBound(bi, lit.Pos, flags) > 0 || !slices.ContainsFunc(pos, b.readsWhole)) {
 					pick = i
 					break
 				}
@@ -238,6 +239,9 @@ func planBody(b *Base, body Body, entry map[Var]bool) Body {
 					continue
 				}
 				n := count(flags)
+				if gen {
+					n = generatorBound(bi, lit.Pos, flags)
+				}
 				if n > 0 && scansOnLookup(b, lit.Pos, flags) {
 					n = 0
 				}
@@ -380,6 +384,32 @@ func checkReady(lit Literal, bound map[Var]bool) bool {
 		}
 	}
 	return true
+}
+
+// generatorBound is how many of a generator call's arguments count as bound for planning. When only a
+// mode requiring nothing is satisfied, that is its constants alone: the call is a full walk filtered
+// on what is bound, run once for constants but once per row of whatever bound a variable (#304:
+// agni's net.reaches(?n, ?rn, ?h) with ?rn bound walked 2,250 steps for each of 220 pins).
+func generatorBound(bi ns.Builtin, a *Atom, flags []bool) int {
+	for _, m := range bi.Modes {
+		reads, ok := false, true
+		for i, need := range m {
+			if need && i < len(flags) { // a position past the call's arity is not required, as in Satisfied
+				reads = true
+				ok = ok && flags[i]
+			}
+		}
+		if reads && ok {
+			return count(flags)
+		}
+	}
+	n := 0
+	for _, t := range a.Args {
+		if t.Const != nil {
+			n++
+		}
+	}
+	return n
 }
 
 func count(flags []bool) int {

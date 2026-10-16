@@ -597,7 +597,9 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   lists every value, so it ranks after a relation the engine derives or holds (`readsWhole`, #293:
   Declaire's `loc.home` listed 136,181 homes ahead of `http.pattern`'s 100), and still ahead of one the
   Source looks up or the goal may stream, whose whole read goes to the store (the prefetch tests'
-  `step(?h, ?x), attr(?x, ?v)`). A generator also waits in `deferComparisons`, as an expression does,
+  `step(?h, ?x), attr(?x, ?v)`). A variable only its all-free mode would take counts as unbound
+  (`generatorBound`, #304: agni's `net.reaches(?n, ?rn, ?h)` with only `?rn` bound walked the board
+  once per TVS pin); a constant still counts, since it binds the call once. A generator also waits in `deferComparisons`, as an expression does,
   for a relation still to run that binds a variable it reads where its `Types` say number
   (`numbersRead`, #244), so it reads the spelling they agree on; one typing nothing, as most hosts'
   do, is never held. Naive doesn't plan: it calls a generator where it is
