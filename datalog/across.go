@@ -3,6 +3,7 @@ package datalog
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -21,9 +22,9 @@ import (
 // A generator, filter or comparison holds in every version, so a host generator reading versioned data
 // of its own belongs under At. Where two versions of a row are derived differently (a witness, a
 // spelling of a number), the row is answered once per way, each with the versions it holds in, so each
-// version's row is the one At gives it; Row.CitesAt and Witness.At give a version's citations. A
-// query that aggregates is refused for now (#181), and every version in vs must be one the Source
-// serves. Across reads the Source's facts whole, without lookups, pushes or walks, and keeps no derived
+// version's row is the one At gives it; Row.CitesAt and Witness.At give a version's citations. An
+// aggregate is reduced per stretch of versions over which its inputs don't change (#181), each with
+// its own row. Every version in vs must be one the Source serves. Across reads the Source's facts whole, without lookups, pushes or walks, and keeps no derived
 // relation for a later query.
 func Across(vs ns.VersionSet) Option {
 	return func(o *evalOptions) { o.across = vs }
@@ -144,7 +145,10 @@ func (s *acrossSource) citesAt(cites []string, v ns.Version) []string {
 			out = append(out, c)
 		}
 	}
-	return dedupStrings(out)
+	if out = dedupStrings(out); out == nil && cites != nil {
+		return []string{} // an aggregate row's empty citations stay empty rather than nil, as At's do
+	}
+	return out
 }
 
 // fact is the fact a factCite names, nil for any other citation.
@@ -362,19 +366,6 @@ func compareVersions(a, b ns.VersionSet) int {
 	return 0
 }
 
-// hasAggregates reports whether q, its body aggregates lowered, reduces anything, in its goal or a rule.
-func hasAggregates(q Query) bool {
-	if hasAggregate(q.Select) || len(q.Having) > 0 {
-		return true
-	}
-	for _, r := range q.Rules {
-		if r.aggregates() {
-			return true
-		}
-	}
-	return false
-}
-
 // At is the witness as At(v) gives it, for a witness an Across Eval answered: each fact's citations
 // those recorded for v, and no versions. A witness from any other Eval comes back as it is.
 func (w *Witness) At(v ns.Version) *Witness {
@@ -482,4 +473,125 @@ func pageAcross(rows []*answerRow, universe ns.VersionSet, offset, limit int) []
 		}
 	}
 	return out
+}
+
+// addAcross adds n bindings like bnd to the group key under Across (#181). A group is reduced per
+// segment of versions, each over the bindings holding in all of its versions: a binding holding in
+// some of a segment's versions splits it in two, the part it holds in going on with a copy of the
+// segment's state, so an aggregate's value changes exactly at the versions where its inputs do. The
+// versions no segment holds yet start one of their own.
+func (ag *aggregator) addAcross(key string, bnd *binding, n int, ext map[Var][]ns.Extreme) {
+	in := bnd.versions(ag.across)
+	left := in
+	segs := ag.segs[key]
+	for _, g := range segs {
+		overlap := g.vs.Intersect(in)
+		if overlap.Empty() {
+			continue
+		}
+		left = left.Minus(overlap)
+		if rest := g.vs.Minus(overlap); !rest.Empty() {
+			split := g.clone()
+			split.vs, g.vs = rest, overlap
+			ag.file(key, split)
+		}
+		ag.addTo(g, bnd, n, ext)
+	}
+	if !left.Empty() {
+		g := ag.newGroup(bnd)
+		g.vs = left
+		ag.file(key, g)
+		ag.addTo(g, bnd, n, ext)
+	}
+}
+
+// file adds segment g of the group key.
+func (ag *aggregator) file(key string, g *aggGroup) {
+	if ag.segs == nil {
+		ag.segs = map[string][]*aggGroup{}
+	}
+	ag.segs[key] = append(ag.segs[key], g)
+	ag.groups[key+"\x00"+strconv.Itoa(len(ag.groups))] = g
+}
+
+// clone is a copy of the group whose state later bindings change apart from g's.
+func (g *aggGroup) clone() *aggGroup {
+	c := &aggGroup{keyVals: slices.Clone(g.keyVals), cites: maps.Clone(g.cites), accs: make([]accumulator, len(g.accs)), vs: g.vs}
+	for i, acc := range g.accs {
+		c.accs[i] = acc.clone()
+	}
+	return c
+}
+
+// clone is a copy of the accumulator whose state later values change apart from acc's.
+func (acc accumulator) clone() accumulator {
+	c := acc
+	c.keys = maps.Clone(acc.keys)
+	c.list = slices.Clone(acc.list)
+	c.sum.partials = slices.Clone(acc.sum.partials)
+	c.seen = maps.Clone(acc.seen)
+	c.units = slices.Clone(acc.units)
+	return c
+}
+
+// rowsAcross reduces every segment of every group, each row with its segment's versions, and joins a
+// group's segments that reduce to the same row. With no group-by column, the versions no binding holds
+// in get the row over nothing, as At gives each of them.
+func (ag *aggregator) rowsAcross() ([]Row, error) {
+	if len(ag.keyVars) == 0 {
+		left := ag.across
+		for _, g := range ag.segs[""] {
+			left = left.Minus(g.vs)
+		}
+		if !left.Empty() {
+			g := ag.newGroup(nil)
+			g.vs = left
+			ag.file("", g)
+		}
+	}
+	var out []Row
+	for _, key := range slices.Sorted(maps.Keys(ag.segs)) {
+		var rows []Row
+		for _, g := range ag.segs[key] {
+			row, keep, err := ag.rowOf(g)
+			if err != nil {
+				return nil, err
+			}
+			if !keep {
+				continue
+			}
+			row.Versions = g.vs
+			if i := slices.IndexFunc(rows, func(r Row) bool { return sameRow(r, row) }); i >= 0 {
+				rows[i].Versions = rows[i].Versions.Union(row.Versions)
+				continue
+			}
+			rows = append(rows, row)
+		}
+		out = append(out, rows...)
+	}
+	sel := selKeys(ag.sel)
+	slices.SortStableFunc(out, func(a, b Row) int {
+		for _, v := range sel {
+			if c := orderValues(a.Bind[v], b.Bind[v]); c != 0 {
+				return c
+			}
+		}
+		return compareVersions(a.Versions, b.Versions)
+	})
+	return out, nil
+}
+
+// sameRow reports whether two rows of one group say the same: their values as spelled, why a value is
+// absent, and their citations.
+func sameRow(a, b Row) bool {
+	if len(a.Bind) != len(b.Bind) || !slices.Equal(a.Cites, b.Cites) || !maps.Equal(a.Why, b.Why) {
+		return false
+	}
+	for k, v := range a.Bind {
+		w, ok := b.Bind[k]
+		if !ok || !valueEq(v, w) || v.S != w.S || v.BaseUnit != w.BaseUnit || v.Absent != w.Absent {
+			return false
+		}
+	}
+	return true
 }

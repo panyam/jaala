@@ -103,6 +103,9 @@ func answerGoal(b *Base, pos, negs []Literal, having []Compare, sel, cols []Term
 	total := 0
 	if hasAggregate(sel) || len(having) > 0 {
 		ag := newAggregator(sel, having, true)
+		if b.across != nil {
+			ag.across = b.across.vs
+		}
 		lits := deferComparisons(pos, b.reg)
 		summarized := false
 		if g := goalGroup(b, pos, negs); g != nil {
@@ -134,7 +137,7 @@ func answerGoal(b *Base, pos, negs []Literal, having []Compare, sel, cols []Term
 			return nil, err
 		}
 		for _, g := range grouped {
-			r := &answerRow{vals: make([]ns.Value, len(cols)), cites: g.Cites}
+			r := &answerRow{vals: make([]ns.Value, len(cols)), cites: g.Cites, vs: g.Versions}
 			for i, l := range labels {
 				if v, ok := fixed[i]; ok {
 					r.vals[i] = v

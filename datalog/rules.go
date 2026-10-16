@@ -363,6 +363,9 @@ func (b *Base) applyAggregate(r Rule, pos, negs []Literal) (bool, error) {
 		}
 	}
 	ag := newAggregator(cols, nil, false)
+	if b.across != nil {
+		ag.across = b.across.vs
+	}
 	lits := deferComparisons(pos, b.reg)
 	if err := prefetch(b, lits, negs); err != nil {
 		return false, err
@@ -391,13 +394,14 @@ func (b *Base) applyAggregate(r Rule, pos, negs []Literal) (bool, error) {
 				vals[j] = row.Bind[colLabel(t)]
 			}
 		}
-		t := idbTuple{vals: vals, cites: row.Cites}
+		t := idbTuple{vals: vals, cites: row.Cites, vs: row.Versions}
 		if b.witnessing() && !isAggReduce(r.Head.Relation) {
 			text := r.text
 			if text == "" {
 				text = r.String()
 			}
 			t.wit = derivedNode(r.Head.Relation, vals, text, nil)
+			t.wit.Versions = t.vs
 		}
 		fresh, err := b.addTuple(r.Head.Relation, t)
 		if err != nil {

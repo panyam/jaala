@@ -348,9 +348,6 @@ func evaluateOn(b *Base, gen int64, q Query, o evalOptions, rewrite func(*Base, 
 	if q, err = lowerExpressions(q, b.reg); err != nil {
 		return nil, err
 	}
-	if b.across != nil && hasAggregates(q) {
-		return nil, fmt.Errorf("query: Across can't evaluate an aggregate yet; ask At at each version")
-	}
 	written := q
 	if o.after != nil {
 		if written.After, err = cursorOf(written, o.after); err != nil {
