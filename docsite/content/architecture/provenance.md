@@ -1,7 +1,7 @@
 ---
 title: "Provenance"
 description: "Where an answer's citations and witnesses come from, what they're guaranteed to be, and where two evaluators can differ."
-prev: {url: "/jaala/architecture/rewrites/", title: "Rewrites"}
+prev: {url: "/jaala/architecture/stores/", title: "Stores"}
 next: {url: "/jaala/architecture/testing/", title: "Testing"}
 ---
 

@@ -1,7 +1,7 @@
 ---
 title: "Modules and the vocabulary"
 description: "How a host names everything a query can call: modules of rules by path, private members, docs and signatures, rules that take an argument from their caller, and the errors Check reports."
-prev: {url: "/jaala/guide/host-options/", title: "Host options"}
+prev: {url: "/jaala/guide/stores/", title: "Facts from stores"}
 next: {url: "/jaala/guide/absent-values/", title: "Absent values"}
 ---
 

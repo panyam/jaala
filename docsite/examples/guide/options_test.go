@@ -181,3 +181,16 @@ func Example_units() {
 	// 25 speed
 	// 6.25 speed/s
 }
+
+// A parse error is a *datalog.ParseError, which says where the piece it's
+// about starts, so an editor can put a marker there. Its Error is the
+// message alone, the same text with or without the position.
+func Example_parseError() {
+	_, err := datalog.Parse("imports(?a, ?b)\n=> ?a, nope")
+	var pe *datalog.ParseError
+	if errors.As(err, &pe) {
+		fmt.Printf("line %d, column %d: %v\n", pe.Line, pe.Column, err)
+	}
+	// Output:
+	// line 2, column 8: query: projection column "nope" must be a ?variable or an aggregate
+}

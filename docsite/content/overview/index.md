@@ -20,10 +20,15 @@ The graph has the edges a→b, b→c and c→d, so the answer is `b`, `c` and `d
 - Aggregation in the answer (`count`, `sum`, `min`, `max`, `list`, with `distinct` and `having`) and in a rule's head.
 - `order by`, `limit` and `offset`, over an answer that's sorted the same way every time.
 - Types on a relation's arguments, declared or inferred, so a constant of the wrong type is refused rather than matching nothing without an error.
+- Arithmetic and units, `?p = ?v * ?i` and `?w > 3.3V`, written as functions that run in whichever direction the query needs ([arithmetic and units]({{.Site.PathPrefix}}/guide/arithmetic/)).
 
 ## Provenance
 
 Every answer row carries the citations of the facts that produced it, so a host can point at the evidence: the net, the part, the line in the source file. Asked for witnesses, jaala also returns the tree of rules and facts that derived the row.
+
+## Where the facts come from
+
+A host serves its facts through a `Source`, and the simplest one holds them in memory. A source over a database or an index can answer only what a query binds, and can join, count, page or walk itself, so a question asks for what it needs rather than loading everything, and a federation spreads one question over several stores ([facts from stores]({{.Site.PathPrefix}}/guide/stores/)). A source can serve several versions of its facts, the revisions of a design or the commits of a repo, and one base answers at any of them, across all of them at once, or says what changed between two ([versions]({{.Site.PathPrefix}}/guide/versions/)). And a host's own Go can run inside a query as a predicate or a generator, for what's easier to compute than to serve ([predicates and generators]({{.Site.PathPrefix}}/guide/predicates/)).
 
 ## Three packages
 
