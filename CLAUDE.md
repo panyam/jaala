@@ -24,8 +24,10 @@ stores, which is why it was split (#320).
 ## Commands
 
 `./selfcheck.sh` runs the host-free checks at full size: the generated corpus at 5000 seeds, the
-work baselines, fuzzing, and the same 5000 seeds against Soufflé when `souffle` is on PATH (it
-prints "could not run" otherwise). CI (`.github/workflows/ci.yml`) runs the set below, and a
+work baselines, fuzzing, the same 5000 seeds against Soufflé when `souffle` is on PATH, and a real
+`llama-server` under nl's grammar when `make llama` has fetched it (each prints "could not run"
+otherwise). `make setup` installs both. Every Makefile recipe is a one-line call into `scripts/`
+(after mcpkit's): put a new target's shell there, never in the recipe. CI (`.github/workflows/ci.yml`) runs the set below, and a
 separate `souffle` job installs Soufflé 2.5's release `.deb` and compares 1000 seeds; all must pass:
 
 ```sh
@@ -86,7 +88,8 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   ../../` back until `make bump-root` after the next jaala tag, and `make tag` won't tag it while the
   replace is there (Releasing). Its old path, `github.com/panyam/jaala/nlmodels`, shipped
   once (nlmodels/v0.1.65) with no consumer, and nothing is tagged under that prefix again. `./selfcheck.sh` runs a real
-  `llama-server` on llama.cpp's 1 MB test model when `make llama` has fetched it: every reply must
+  `llama-server` on llama.cpp's 1 MB test model when `make llama` has fetched it (Homebrew's
+  llama.cpp ships no GBNF validator, so a server is the only check llama.cpp reads the grammar): every reply must
   stay inside the grammar as `internal/gbnf` reads it. The model (`frontends/nlmodels/testdata/stories260K.gguf`)
   is gitignored and found by a relative path, so a selfcheck worktree needs its own copy (`cp` it in
   after `git worktree add`), or the step reports "could not run". `llama-server` exits with "Abort
@@ -786,10 +789,11 @@ Issues are ranked by the mission they serve (labels `P0`–`P3`, `waiting`, `mis
 missions unblock a host's active mission; such a mission closes when the host's half of its exercise
 passes too, so it can stay open after jaala's tickets close. One is active:
 `mission_agent_frontend` (#322), a host's caller asks in plain language and jaala's front end
-turns it into a program that checks. jaala's half is `frontends/nl` and `frontends/nlmodels` (#321, #323 to #326, #330,
-#331, released in v0.1.65 and nlmodels/v0.1.65, and #336, the fix an unknown name lacks); its
-exercise is `go test ./frontends/nl -run TestEval -v` until Declaire's translator-alone arm (declaire#290) runs
-on those tags. The two store missions closed on 2026-10-16. `mission_store_federation` (#219), a host answers a question over many stores without holding them
+turns it into a program that checks. jaala's half is `frontends/nl` and `frontends/nlmodels`, and all of its tickets are
+closed (#321, #323 to #326, #330, #331, #336, #337), released in v0.1.66 and
+frontends/nlmodels/v0.1.66; `go test ./frontends/nl -run TestEval -v` meets its fix line (6/6). It
+stays open, as the store missions did, until Declaire's translator-alone arm (declaire#290) runs on
+those tags; findings from that run become new tickets on it. The two store missions closed on 2026-10-16. `mission_store_federation` (#219), a host answers a question over many stores without holding them
 in memory, measured by the `Stores` benchmark (#218: stores asked, unindexed probes, round trips,
 peak heap and a repeated question's fetches as the number of stores grows) and Declaire's `bench
 -time` on a federated view. The benchmark's stores run in its process, so `peak-MB` counts their
@@ -824,6 +828,10 @@ priority and a mission link when filed, or `waiting` with the trigger that would
 Create the branch before the first commit (`git branch --show-current` says so). #200's work was
 committed on local `main`, so `git reset --soft main` to squash it did nothing and the PR opened
 with WIP commits. Squash against `origin/main`, never a local name that may have moved.
+
+Another session may tag a release while your PR is open: v0.1.65 shipped `nl` at the root while
+#337, which moved it, was being planned on "no tag ships it yet". Check `git fetch --tags` and
+`git tag --contains` before arguing that a path or API change is free.
 
 Stacked PRs (each branched off the one below, its base that branch) review and merge in order, and
 GitHub retargets the next to `main` when its base merges; confirm each merge commit is an ancestor of

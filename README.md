@@ -52,6 +52,12 @@ engine, and was extracted so other graph tools could share it.
 All three packages import only the Go standard library and each other, in that one direction, and
 build for `GOOS=js GOARCH=wasm`.
 
+`frontends/` holds what turns text other than jaala's own syntax into a program that checks, which
+no engine-only host needs: `frontends/nl`, which asks a model to write a program from a
+plain-language question (the vocabulary as a card, a grammar per vocabulary for constrained
+decoding, errors a model can fix from, a translate loop and an eval), and `frontends/nlmodels`, a
+module of its own with clients for llama.cpp and Ollama. See `frontends/README.md`.
+
 The documentation site lives in `docsite/`, where every example is run on the engine when the
 site is built; `docsite/README.md` says how to build it and add to it.
 
