@@ -1156,7 +1156,8 @@ func (f *Federation) WalkConjunction(ctx context.Context, c Conjunction, in, out
 // A TimedFederation is a Federation whose facts hold over versions (#312), so one Base answers At(v)
 // and Across over facts kept in several stores, such as a design's netlist store serving each revision
 // beside a datasheet store that doesn't change between them. Made by Federation.Timed, it is a
-// TimedSource and a SourceAt, and as a plain Source it is the Federation it was made from.
+// TimedSource, a SourceAt and a TimedLookupSource, and as a plain Source it is the Federation it was
+// made from.
 type TimedFederation struct {
 	*Federation
 }
@@ -1235,6 +1236,79 @@ func (t *TimedFederation) citeTimed(i int, x TimedTuple) TimedTuple {
 		cites[j] = TimedCites{Versions: c.Versions, Cites: t.cite(i, Tuple{Cites: c.Cites}).Cites}
 	}
 	return TimedTuple{Vals: x.Vals, Versions: x.Versions, Cites: cites}
+}
+
+// LooksUpTimed implements TimedLookupRelations: rel is looked up across versions when every member
+// serving it answers such a lookup, a TimedSource member through LookupTimed and any other through
+// Lookup, each as its own LooksUpTimed or LooksUp allows.
+func (t *TimedFederation) LooksUpTimed(rel string) bool {
+	for _, i := range t.serving[rel] {
+		switch src := t.members[i].Source.(type) {
+		case TimedSource:
+			tl, ok := src.(TimedLookupSource)
+			if !ok {
+				return false
+			}
+			if lr, ok := tl.(TimedLookupRelations); ok && !lr.LooksUpTimed(rel) {
+				return false
+			}
+		case LookupSource:
+			if lr, ok := src.(LookupRelations); ok && !lr.LooksUp(rel) {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// LookupTimed implements TimedLookupSource, asking each member serving rel whose Holds allows the bound
+// values, in member order, as Lookup does: a TimedSource member through its LookupTimed, and any other
+// through Lookup, its facts holding in every version the federation serves. A member that can't look
+// up (only asked when LooksUpTimed is false, which the engine doesn't do) returns its whole relation. A
+// member's failure fails the lookup, wrapped with the member's name.
+func (t *TimedFederation) LookupTimed(ctx context.Context, rel string, bound map[int]Value) ([]TimedTuple, error) {
+	var all VersionSet
+	var out []TimedTuple
+	for _, i := range t.serving[rel] {
+		m := t.members[i]
+		if m.Holds != nil && !m.Holds(rel, bound) {
+			continue
+		}
+		if ts, ok := m.Source.(TimedSource); ok {
+			var tt []TimedTuple
+			var err error
+			if tl, ok := ts.(TimedLookupSource); ok {
+				tt, err = tl.LookupTimed(ctx, rel, bound)
+			} else {
+				tt, err = ts.TimedTuples(ctx, rel)
+			}
+			if err != nil {
+				return nil, fmt.Errorf("member %s: %w", t.name(i), err)
+			}
+			for _, x := range tt {
+				out = append(out, t.citeTimed(i, x))
+			}
+			continue
+		}
+		var ts []Tuple
+		if ls, ok := m.Source.(LookupSource); ok {
+			var err error
+			if ts, err = ls.Lookup(ctx, rel, bound); err != nil {
+				return nil, fmt.Errorf("member %s: %w", t.name(i), err)
+			}
+		} else {
+			ts = m.Source.Tuples(rel)
+		}
+		if all == nil {
+			all = t.Versions()
+		}
+		for _, x := range t.cited(i, ts) {
+			out = append(out, TimedTuple{Vals: x.Vals, Versions: all, Cites: []TimedCites{{Versions: all, Cites: x.Cites}}})
+		}
+	}
+	return out, nil
 }
 
 // SourceAt implements SourceAt: a Federation over the members at v, with their names and Holds, and

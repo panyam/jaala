@@ -52,7 +52,8 @@ type TimedSource interface {
 // plain Source may implement it does (LookupSource, PushSource, StreamSource, WalkSource, SummarySource
 // and the rest). An Eval under datalog.At(v) then reads version v as it reads any Source, asking the
 // store for what a query binds rather than reading TimedTuples whole, and never calls TimedTuples.
-// Across and Diff still read TimedTuples.
+// Across reads TimedTuples, or LookupTimed for a bound call (TimedLookupSource), and Diff reads
+// TimedTuples.
 //
 // The engine calls SourceAt once for each version whose caches it holds (datalog's LimitVersions), and
 // again after it drops them, so a host whose versions live in one store returns a small view of it, the
@@ -62,6 +63,31 @@ type TimedSource interface {
 type SourceAt interface {
 	TimedSource
 	SourceAt(v Version) (Source, error)
+}
+
+// TimedLookupSource is optionally implemented by a TimedSource that answers a call with bound arguments
+// across versions from its own index (#317), so an Eval under datalog.Across asks it for what a query
+// binds, as an Eval asks a LookupSource, rather than reading the relation's TimedTuples whole. bound
+// maps argument positions, from 0, to values, as Lookup's does, and LookupTimed returns the matching
+// facts as TimedTuples returns them: each once, with the versions it holds in and its citations per
+// version. It is under Lookup's contract otherwise: it may return facts that don't match, which the
+// engine drops, and must not leave out one that does; each call counts one unit of work; a failed call
+// fails the Eval, wrapped with the relation's name, and isn't kept. What it returns is kept for the rest
+// of the Eval that asked, and not by the Base, since Across keeps nothing between Evals. A call with
+// nothing bound still reads TimedTuples. At(v) doesn't call it: a version is read through SourceAt or
+// from TimedTuples.
+type TimedLookupSource interface {
+	TimedSource
+	LookupTimed(ctx context.Context, rel string, bound map[int]Value) ([]TimedTuple, error)
+}
+
+// TimedLookupRelations is optionally implemented by a TimedLookupSource that answers LookupTimed for
+// some of its relations and not others, such as a TimedFederation whose members differ. Under Across
+// the engine looks up a relation only when LooksUpTimed reports true for it, and reads any other from
+// TimedTuples whole. A TimedLookupSource that doesn't implement it looks up every relation. The answer
+// for a relation must not change for the life of a Base.
+type TimedLookupRelations interface {
+	LooksUpTimed(rel string) bool
 }
 
 // versionView is a TimedSource's facts at version v as a plain Source, for a federation member that

@@ -24,8 +24,9 @@ import (
 // spelling of a number), the row is answered once per way, each with the versions it holds in, so each
 // version's row is the one At gives it; Row.CitesAt and Witness.At give a version's citations. An
 // aggregate is reduced per stretch of versions over which its inputs don't change (#181), each with
-// its own row. Every version in vs must be one the Source serves. Across reads the Source's facts whole, without lookups, pushes or walks, and keeps no derived
-// relation for a later query.
+// its own row. Every version in vs must be one the Source serves. Across reads the Source's facts
+// through TimedTuples, or through LookupTimed for a bound call when the Source is an
+// ns.TimedLookupSource (#317), without pushes, walks or streaming, and keeps nothing for a later query.
 func Across(vs ns.VersionSet) Option {
 	return func(o *evalOptions) { o.across = vs }
 }
@@ -46,8 +47,14 @@ func (b *Base) acrossBase(vs ns.VersionSet) (*Base, error) {
 	if extra := vs.Minus(b.timed.Versions()); !extra.Empty() {
 		return nil, fmt.Errorf("query: Across names versions the Source doesn't serve: %s", versionsText(extra))
 	}
-	src := &acrossSource{ts: b.timed, vs: vs, cache: b.versions, sets: map[string][]ns.VersionSet{}}
-	return &Base{src: src, reg: b.reg, edb: newEDBCache(), lookups: newLookupCache(), work: b.work, noIndex: b.noIndex, across: src}, nil
+	src := &acrossSource{ts: b.timed, vs: vs, cache: b.versions, sets: map[string][]ns.VersionSet{}, looked: map[string][]ns.VersionSet{}}
+	ab := &Base{src: src, reg: b.reg, edb: newEDBCache(), lookups: newLookupCache(), work: b.work, noIndex: b.noIndex, across: src}
+	if tl, ok := b.timed.(ns.TimedLookupSource); ok {
+		src.looker = tl
+		src.lookRels, _ = tl.(ns.TimedLookupRelations)
+		ab.looker, ab.lookRels = src, src
+	}
+	return ab, nil
 }
 
 // versionsText writes a version set as ranges, "3, 5-7, 9-".
@@ -67,15 +74,19 @@ func versionsText(vs ns.VersionSet) string {
 }
 
 // acrossSource is a TimedSource's facts across the versions vs as a plain Source: each fact holding in
-// some version of vs, cited by factCite and its place in facts when it has citations, with the versions it holds in by
-// relation and place in sets.
+// some version of vs, cited by factCite and its place in facts when it has citations, with the versions
+// it holds in by relation and place in sets. Over a TimedLookupSource it looks up too (#317), and a
+// lookup's versions are kept in looked by its lookup key, as the Base keeps its tuples.
 type acrossSource struct {
-	ts    ns.TimedSource
-	vs    ns.VersionSet
-	cache *versionCache
-	mu    sync.Mutex
-	facts []*ns.TimedTuple
-	sets  map[string][]ns.VersionSet
+	ts       ns.TimedSource
+	vs       ns.VersionSet
+	cache    *versionCache
+	looker   ns.TimedLookupSource
+	lookRels ns.TimedLookupRelations
+	mu       sync.Mutex
+	facts    []*ns.TimedTuple
+	sets     map[string][]ns.VersionSet
+	looked   map[string][]ns.VersionSet
 }
 
 func (s *acrossSource) Schema(rel string) (ns.Schema, bool) { return s.ts.Schema(rel) }
@@ -91,10 +102,18 @@ func (s *acrossSource) TuplesContext(ctx context.Context, rel string) ([]ns.Tupl
 	if err != nil {
 		return nil, err
 	}
-	var out []ns.Tuple
-	var sets []ns.VersionSet
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	out, sets := s.within(timed)
+	s.sets[rel] = sets
+	return out, nil
+}
+
+// within are the facts of timed holding in some version of vs, as tuples, with the versions of vs each
+// holds in. Called with mu held.
+func (s *acrossSource) within(timed []ns.TimedTuple) ([]ns.Tuple, []ns.VersionSet) {
+	var out []ns.Tuple
+	var sets []ns.VersionSet
 	for i := range timed {
 		t := &timed[i]
 		if t.Versions == nil {
@@ -112,8 +131,46 @@ func (s *acrossSource) TuplesContext(ctx context.Context, rel string) ([]ns.Tupl
 		out = append(out, ns.Tuple{Vals: t.Vals, Cites: cites})
 		sets = append(sets, in)
 	}
-	s.sets[rel] = sets
-	return out, nil
+	return out, sets
+}
+
+// LooksUp implements ns.LookupRelations: rel is looked up when the TimedLookupSource looks it up.
+func (s *acrossSource) LooksUp(rel string) bool {
+	return s.lookRels == nil || s.lookRels.LooksUpTimed(rel)
+}
+
+// Lookup implements ns.LookupSource for the Base's lookable; the engine asks lookup, which keeps the
+// versions too.
+func (s *acrossSource) Lookup(ctx context.Context, rel string, bound map[int]ns.Value) ([]ns.Tuple, error) {
+	t, _, err := s.lookup(ctx, rel, bound)
+	return t, err
+}
+
+// lookup asks the TimedLookupSource for rel's facts matching bound, returning those holding in some
+// version of vs with the versions each holds in, as TuplesContext reads a relation whole.
+func (s *acrossSource) lookup(ctx context.Context, rel string, bound map[int]ns.Value) ([]ns.Tuple, []ns.VersionSet, error) {
+	timed, err := s.looker.LookupTimed(ctx, rel, bound)
+	if err != nil {
+		return nil, nil, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out, sets := s.within(timed)
+	return out, sets, nil
+}
+
+// keepLooked keeps a lookup's versions under its lookup key, beside the tuples the Base keeps there.
+func (s *acrossSource) keepLooked(key string, sets []ns.VersionSet) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.looked[key] = sets
+}
+
+// lookedSets are the versions of each tuple a lookup kept under key returned.
+func (s *acrossSource) lookedSets(key string) []ns.VersionSet {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.looked[key]
 }
 
 // cited reports whether t has citations in any version, so a fact without needs no factCite to carry.
@@ -274,7 +331,7 @@ func (b *Base) addAcross(rel string, t idbTuple) (bool, error) {
 			w.Values = kept.vals
 			kept.wit = &w
 		}
-		kept.vs = overlap
+		kept = kept.holdingIn(overlap)
 		if rest := old.vs.Minus(overlap); rest.Empty() {
 			b.idb[rel][i] = kept
 			if b.run.revised == nil {
@@ -282,17 +339,28 @@ func (b *Base) addAcross(rel string, t idbTuple) (bool, error) {
 			}
 			b.run.revised[rel] = append(b.run.revised[rel], i)
 		} else {
-			b.idb[rel][i].vs = rest
+			b.idb[rel][i] = old.holdingIn(rest)
 			b.idb[rel] = append(b.idb[rel], kept)
 		}
 		changed = true
 	}
 	if !left.Empty() {
-		t.vs = left
-		b.idb[rel] = append(b.idb[rel], t)
+		b.idb[rel] = append(b.idb[rel], t.holdingIn(left))
 		changed = true
 	}
 	return changed, nil
+}
+
+// holdingIn is t holding in vs, its witness saying so too. The witness is copied, since a body that
+// read t before shares the node.
+func (t idbTuple) holdingIn(vs ns.VersionSet) idbTuple {
+	t.vs = vs
+	if t.wit != nil && !ns.SameVersions(t.wit.Versions, vs) {
+		w := *t.wit
+		w.Versions = vs
+		t.wit = &w
+	}
+	return t
 }
 
 // rowAlts are an answer row's copies under Across, as addAcross keeps a tuple's: one per way the row is

@@ -179,11 +179,11 @@ func (b *Base) extendEDB(atom *Atom, bnd *binding, yield func(*binding) error) e
 		return b.streamEDB(atom, bnd, yield)
 	}
 	if b.looksUp(atom.Relation) {
-		if rows, ok, err := b.lookup(atom, bnd); err != nil || ok {
+		if rows, sets, ok, err := b.lookup(atom, bnd); err != nil || ok {
 			if err != nil {
 				return err
 			}
-			return b.unifyEach(atom, rows, nil, true, bnd, yield)
+			return b.unifyEach(atom, rows, sets, nil, true, bnd, yield)
 		}
 	}
 	rows, err := b.edbTuples(atom.Relation)
@@ -194,15 +194,16 @@ func (b *Base) extendEDB(atom *Atom, bnd *binding, yield func(*binding) error) e
 		b.explainEDB(atom, rows, bnd)
 	}
 	pos, all := b.edbCandidates(atom, rows, bnd)
-	return b.unifyEach(atom, rows, pos, all, bnd, yield)
-}
-
-// unifyEach unifies atom with each candidate, rows[pos[i]] for every i, or every row when all is set.
-func (b *Base) unifyEach(atom *Atom, rows []ns.Tuple, pos []int, all bool, bnd *binding, yield func(*binding) error) error {
-	var sets []ns.VersionSet // under Across, the versions each row holds in
+	var sets []ns.VersionSet
 	if b.across != nil {
 		sets = b.across.setsOf(atom.Relation)
 	}
+	return b.unifyEach(atom, rows, sets, pos, all, bnd, yield)
+}
+
+// unifyEach unifies atom with each candidate, rows[pos[i]] for every i, or every row when all is set.
+// Under Across, sets are the versions each row holds in, by place in rows.
+func (b *Base) unifyEach(atom *Atom, rows []ns.Tuple, sets []ns.VersionSet, pos []int, all bool, bnd *binding, yield func(*binding) error) error {
 	for i := 0; ; i++ {
 		var t ns.Tuple
 		k := i

@@ -120,7 +120,15 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   host's Source to add `Version` would hide its store interfaces. `Federation.Timed` makes a
   `TimedFederation`: a plain member holds in every version, and at v it is a Federation of the
   members at v (`versionView` for a timed member without `SourceAt`), partitioned when the original
-  is. `Across` and `Diff` still read `TimedTuples` whole. The corpus runs `agreeAt` over
+  is. `Diff` still reads `TimedTuples` whole, and `Across` does but for a bound call over an
+  `ns.TimedLookupSource` (#317): `acrossBase` gives its Base the `acrossSource` as looker, `lookup`
+  returns each row's version sets beside its rows (kept under the lookup key in `acrossSource.looked`,
+  since a lookup's rows have no place in a whole read's `sets`), and `unifyEach` takes the sets from
+  its caller. `TimedFederation` routes `LookupTimed` by `Holds` (a plain member through `Lookup`, in
+  every version) and says per relation in `LooksUpTimed`. Nothing else goes to a store under
+  `Across`, and an Across Base is per Eval, so nothing is kept. `agreeAcross` runs every program over
+  a `lookingTimed` store too (sloppy every other seed, through a timed Federation every third);
+  `acrossLookedPrograms` is its control. The corpus runs `agreeAt` over
   `storing(timed)` too (a `pushing` store per version, through a timed Federation every third seed),
   failing if `TimedTuples` is read; `atStoredPrograms` is its control.
 - **A Source may say which lookups it answers from an index** (`ns.IndexedLookups`, #154).
@@ -203,8 +211,9 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   each reached value's rows under `pushKey(g.conjunction(bnd))`, #246's batch key, after unifying
   each row with the group so a non-match is never followed. A demand rewrite that splits the step
   into a supplementary prefix leaves no single group to walk. A walk is found only where the recursive rule
-  reads the relation itself: one reading it through a one-rule helper (the docs' `deps.depends_on`
-  through `_step`) is probed per round, since nothing is inlined into a recursive rule (#97, #319). The corpus's programs
+  reads the relation itself, or through a helper `unfold` inlines into it, which takes only a rename
+  (one rule, one positive non-predicate literal, no projection: the docs' `deps.depends_on` through
+  `_step`, #319); a helper that joins, compares or calls a predicate is probed per round. The corpus's programs
   rarely walk, so `agreeWalked` runs a fixed reach from each graph's first edge over a walking store
   and over the partitioned federation, on a fresh Base (Naive's lookups would leave nothing to walk);
   `walkedPrograms` is its control.
@@ -630,7 +639,9 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   #139): probing one inlined `has_tp(GND)` per caller re-lists every test point on GND, where demand
   derives each net once. Nor into a goal or rule head whose aggregate counts bindings (`count`, `sum`,
   `list` without `distinct`): a derived relation is a set, its inlined body is not. Nor into a recursive relation's
-  rules (#97): the fixpoint reruns that body every round, so an inlined join is redone each time. Modes are checked on the linked
+  rules (#97): the fixpoint reruns that body every round, so an inlined join is redone each time. A
+  rename (`renames`: one rule whose body is one positive call to a relation, not a predicate) is
+  inlined there anyway (#319), since it adds no join and the body then reads the walked relation. Modes are checked on the linked
   program before any rewrite, so inlining a rule away can't hide an unrunnable body.
 - **Generators declare `Modes`; `checkModes` is shared validation, the planner is SemiNaive's.** A
   body that can never satisfy a generator is refused by every evaluator and by `Validate` with one
@@ -717,8 +728,8 @@ have no page), and put the upgrade note on the issue a host filed or the PR's ow
 Issues are ranked by the mission they serve (labels `P0`–`P3`, `waiting`, `mission`,
 `mission:active`, `mission_<slug>`), and its tickets are linked as blocked-by. Most of jaala's
 missions unblock a host's active mission; such a mission closes when the host's half of its exercise
-passes too, so it can stay open after jaala's tickets close. Two are active:
-`mission_store_federation` (#219), a host answers a question over many stores without holding them
+passes too, so it can stay open after jaala's tickets close. None is active now: the two store
+missions closed on 2026-10-16. `mission_store_federation` (#219), a host answers a question over many stores without holding them
 in memory, measured by the `Stores` benchmark (#218: stores asked, unindexed probes, round trips,
 peak heap and a repeated question's fetches as the number of stores grows) and Declaire's `bench
 -time` on a federated view. The benchmark's stores run in its process, so `peak-MB` counts their
@@ -726,8 +737,8 @@ work too: `page`'s 15 MB at 50 stores is mostly the fixture's own paging (`pageO
 match before sorting), not the engine, so profile before blaming jaala. `peak-MB` also moves run
 to run (`attrs-of-reached` read 14.3 to 17.2 MB over four runs of one commit), so rerun with
 `-count 3` before reading a few MB as a regression; store calls and `shipped` are exact. Run it as
-`go test ./datalog -run '^$' -bench 'BenchmarkStores/.*/stores=50' -benchtime 1x`. Its seven jaala tickets are closed, the last #233 (a `StreamSource` read
-charged to the budget, from declaire#211's measurement); it stays open for Declaire's half.
+`go test ./datalog -run '^$' -bench 'BenchmarkStores/.*/stores=50' -benchtime 1x`. Its seven jaala tickets closed, the last #233 (a `StreamSource` read
+charged to the budget, from declaire#211's measurement).
 `mission_store_pushdown` (#235), epic #213's second half: a store answers the part of a question it
 can evaluate (a conjunction, a walk, an aggregate, a page) and jaala combines the results, measured
 by the same benchmark's `shipped` column and its questions `two-hops-in-repo`, `count-lines`, `page`,
@@ -742,10 +753,7 @@ its `bench/external`, declaire#255: 2m44s on stores against 4.6s on mem) reopene
 (v0.1.55) read generator-only relations in full, taking x04 to 51.5s; #291 (v0.1.56) stopped a push
 at a filter, 14.6s; #293 (v0.1.57) ranked an all-free generator after held relations, 3.6s, under
 mem's 3.3s. #297 (v0.1.57) lets a store take `str.glob` with a push (`ns.FilterSource`), which x05
-needs Declaire to implement. All 18 jaala tickets are closed, and like #219 it stays open for
-Declaire's half (`FilterSource`, `LookupBatch` on its source, declaire#255) and its run (`bench
--time` on a federated view). jaala's
-earlier four are closed: `mission_selfcheck` (#86, at v0.1.29) left `./selfcheck.sh` as the check to
+needs Declaire to implement. All 18 jaala tickets closed. The earlier four are closed too: `mission_selfcheck` (#86, at v0.1.29) left `./selfcheck.sh` as the check to
 run on `main` after every merge and before every tag; `mission_docsite` (#104) left the docs site
 with every example run by the engine; `mission_aggregate_answers` (#172, at v0.1.42) left Soufflé
 checking every aggregate program but `list`; and `mission_browser_memory` (#193, closed with agni

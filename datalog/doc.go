@@ -47,7 +47,8 @@
 // would, while Base.Diff lists a relation's facts gained and lost between two. Across(vs) evaluates
 // once over many versions, each row carrying the versions it holds in (Row.Versions). A TimedSource
 // that is an ns.SourceAt serves each version as a Source of its own, which At(v) reads as it reads any
-// Source, through its lookups, pushes and walks.
+// Source, through its lookups, pushes and walks, and one that is an ns.TimedLookupSource is asked by
+// Across for what a call binds.
 //
 // Evaluation is guaranteed to terminate because no rule can invent a value: every answer is built
 // from constants in the facts and values a host's generators draw from finite data. That guarantee

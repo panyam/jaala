@@ -27,9 +27,9 @@ import (
 //     but its inlined body yields a net once per test point on it, and `=> count(?n)` would count
 //     those. Any other rule body is safe, since its head is a set, and min, max and distinct
 //     aggregates never count duplicates.
-//   - The rule holding the call isn't one of a recursive relation's (#97). The fixpoint runs such a
-//     body every round, so an inlined join would be redone each time, where the relation is derived
-//     once and read through an index.
+//   - The rule holding the call isn't one of a recursive relation's (#97), unless the call's rule only
+//     renames one relation (renames, #319). The fixpoint runs such a body every round, so an inlined
+//     join would be redone each time, where the relation is derived once and read through an index.
 //   - The relation's rule doesn't aggregate (#4): its body yields what the aggregate reduces, not the
 //     relation's tuples. An aggregate head argument is no variable, so the head rule below refuses it.
 //   - No number the call passes reaches a comparison or a predicate in the body (#227). Inlined, it
@@ -50,8 +50,10 @@ func unfold(b *Base, q Query) Query {
 	}
 	out.Rules = make([]Rule, 0, len(q.Rules))
 	for _, r := range q.Rules {
-		if !countsBindings(r.Head.Args, nil) && !u.recursive[r.Head.Relation] {
+		if !countsBindings(r.Head.Args, nil) {
+			u.renamesOnly = u.recursive[r.Head.Relation]
 			r.Body = u.body(r.Body)
+			u.renamesOnly = false
 		}
 		out.Rules = append(out.Rules, r)
 	}
@@ -66,6 +68,8 @@ type unfolder struct {
 	recursive map[string]bool
 	reg       *ns.Vocabulary
 	fresh     int
+	// renamesOnly is set while inlining into a recursive relation's rule, which takes only renames.
+	renamesOnly bool
 }
 
 // body inlines every inlinable call in a body, including calls inside what it inlines.
@@ -93,7 +97,7 @@ func (u *unfolder) inline(call Atom) ([]Literal, bool) {
 		return nil, false
 	}
 	r := rules[0]
-	if len(r.Head.Args) != len(call.Args) || projects(r) {
+	if len(r.Head.Args) != len(call.Args) || projects(r) || u.renamesOnly && !u.renames(r) {
 		return nil, false
 	}
 	u.fresh++
@@ -152,6 +156,17 @@ func (u *unfolder) inline(call Atom) ([]Literal, bool) {
 		}
 	}
 	return lits, true
+}
+
+// renames reports whether r only renames a relation: its body is one positive call to a relation, not a
+// predicate. Inlined into a recursive relation's rule it adds no join or call for the fixpoint to redo
+// each round, and the body then reads the relation itself, so a store can walk it (#319).
+func (u *unfolder) renames(r Rule) bool {
+	if len(r.Body.Literals) != 1 || r.Body.Literals[0].Pos == nil {
+		return false
+	}
+	_, pred := u.reg.Predicate(r.Body.Literals[0].Pos.Relation)
+	return !pred
 }
 
 // readsValue reports whether a body reads v as a value rather than only matching it: in a comparison,
