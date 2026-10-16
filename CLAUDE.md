@@ -487,7 +487,7 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   a plain operand parses and errs exactly as before; a literal containing `(` is an atom only when
   it has no top-level comparison operator.
 - **Units are symbolic, and the engine holds them normalized** (`ns/unit.go`, #5). A `Unit` is a
-  power-of-ten scale and symbols with exponents; `Vocabulary.AddUnit` names base units, prefixes
+  scale and symbols with exponents; `Vocabulary.AddUnit` names base units, prefixes
   and derived units (stdlib's `Units` registers SI prefixes and an electrical set), and a symbol
   nobody named is its own unit. A query literal (`3.3V`, `1kohm`; a bare `e` suffix stays #163's
   error) is folded by `foldUnits` in `coerceConstants`, in rule heads too (#224), and a module's
@@ -730,7 +730,10 @@ code. Run it in the background as `./selfcheck.sh > log 2>&1` with nothing after
 `; echo exit $?` made the task report 0 for a selfcheck that failed (#209's, which found #273).
 When several branches are in flight (parallel agents), run their selfchecks one at a time, and
 timings only on an otherwise idle machine; never `pkill -f selfcheck.sh`, which kills every run on
-the machine (#220's agent did). A branch rebased onto a moved `main` gets its selfcheck again.
+the machine (#220's agent did). A branch rebased onto a moved `main` gets its selfcheck again, and
+so does `main` when two PRs branched from one base merge together (#305 and #306 did). Another
+session may be running one too: wait on it (`while pgrep -f "/bin/sh ./selfcheck.sh"; do sleep 20;
+done` before your own, in the same background command) rather than starting alongside.
 
 Pushing a branch can get a PR opened for it under the owner's account (#168 was), titled and
 bodied from the commit. Check `gh pr list --head <branch>` before `gh pr create`, and edit that PR
@@ -768,7 +771,9 @@ a small patch to build against `main` (agni's `Bind` call, for #132); patch a co
 never the host's own checkout. With no local checkout, `gh repo clone panyam/agni -- --depth 1`
 into the scratchpad. Run the suite before believing what a doc says a host does: #205 assumed agni
 normalizes units upstream (its C24), but agni serves board geometry in `mm` and reads bare
-thresholds in it, so folding changed two of its answers (upgrade note on agni#1035).
+thresholds in it, so folding changed two of its answers (upgrade note on agni#1035). agni moved to
+metres (agni#1036) before #303 made the fold opt-in, so a host's own migration can outrun jaala's
+fix: check its `go.mod` and recent PRs before writing it an upgrade note.
 
 To find why a host's question is slow, run it alone: Declaire's `bench -dir <dir> -engine stores
 -time` over a directory holding its `workspace.txtpb` and only that question (#290 did this for x04).

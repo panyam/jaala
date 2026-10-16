@@ -5,18 +5,18 @@ Maintained by /checkpoint: one thread per branch, pruned when the branch merges.
 
 ## At a glance
 
-- No open branches. v0.1.59 (5b381b6, PR #301: #205, prefixed Source values folded, SI units) is
-  tagged; it breaks agni (board geometry in mm now folds to m), and the upgrade note is agni#1035.
-  v0.1.58 (6c77e12: #220 derived store, #260 bindings in place) before it; #220's usage is on
-  declaire#205.
-- Active: #235 (store pushdown, 18/18) and #219 (7/7), nothing ready in jaala. Exercise logged on
-  both at 5b381b6: `BenchmarkStores` unchanged from a88d6b7. Both wait on Declaire: `ns.FilterSource`
-  for `str.glob` (x05), `LookupBatch` on its source (declaire#255), and `bench -engine stores -time`
-  on the partitioned kubernetes view.
-- Off-mission P3s for the owner: #167 (tokenizer), #179 (timed facts, unblocks 2). #302 (`waiting`)
-  holds #205's leftovers. #278's children stay `waiting` (#280 blocked by #279); an agent-queries
-  mission waits on Declaire's `make exercise-mcp-agent` rerun.
-- This run: no threads to drop; PRs #299, #300 and #301 merged, their branches gone from origin.
+- No open branches. v0.1.60 (24725c7: #304 generator ranked by its modes' bound arguments, #303 a
+  Source's units read as tags unless `FoldSourceUnits`, any exact unit scale) is tagged; selfcheck
+  passed on it. agni#1037 points at it; agni (metres since agni#1036) and Declaire change nothing.
+- Active: #235 (store pushdown, 18/18) and #219 (7/7), nothing ready in jaala; both wait on
+  Declaire (`ns.FilterSource` for `str.glob`, `LookupBatch` on its source, declaire#255, and `bench
+  -engine stores -time` on the partitioned view). Exercise last logged at 5b381b6; #305 and #306
+  merged since, neither on the store paths' counts.
+- Off-mission P3s for the owner: #167 (tokenizer), #179 (timed facts, unblocks 2). `waiting`: #302
+  (#205's leftovers), #278's children, and #304's second point (an empty materialized derived
+  relation ranks after an index, unfiled, per #306's out of scope) if a host hits it.
+- This run: PRs #299, #300, #301, #305 (this session) and #306 (a parallel session) merged; v0.1.58
+  to v0.1.60 tagged.
 
 ## Across threads
 
