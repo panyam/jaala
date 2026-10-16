@@ -8,10 +8,9 @@ Maintained by /checkpoint: one thread per branch, pruned when the branch merges.
 - No open branches. v0.1.60 (24725c7: #304 generator ranked by its modes' bound arguments, #303 a
   Source's units read as tags unless `FoldSourceUnits`, any exact unit scale) is tagged; selfcheck
   passed on it. agni#1037 points at it; agni (metres since agni#1036) and Declaire change nothing.
-- Active: #235 (store pushdown, 18/18) and #219 (7/7), nothing ready in jaala; both wait on
-  Declaire (`ns.FilterSource` for `str.glob`, `LookupBatch` on its source, declaire#255, and `bench
-  -engine stores -time` on the partitioned view). Exercise last logged at 5b381b6; #305 and #306
-  merged since, neither on the store paths' counts.
+- No active mission: #235 and #219 closed at v0.1.60 (exercise unchanged; declaire#255 closed and
+  Declaire no longer plans `FilterSource` or a bound `loc.home`). Next: `retriage` to start one;
+  the lead is #179 (timed facts), which declaire#268's in-memory diff and agni#971 both need.
 - Off-mission P3s for the owner: #167 (tokenizer), #179 (timed facts, unblocks 2). `waiting`: #302
   (#205's leftovers), #278's children, and #304's second point (an empty materialized derived
   relation ranks after an index, unfiled, per #306's out of scope) if a host hits it.
