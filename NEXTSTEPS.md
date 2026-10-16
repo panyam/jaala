@@ -5,17 +5,20 @@ Maintained by /checkpoint: one thread per branch, pruned when the branch merges.
 
 ## At a glance
 
-- No open branches. v0.1.64 (eea4305) ships #328 (#317: `Across` looks a bound call up through an
-  `ns.TimedLookupSource`; #319: a recursion through a renaming helper walks), upgrade note on #317.
-- No active mission, and nothing ready. Waiting: #327 (`Across` kept between Evals, and batches,
-  pushes, walks and streams across versions) until a host times `Across` over a store; #288
-  (session overlays) after #287 and agni#1027. Next: `retriage` to start a mission around agni
-  serving revisions from stores (agni#971, #999, #1007) once agni moves past v0.1.62.
-- This run: tagged v0.1.63 and v0.1.64; merged #328, closing #317 and #319; filed #327.
+- No open branches. `main` is d5ef070: jaala v0.1.65 (2fc0af0) and nlmodels/v0.1.65 (d5ef070) ship
+  the `nl` front end and its model clients, upgrade note on #322.
+- Mission #322 (`mission_agent_frontend`) is active, 7 of 9 linked tickets closed. Next ready: #336
+  [P1], a `Fix` for an unknown name with nothing close (the 3 of `TestEval`'s 6 check errors without
+  one). Exercise last ran at 2fc0af0 (`go test ./nl -run TestEval -v`: 7/8 passed, 2 first try, fix
+  3/6); the real one is declaire#290's translator-alone arm on the new tags, which is Declaire's.
+- Waiting: #327 (`Across` kept between Evals, and batched, pushed, walked and streamed across
+  versions) until a host times `Across` over a store; #288 (sessions) after #287 and agni#1027.
+- This run: merged #332 (#325), #334 (#326, #331); tagged v0.1.65 and nlmodels/v0.1.65; filed #336;
+  dropped the merged `feat/nl-*` and `feat/grammar-323` branches.
 
 ## Across threads
 
-- `make setup` installs Soufflé 2.5 (Homebrew on macOS), so `./selfcheck.sh` runs its Soufflé step
-  locally.
+- `make setup` installs Soufflé 2.5 and `make llama` llama.cpp's `llama-server` and its 1 MB test
+  model, so `./selfcheck.sh` runs both steps locally; copy the model into a selfcheck worktree.
 - The old parser stays as test code (`datalog/slicer_test.go`) until a grammar change should make it
   disagree; CLAUDE.md's tokenizer bullet says how to retire it.

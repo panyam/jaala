@@ -77,11 +77,15 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   it as `Prompt.Grammar`.
 - **`nlmodels` is a module of its own** (#330): thin clients for local models already running,
   `llamacpp` (sends the grammar, `cache_prompt`) and `ollama` (no GBNF, so no grammar). CI's
-  `nlmodels` job tests it; the root's `./...` doesn't reach it. It requires jaala and replaces it with
-  `../` until a jaala tag holds what it uses, so it is tagged (`nlmodels/v0.1.N`) only after that
-  jaala tag and a commit dropping the replace (Releasing). `./selfcheck.sh` runs a real
+  `nlmodels` job tests it; the root's `./...` doesn't reach it. Since nlmodels/v0.1.65 it requires
+  jaala v0.1.65 with no `replace`. A change that needs `nl` API no tag holds yet puts `replace
+  github.com/panyam/jaala => ../` back, and it is tagged (`nlmodels/v0.1.N`) only after that jaala
+  tag and a commit dropping the replace again (Releasing). `./selfcheck.sh` runs a real
   `llama-server` on llama.cpp's 1 MB test model when `make llama` has fetched it: every reply must
-  stay inside the grammar as `internal/gbnf` reads it.
+  stay inside the grammar as `internal/gbnf` reads it. The model (`nlmodels/testdata/stories260K.gguf`)
+  is gitignored and found by a relative path, so a selfcheck worktree needs its own copy (`cp` it in
+  after `git worktree add`), or the step reports "could not run". `llama-server` exits with "Abort
+  trap: 6" when selfcheck's cleanup kills it, after its test, which is not a failure.
 - **`Base` is shared across concurrent `Eval`s.** Anything mutable reachable from it must be
   per-query (the `idb*` fields on Eval's shallow copy), atomic (`work`), or locked (`edbCache`,
   `derivedCache`, the vocabulary's `Memo` entries). `TestConcurrentEvalsShareOneCheck` and
@@ -771,8 +775,12 @@ without what it calls.
 Issues are ranked by the mission they serve (labels `P0`–`P3`, `waiting`, `mission`,
 `mission:active`, `mission_<slug>`), and its tickets are linked as blocked-by. Most of jaala's
 missions unblock a host's active mission; such a mission closes when the host's half of its exercise
-passes too, so it can stay open after jaala's tickets close. None is active now: the two store
-missions closed on 2026-10-16. `mission_store_federation` (#219), a host answers a question over many stores without holding them
+passes too, so it can stay open after jaala's tickets close. One is active:
+`mission_agent_frontend` (#322), a host's caller asks in plain language and jaala's front end
+turns it into a program that checks. jaala's half is `nl` and `nlmodels` (#321, #323 to #326, #330,
+#331, released in v0.1.65 and nlmodels/v0.1.65, and #336, the fix an unknown name lacks); its
+exercise is `go test ./nl -run TestEval -v` until Declaire's translator-alone arm (declaire#290) runs
+on those tags. The two store missions closed on 2026-10-16. `mission_store_federation` (#219), a host answers a question over many stores without holding them
 in memory, measured by the `Stores` benchmark (#218: stores asked, unindexed probes, round trips,
 peak heap and a repeated question's fetches as the number of stores grows) and Declaire's `bench
 -time` on a federated view. The benchmark's stores run in its process, so `peak-MB` counts their
