@@ -44,7 +44,8 @@
 //
 // A Source that implements ns.TimedSource serves several versions of its facts, each fact once with
 // the versions it holds in, and At(v) answers at one of them as a Base over only that version's facts
-// would, while Base.Diff lists a relation's facts gained and lost between two.
+// would, while Base.Diff lists a relation's facts gained and lost between two. Across(vs) evaluates
+// once over many versions, each row carrying the versions it holds in (Row.Versions).
 //
 // Evaluation is guaranteed to terminate because no rule can invent a value: every answer is built
 // from constants in the facts and values a host's generators draw from finite data. That guarantee

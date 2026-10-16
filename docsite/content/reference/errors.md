@@ -681,6 +681,26 @@ The host's source failed to serve a relation. jaala doesn't cache a failed read.
 
 `At` or `Diff` named a version outside the timed source's `Versions()`.
 
+`query: Across needs a Source that serves versions (ns.TimedSource)`
+
+`Across` was given to a query over a base whose source serves one version.
+
+`query: Across needs at least one version`
+
+`Across` was given an empty set of versions.
+
+`query: Across names versions the Source doesn't serve: …`
+
+Some versions given to `Across` are outside the timed source's `Versions()`; the message lists them as ranges.
+
+`query: At and Across can't both be given`
+
+A query runs at one version or across several, not both.
+
+`query: Across can't evaluate an aggregate yet; ask At at each version`
+
+`Across` doesn't reduce a group across versions yet ([#181](https://github.com/panyam/jaala/issues/181)), in the goal, a rule head or a body aggregate.
+
 `query: evaluation stopped looking up …: …`
 
 The context ended while a source that looks facts up (`ns.LookupSource`) was answering a call.

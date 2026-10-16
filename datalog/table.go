@@ -23,6 +23,11 @@ type Table struct {
 	// Why is, for each row with an absent aggregate column, the reason per column (see Row.Why), and
 	// nil for a row without one. It is nil when no row has one.
 	Why [][]string
+	// Versions are each row's versions, as Row.Versions, when an Across Eval answered (#180), else nil.
+	Versions []ns.VersionSet
+	// across and raw are an Across Eval's Source and each row's citations as made (see Row.CitesAt).
+	across *acrossSource
+	raw    [][]string
 }
 
 // Len is the number of rows, 0 for a nil Table.
@@ -41,6 +46,9 @@ func (t *Table) Row(i int) Row {
 	}
 	if t.Witness != nil {
 		r.Witness = t.Witness[i]
+	}
+	if t.Versions != nil {
+		r.Versions, r.across, r.raw = t.Versions[i], t.across, t.raw[i]
 	}
 	if t.Why != nil && t.Why[i] != nil {
 		for j, why := range t.Why[i] {
@@ -150,6 +158,9 @@ func answerGoal(b *Base, pos, negs []Literal, having []Compare, sel, cols []Term
 		p := &projector{cols: labels, fixed: fixed, ord: ord, rows: map[string]*answerRow{}, cursor: written.After,
 			witness: b.witnessing(), base: b, negs: negs}
 		switch {
+		case b.across != nil:
+			// A row's copies are held whole, and paged once every one is in (see projector.addAcross).
+			p.alts = map[string]rowAlts{}
 		case written.Limit > 0 && len(written.OrderBy) > 0:
 			p.size = written.Limit + written.Offset
 			p.page = &pageHeap{ord: ord}
@@ -189,6 +200,9 @@ func answerGoal(b *Base, pos, negs []Literal, having []Compare, sel, cols []Term
 		}
 		b.run.held = p.held
 		rows = p.answer()
+		if p.alts != nil {
+			rows = p.answerAcross()
+		}
 		total = len(rows)
 		if p.total != nil {
 			total = len(p.total)
@@ -197,18 +211,36 @@ func answerGoal(b *Base, pos, negs []Literal, having []Compare, sel, cols []Term
 	if o.total != nil {
 		*o.total = total
 	}
-	rows = rows[min(written.Offset, len(rows)):]
-	if written.Limit > 0 && written.Limit < len(rows) {
-		rows = rows[:written.Limit]
+	if b.across != nil {
+		rows = pageAcross(rows, b.across.vs, written.Offset, written.Limit)
+	} else {
+		rows = rows[min(written.Offset, len(rows)):]
+		if written.Limit > 0 && written.Limit < len(rows) {
+			rows = rows[:written.Limit]
+		}
 	}
 	tab := &Table{Columns: labels, Rows: make([][]ns.Value, len(rows)), Cites: make([][]string, len(rows))}
 	if o.witness {
 		tab.Witness = make([][]*Witness, len(rows))
 	}
+	if b.across != nil {
+		tab.Versions, tab.across, tab.raw = make([]ns.VersionSet, len(rows)), b.across, make([][]string, len(rows))
+	}
 	for i, r := range rows {
 		tab.Rows[i], tab.Cites[i] = r.vals, r.cites
 		if o.witness {
 			tab.Witness[i] = r.wit
+		}
+		if b.across != nil {
+			last := lastVersion(r.vs, b.across.vs)
+			tab.Versions[i], tab.raw[i], tab.Cites[i] = r.vs, r.cites, b.across.citesAt(r.cites, last)
+			if o.witness {
+				ws := make([]*Witness, len(r.wit))
+				for j, w := range r.wit {
+					ws[j] = b.across.answered(w, last)
+				}
+				tab.Witness[i] = ws
+			}
 		}
 		if r.why != nil {
 			if tab.Why == nil {

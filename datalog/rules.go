@@ -17,6 +17,9 @@ type idbTuple struct {
 	// parts are a supplementary tuple's witnesses instead (see magic): the nodes of the literals it
 	// stands for, at their written positions, which a body reading it takes as its own.
 	parts []placed
+	// vs are, under Across, the versions this copy of the tuple holds in (see addAcross); nil, every
+	// version.
+	vs ns.VersionSet
 }
 
 // materialize is Naive's fixpoint: it evaluates the query's user-defined rules into b.idb by stratified
@@ -317,6 +320,9 @@ func (b *Base) applyRule(r Rule) (bool, error) {
 			vals[j] = val
 		}
 		t := idbTuple{vals: vals, cites: dedupStrings(bnd.cites)}
+		if b.across != nil {
+			t.vs = bnd.versions(b.across.vs)
+		}
 		if isAggDomain(r.Head.Relation) {
 			t.cites = nil // what a body aggregate was asked about, not evidence (see isAggDomain)
 		}
@@ -328,6 +334,7 @@ func (b *Base) applyRule(r Rule) (bool, error) {
 				text = r.String()
 			}
 			t.wit = derivedNode(r.Head.Relation, vals, text, inWrittenOrder(append(bnd.wit[:len(bnd.wit):len(bnd.wit)], b.negationWitnesses(negs, bnd)...)))
+			t.wit.Versions = t.vs
 		}
 		fresh, err := b.addTuple(r.Head.Relation, t)
 		if err != nil {
@@ -414,6 +421,9 @@ func (b *Base) applyAggregate(r Rule, pos, negs []Literal) (bool, error) {
 // 4,000-component design spent 28 seconds here. valsEqual still decides within the bucket, so set
 // semantics and the first-wins provenance rule are unchanged — only the number of comparisons is.
 func (b *Base) addTuple(rel string, t idbTuple) (bool, error) {
+	if b.across != nil {
+		return b.addAcross(rel, t)
+	}
 	tuples := b.idb[rel]
 	x := b.idbIndexFor(rel, fullMask(len(t.vals)))
 	x.sync(tuples, fullMask(len(t.vals)))
