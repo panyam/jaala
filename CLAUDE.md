@@ -58,6 +58,13 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   with `Explain`'s text, a `Complete` error or an empty answer (over `Options.Base`) moves straight to
   the fallback, which starts a fresh conversation, and `Try.Kind` adds `parse`, `eval`, `empty` and
   `model` to a `CheckError`'s kinds. Its tests script the model (`scripted`), so tries are exact.
+- **`nl.Grammar()` is GBNF built from a rule table** (`nl/grammar.go`, #323), and every text it
+  accepts must parse: `TestEveryProgramTheGrammarWritesParses` samples 70,000 programs from the table
+  over several seeds and depths (one seed alone missed `-(9)` as a column). The other direction lives
+  in `datalog`'s tests, which can reach the corpus: they read `nl/testdata/program.gbnf` (`go test
+  ./nl -update` writes it) with a small Earley recognizer and require every corpus, fuzz-seed and docs
+  program, printed in jaala's spelling, to be accepted. A grammar change regenerates the file, or
+  `datalog` checks the old one. The card is memoized on the vocabulary (`Memo`).
 - **`Base` is shared across concurrent `Eval`s.** Anything mutable reachable from it must be
   per-query (the `idb*` fields on Eval's shallow copy), atomic (`work`), or locked (`edbCache`,
   `derivedCache`, the vocabulary's `Memo` entries). `TestConcurrentEvalsShareOneCheck` and

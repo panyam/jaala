@@ -14,6 +14,7 @@ package nl
 import (
 	"fmt"
 	"strings"
+	"sync/atomic"
 
 	"github.com/panyam/jaala/ns"
 )
@@ -26,9 +27,24 @@ const cardLegend = `# Every relation and predicate a program can call, by module
 
 // Card lists every member of v, depth-first from the root, each module's members sorted, one line
 // each: its signature and the first line of its doc. The same vocabulary always gives the same text,
-// so a host can keep it as a cached prompt prefix. It returns v's Check error when its modules don't
-// check.
+// so a host can keep it as a cached prompt prefix. It is built once per state of v (ns.Vocabulary.Memo),
+// so a host can call it for every prompt, and a registration on v gives the next call a new card. It
+// returns v's Check error when its modules don't check.
 func Card(v *ns.Vocabulary) (string, error) {
+	c, err := v.Memo(cardKey{}, func() (any, error) { return buildCard(v) })
+	if err != nil {
+		return "", err
+	}
+	return c.(string), nil
+}
+
+type cardKey struct{}
+
+// cardBuilds counts the cards built, for the test that a second call builds none.
+var cardBuilds atomic.Int64
+
+func buildCard(v *ns.Vocabulary) (string, error) {
+	cardBuilds.Add(1)
 	var b strings.Builder
 	b.WriteString(cardLegend)
 	if err := cardModule(&b, v, ""); err != nil {

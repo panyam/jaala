@@ -12,7 +12,7 @@ import (
 	"github.com/panyam/jaala/stdlib"
 )
 
-var update = flag.Bool("update", false, "rewrite testdata/card.golden")
+var update = flag.Bool("update", false, "rewrite the golden files in testdata")
 
 // vocabulary is a small graph with docs and types, the standard vocabulary, and two modules: one
 // whose relation infers a type and takes an input, and one nested under it.
@@ -152,5 +152,27 @@ line 2, column 8:
 	}
 	if nl.Explain("node(?n) => ?n", nil) != "" {
 		t.Error("Explain(nil) isn't empty")
+	}
+}
+
+// The grammar is also a file, so a host or a reviewer can read it, and datalog's tests check it
+// against the programs only they can reach (TestTheGrammarAcceptsEveryProgramAsJaalaSpellsIt).
+func TestTheGrammarFileIsTheGrammar(t *testing.T) {
+	const golden = "testdata/program.gbnf"
+	g := nl.Grammar()
+	if *update {
+		if err := os.WriteFile(golden, []byte(g), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want, err := os.ReadFile(golden)
+	if err != nil {
+		t.Fatalf("%v (run with -update to write it)", err)
+	}
+	if g != string(want) {
+		t.Errorf("the grammar changed; if on purpose, rerun with -update\ngot:\n%s", g)
+	}
+	if !strings.HasPrefix(g, "root ::= ") {
+		t.Errorf("the grammar doesn't start at root:\n%s", g[:min(len(g), 200)])
 	}
 }

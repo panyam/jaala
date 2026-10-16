@@ -1,8 +1,9 @@
 #!/bin/sh
 # selfcheck runs jaala's checks that need no host: every evaluator against Naive on generated
-# programs (#87), work against baselines (#88), fuzzed query text (#89), and answers against Soufflé
-# (#23), when souffle is on PATH. See #86. JAALA_GEN_SEEDS overrides the seed count, for the corpus and
-# for Soufflé, and JAALA_FUZZ_TIME each target's fuzzing time.
+# programs (#87) and the grammar against them (#323), work against baselines (#88), fuzzed query text
+# (#89), and answers against Soufflé (#23), when souffle is on PATH. See #86. JAALA_GEN_SEEDS
+# overrides the seed count, for the corpus and for Soufflé, and JAALA_FUZZ_TIME each target's fuzzing
+# time.
 set -u
 cd "$(dirname "$0")"
 seeds=${JAALA_GEN_SEEDS:-5000}
@@ -12,9 +13,9 @@ trap 'rm -f "$out"' EXIT
 status=0
 
 echo "== generated programs: $seeds seeds"
-JAALA_GEN_SEEDS=$seeds go test -count=1 ./datalog -run '^(TestGeneratedProgramsAgree|TestBrokenProgramsFailTheSameWay)$' -v >"$out" 2>&1 || status=1
+JAALA_GEN_SEEDS=$seeds go test -count=1 ./datalog -run '^(TestGeneratedProgramsAgree|TestBrokenProgramsFailTheSameWay|TestTheGrammarAcceptsEveryProgramAsJaalaSpellsIt)$' -v >"$out" 2>&1 || status=1
 # Relation names a rewrite adds carry a NUL, which would make grep treat the log as binary.
-tr -d '\000' <"$out" | grep -E 'seeds$|compared|skipped|known|broken programs|written:|disagrees|refuses|replay|shrunk|facts:|bind:|naive:|planned:|seminaive:|^(--- |ok|FAIL)'
+tr -d '\000' <"$out" | grep -E 'seeds$|compared|skipped|known|broken programs|each accepted|written:|disagrees|refuses|replay|shrunk|facts:|bind:|naive:|planned:|seminaive:|^(--- |ok|FAIL)'
 
 echo "== work against baselines"
 go test -count=1 ./datalog -run '^TestWorkStaysWithinBaseline$' -v >"$out" 2>&1 || status=1

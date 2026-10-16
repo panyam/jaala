@@ -1,6 +1,6 @@
 ---
 title: "Asking through a model"
-description: "What a host hands a model so it can write a program from a question: the vocabulary as a card, errors that say where the program is wrong and how to fix it, and the loop that retries until a program checks."
+description: "What a host hands a model so it can write a program from a question: the vocabulary as a card, a grammar that keeps its output parseable, errors that say where the program is wrong and how to fix it, and the loop that retries until a program checks."
 prev: {url: "/jaala/guide/versions/", title: "Versions"}
 ---
 
@@ -18,6 +18,14 @@ The examples use the vocabulary from [Host options]({{.Site.PathPrefix}}/guide/h
 
 A type written `~node` is one the engine inferred from a derived relation's rules rather than one its head declares, and `in` marks an argument the caller has to bind ([#200](https://github.com/panyam/jaala/issues/200)). `filter` means every argument has to be bound; a generator lists the arguments each of its modes needs, `needs a or b`.
 
+## The grammar
+
+`nl.Grammar()` is the program syntax as a GBNF grammar, the form llama.cpp's `grammar` field takes ([#323](https://github.com/panyam/jaala/issues/323)). A model decoding under it can only write text that parses, so no retry is spent on a missing bracket or a misplaced `=>`. The last example above prints its first rules; the whole grammar is [`nl/testdata/program.gbnf`](https://github.com/panyam/jaala/blob/main/nl/testdata/program.gbnf).
+
+It covers jaala's own spelling, the one these docs use: clauses separated by `; `, `not` for negation, the answer after ` => ` with `having`, `order by`, `after`, `limit` and `offset`. It leaves out the forms jaala reads only so people and agents can write other Datalogs (comments, a `.` ending, `?-`, `!atom`, see [Syntax]({{.Site.PathPrefix}}/guide/syntax/)), and a type that names another head variable (`?k`, `kind(?o)`), which only the parser can check. It allows one space or newline where the spelling has room for one, so a model can't spend tokens on blank space.
+
+Parsing is all it promises. Whether the names exist, the arities match and every variable is bound is still `Validate`'s, and its errors are the next section's.
+
 ## Errors a model can fix from
 
 A program that can't run as written fails `Validate` and `Eval` with a `*datalog.CheckError`. Its message is the one the [error catalogue]({{.Site.PathPrefix}}/reference/errors/) lists, unchanged, and its fields say the same as data:
@@ -30,7 +38,7 @@ A `Query` carries no positions: a host can build one in Go, and two parses of on
 
 ## The loop
 
-`nl.Translate` puts the two together ([#325](https://github.com/panyam/jaala/issues/325)). It asks the host's model for a program, parses and checks it, and when it doesn't check, sends the draft back with `Explain`'s text and asks again, up to `Options.MaxTries` times (3 by default). The third example above is a scripted model getting a name wrong once: the second prompt carries the first draft and its error, and the second draft checks. A reply wrapped in a Markdown code fence is read from inside the fence.
+`nl.Translate` puts the card and the errors together ([#325](https://github.com/panyam/jaala/issues/325)). It asks the host's model for a program, parses and checks it, and when it doesn't check, sends the draft back with `Explain`'s text and asks again, up to `Options.MaxTries` times (3 by default). The third example above is a scripted model getting a name wrong once: the second prompt carries the first draft and its error, and the second draft checks. A reply wrapped in a Markdown code fence is read from inside the fence.
 
 jaala runs no model. A host implements `nl.Model`, a name and a `Complete` taking an `nl.Prompt`: a `Prefix` holding the card and a few lines of instructions, the same for every question over one vocabulary so a client can send it as a cached prefix, and the conversation so far as `Turns`. A host that can find the names in a question, as Declaire's `name.find` turns a short name into ranked ids, implements `nl.Grounder`, and the candidates go after the question with their values quoted, so the model copies a value rather than spelling it.
 
