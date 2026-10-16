@@ -28,6 +28,11 @@ type Prompt struct {
 	// Turns start with the question (and any grounded names), then alternate the model's drafts and
 	// what was wrong with each.
 	Turns []Turn
+	// Grammar is GBNF holding the reply to a program over the vocabulary (GrammarFor, #324), for a
+	// Model whose decoder takes one, as nlmodels' llama.cpp client does. A Model that can't use it
+	// ignores it: every draft is checked anyway, so the grammar only saves tries. "" when
+	// Options.NoGrammar is set.
+	Grammar string
 }
 
 // A Turn is one message of a Prompt's conversation.
@@ -77,6 +82,10 @@ type Options struct {
 	Base *datalog.Base
 	// Eval are the options Base is evaluated with, such as a Budget.
 	Eval []datalog.Option
+	// Grammar replaces the grammar every Prompt carries, GrammarFor(v) by default, such as with
+	// GrammarFor(v, GoalOnly()) for a small model. NoGrammar sends none.
+	Grammar   string
+	NoGrammar bool
 }
 
 // A Program is what Translate accepted: its text, as the model wrote it less any Markdown fence, the
@@ -146,6 +155,14 @@ func Translate(ctx context.Context, question string, v *ns.Vocabulary, g Grounde
 		tries = 3
 	}
 	prefix := card + instructions
+	grammar := o.Grammar
+	if o.NoGrammar {
+		grammar = ""
+	} else if grammar == "" {
+		if grammar, err = GrammarFor(v); err != nil {
+			return Program{}, tr, err
+		}
+	}
 	models := []Model{m}
 	if o.Fallback != nil {
 		models = append(models, o.Fallback)
@@ -160,7 +177,7 @@ func Translate(ctx context.Context, question string, v *ns.Vocabulary, g Grounde
 			if err := ctx.Err(); err != nil {
 				return Program{}, tr, err
 			}
-			try, p, err := draft(ctx, model, Prompt{Prefix: prefix, Turns: turns}, v, o)
+			try, p, err := draft(ctx, model, Prompt{Prefix: prefix, Turns: turns, Grammar: grammar}, v, o)
 			tr.Tries = append(tr.Tries, try)
 			if err == nil {
 				return p, tr, nil

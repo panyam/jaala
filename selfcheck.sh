@@ -1,9 +1,9 @@
 #!/bin/sh
 # selfcheck runs jaala's checks that need no host: every evaluator against Naive on generated
 # programs (#87) and the grammar against them (#323), work against baselines (#88), fuzzed query text
-# (#89), and answers against Soufflé (#23), when souffle is on PATH. See #86. JAALA_GEN_SEEDS
-# overrides the seed count, for the corpus and for Soufflé, and JAALA_FUZZ_TIME each target's fuzzing
-# time.
+# (#89), answers against Soufflé (#23), when souffle is on PATH, and llama.cpp decoding under nl's
+# grammar (#330), when `make llama` has fetched it. See #86. JAALA_GEN_SEEDS overrides the seed count,
+# for the corpus and for Soufflé, and JAALA_FUZZ_TIME each target's fuzzing time.
 set -u
 cd "$(dirname "$0")"
 seeds=${JAALA_GEN_SEEDS:-5000}
@@ -74,10 +74,40 @@ else
 	echo "  could not run: souffle is not on PATH (make setup installs it)"
 fi
 
+echo "== llama.cpp keeps a model to nl's grammar"
+llama_ran=yes
+model=nlmodels/testdata/stories260K.gguf
+if command -v llama-server >/dev/null 2>&1 && [ -f "$model" ]; then
+	# A real decoder reading the grammar nl renders (#330), on llama.cpp's 1 MB test model.
+	port=$((18000 + $$ % 1000))
+	llama-server -m "$model" --host 127.0.0.1 --port "$port" --chat-template chatml >"$out.llama" 2>&1 &
+	llama_pid=$!
+	trap 'kill $llama_pid 2>/dev/null; rm -f "$out" "$out.llama"' EXIT
+	up=no
+	for _ in $(seq 1 60); do
+		if curl -fs "http://127.0.0.1:$port/health" >/dev/null 2>&1; then up=yes; break; fi
+		sleep 0.5
+	done
+	if [ $up = yes ]; then
+		(cd nlmodels && JAALA_LLAMACPP_URL="http://127.0.0.1:$port" go test -count=1 ./llamacpp -run '^TestARealServerKeepsTheModelToTheGrammar$' -v) >"$out" 2>&1 || status=1
+		grep -E 'finished on their own|leaves the grammar|isn.t a program|refused|control:|^(--- |ok|FAIL)' "$out"
+	else
+		status=1
+		echo "  llama-server didn't come up:"; tail -5 "$out.llama"
+	fi
+	kill $llama_pid 2>/dev/null
+else
+	llama_ran=no
+	echo "  could not run: llama-server or $model is missing (make llama fetches both)"
+fi
+
+missing=""
+[ $souffle_ran = no ] && missing="Soufflé"
+[ $llama_ran = no ] && missing="${missing:+$missing and }llama.cpp"
 if [ $status -ne 0 ]; then
 	echo "selfcheck: FAIL"
-elif [ $souffle_ran = no ]; then
-	echo "selfcheck: pass, except Soufflé, which could not run"
+elif [ -n "$missing" ]; then
+	echo "selfcheck: pass, except $missing, which could not run"
 else
 	echo "selfcheck: pass"
 fi

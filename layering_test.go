@@ -16,15 +16,20 @@ import (
 //	datalog  the engine                  imports ns only
 //	nl       the plain-language front    imports ns and datalog, and nothing imports it
 //	         end (#321)
+//	nlmodels clients for local models     import nl, in a module of their own (#330)
+//	internal/gbnf  a GBNF recognizer      imports nothing; only tests import it (#324)
 //
 // Test files are not checked: datalog's tests use stdlib for their fixtures.
 func TestLayering(t *testing.T) {
 	const mod = "github.com/panyam/jaala/"
 	allowed := map[string][]string{
-		"ns":      {},
-		"stdlib":  {"ns"},
-		"datalog": {"ns"},
-		"nl":      {"ns", "datalog"},
+		"ns":                {},
+		"stdlib":            {"ns"},
+		"datalog":           {"ns"},
+		"nl":                {"ns", "datalog"},
+		"nlmodels/llamacpp": {"nl"},
+		"nlmodels/ollama":   {"nl"},
+		"internal/gbnf":     {},
 	}
 	for dir, may := range allowed {
 		pkg, err := build.ImportDir(dir, 0)

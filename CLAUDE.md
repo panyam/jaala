@@ -65,6 +65,19 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   ./nl -update` writes it) with a small Earley recognizer and require every corpus, fuzz-seed and docs
   program, printed in jaala's spelling, to be accepted. A grammar change regenerates the file, or
   `datalog` checks the old one. The card is memoized on the vocabulary (`Memo`).
+- **`nl.GrammarFor(v)` is that table with the calls replaced by v's members** (`vocabgrammar.go`,
+  #324): each at the arities it takes, a closed domain's argument as a variable or one of its values,
+  and a program's own rules named by `local`, a trie keeping them off every root name. `GoalOnly()`
+  drops rules. Its soundness test also checks each sample against `Grammar()`, so it stays a
+  sublanguage. The recognizer lives in `internal/gbnf` for both packages' tests. `Translate` sends
+  it as `Prompt.Grammar`.
+- **`nlmodels` is a module of its own** (#330): thin clients for local models already running,
+  `llamacpp` (sends the grammar, `cache_prompt`) and `ollama` (no GBNF, so no grammar). CI's
+  `nlmodels` job tests it; the root's `./...` doesn't reach it. It requires jaala and replaces it with
+  `../` until a jaala tag holds what it uses, so it is tagged (`nlmodels/v0.1.N`) only after that
+  jaala tag and a commit dropping the replace (Releasing). `./selfcheck.sh` runs a real
+  `llama-server` on llama.cpp's 1 MB test model when `make llama` has fetched it: every reply must
+  stay inside the grammar as `internal/gbnf` reads it.
 - **`Base` is shared across concurrent `Eval`s.** Anything mutable reachable from it must be
   per-query (the `idb*` fields on Eval's shallow copy), atomic (`work`), or locked (`edbCache`,
   `derivedCache`, the vocabulary's `Memo` entries). `TestConcurrentEvalsShareOneCheck` and
@@ -741,7 +754,11 @@ releases are patch bumps on v0.1.x, breaking changes included, pre-1.0. agni con
 (`go get github.com/panyam/jaala@vX`), never a `replace`. The tag's annotation is the release
 notes: write it as a short list of what changed, then publish the page with
 `gh release create v0.1.N --title v0.1.N --notes-from-tag --latest` (from v0.1.32; earlier tags
-have no page), and put the upgrade note on the issue a host filed or the PR's own issue.
+have no page), and put the upgrade note on the issue a host filed or the PR's own issue. When
+`nlmodels` changed, release it after: a commit pointing its `go.mod` at the new jaala tag without
+the replace (its CI job then builds against the tag), then `git tag -a nlmodels/v0.1.N` on that
+commit. A consumer ignores `replace`, so an `nlmodels` tag requiring an older jaala would build
+without what it calls.
 
 ## Issues and missions
 
