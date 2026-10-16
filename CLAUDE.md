@@ -285,7 +285,9 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   fails on its assertion. When scripting mutations, **treat a build failure as "not checked", not
   as red**. An unused variable left by a mutation fails the build, and a naive harness counts that
   as a pass. Likewise a `-run '^Name$'` that matches no test passes; run by prefix and check the
-  test actually ran. Restore mutated files in a `finally` and give each run a timeout. Mutate back
+  test actually ran. A `git bisect run` script that skips (exit 125) on a build failure must match
+  `build failed` only: #295's bisect skipped every commit because the query's error text said
+  "cannot". Restore mutated files in a `finally` and give each run a timeout. Mutate back
   to the exact old code: one that also loosened a neighbouring check (#89's head `_`) was caught by
   that check under another message, and the saved fuzz input "survived" for the wrong reason. A
   test that loops until a condition (paging until a short page) needs a bound, or a mutation hangs
@@ -677,9 +679,12 @@ calls, q09r's `http.route`, after v0.1.52): a conjunction, a walk, a count, a pa
 bindings (across a partitioned federation too), a walked step and a lone filtered literal each go to
 a store, and every jaala line of its "Done when" holds. Declaire's first real-view timing (x04 in
 its `bench/external`, declaire#255: 2m44s on stores against 4.6s on mem) reopened it: #290
-(v0.1.55) read generator-only relations in full, taking x04 to 51.5s, and #291 (a push growing past
-a filter, a demand guard as large as its relation) is the next. Like #219 it stays open for
-Declaire's run (`bench -time` on a federated view). jaala's
+(v0.1.55) read generator-only relations in full, taking x04 to 51.5s; #291 (v0.1.56) stopped a push
+at a filter, 14.6s; #293 (v0.1.57) ranked an all-free generator after held relations, 3.6s, under
+mem's 3.3s. #297 (v0.1.57) lets a store take `str.glob` with a push (`ns.FilterSource`), which x05
+needs Declaire to implement. All 18 jaala tickets are closed, and like #219 it stays open for
+Declaire's half (`FilterSource`, `LookupBatch` on its source, declaire#255) and its run (`bench
+-time` on a federated view). jaala's
 earlier four are closed: `mission_selfcheck` (#86, at v0.1.29) left `./selfcheck.sh` as the check to
 run on `main` after every merge and before every tag; `mission_docsite` (#104) left the docs site
 with every example run by the engine; `mission_aggregate_answers` (#172, at v0.1.42) left Soufflé
@@ -716,6 +721,11 @@ merge (reopened). In "Out of scope" and "Related" write "left for #N".
 
 ## Working with hosts
 
+A field added to a struct a host implements against (`ns.Conjunction`) is ignored silently by every
+host built before it, so behaviour that depends on the host acting on it is opt-in through a new
+optional interface (`ns.FilterSource`, #297): Declaire's store accepted filters it didn't apply, and
+groups grown past them joined every row the filter would drop.
+
 agni (github.com/panyam/agni) is the first host and Declaire (github.com/panyam/declaire) the
 second. Cross-repo work is split by repo: jaala issues are worked from jaala sessions, host issues
 from host sessions. A host that needs something jaala lacks files a jaala issue rather than working
@@ -736,4 +746,8 @@ To find why a host's question is slow, run it alone: Declaire's `bench -dir <dir
 Declaire's `Runner` passes `Explain` only when its context carries a `*datalog.Report`, so reading
 which relations were demanded and where the time went needs a patched copy of both repos in the
 scratchpad, joined by a `go.work`; the Explain text (`demand [b], 7205 demanded`) then names the
-rewrite to blame.
+rewrite to blame. Run the whole `bench/external` before and after a planner or push change, not only
+the question it targets: #297's first cut sped nothing up and tripled x04's fetched rows, which only
+the counts showed. Read `fetched`, `work` and `pushes` rather than times while anything else runs
+(a background selfcheck took v0.1.56's x04 from 14.6s to 39s); they are exact. A question failing on
+both engines and on older tags can still be jaala's: x06b was #295's deadlock, fixed by v0.1.56.
