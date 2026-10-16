@@ -232,7 +232,7 @@ func (b *Base) walk(atom *Atom, s walkStep, starts []ns.Value) error {
 	norm := func(v ns.Value, p int) ns.Value {
 		return normalizeTuples(b.units(), []ns.Tuple{{Vals: []ns.Value{v}}}, types[min(p, len(types)):min(p+1, len(types))])[0].Vals[0]
 	}
-	w := ns.Walk{Relation: s.rel, From: s.from, To: s.to, Bound: s.consts, Start: starts}
+	w := ns.Walk{Relation: s.rel, From: s.from, To: s.to, Bound: s.consts, Start: starts, Units: b.units()}
 	byFrom := map[string][]ns.Tuple{}
 	fetched := 0
 	ctx := r.context()
@@ -441,7 +441,7 @@ func (b *Base) walkStep(g *pushGroup, c ns.Conjunction, s stepWalk, in Var, star
 	ctx := r.context()
 	byIn := map[string][][]ns.Tuple{}
 	fetched := 0
-	for row, err := range b.stepWalker.WalkConjunction(ctx, c, s.in, s.out, starts) {
+	for row, err := range b.stepWalker.WalkConjunction(ctx, b.withUnits(c), s.in, s.out, starts) {
 		if err != nil {
 			return pushErr(ctx, g.text, err)
 		}

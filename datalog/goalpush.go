@@ -201,7 +201,7 @@ func (b *Base) summarize(g *pushGroup, c ns.Conjunction, s ns.Summary) ([]summar
 	}
 	ctx := r.context()
 	var rows []summaryRow
-	for row, err := range b.summarizer.Summarize(ctx, c, s) {
+	for row, err := range b.summarizer.Summarize(ctx, b.withUnits(c), s) {
 		if err != nil {
 			return nil, pushErr(ctx, g.text, err)
 		}

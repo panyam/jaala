@@ -48,7 +48,7 @@ func normalizeValues(units *ns.Units, vals []ns.Value, types []ns.ArgType) ([]ns
 				n = c
 			}
 		}
-		n = canonicalNumber(foldUnit(units, n))
+		n = canonicalNumber(units.FoldValue(n))
 		if sameValue(n, v) {
 			continue
 		}
@@ -77,27 +77,16 @@ func (b *Base) argTypesOf(rel string) []ns.ArgType {
 	return s.Types
 }
 
-// foldUnit is v with its number's unit folded (see ns.Units.Fold): the scale into the number and the
-// unit written by its name. Text that only spelled the number spells the folded one.
-func foldUnit(units *ns.Units, v ns.Value) ns.Value {
-	if v.Num == nil || v.BaseUnit == "" || v.Absent {
-		return v
-	}
-	f, unit, changed := units.Fold(*v.Num, v.BaseUnit)
-	if !changed {
-		return v
-	}
-	if spellsNumber(v) {
-		v.S = ftoa(f)
-	}
-	v.Num, v.BaseUnit = &f, unit
-	return v
-}
-
-// units is the vocabulary's unit table, which folds what the Source serves (see foldUnit).
+// units is the vocabulary's unit table, which folds what the Source serves (ns.Units.FoldValue).
 func (b *Base) units() *ns.Units {
 	if b.reg == nil {
 		return nil
 	}
 	return b.reg.Units()
+}
+
+// withUnits is c carrying the unit table its values were folded by, for the store (ns.Conjunction.Units).
+func (b *Base) withUnits(c ns.Conjunction) ns.Conjunction {
+	c.Units = b.units()
+	return c
 }

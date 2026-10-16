@@ -98,6 +98,11 @@ type Conjunction struct {
 	// store that pushes c with Inputs also pushes its suffixes with the Inputs they still read.
 	Inputs   []int
 	Bindings [][]Value
+	// Units is the unit table the engine folds values by (#205), set on every conjunction it sends:
+	// the conjunction's values are folded by it, and a store holding prefixed values can fold its own
+	// with Units.Fold to compare. A Federation folds by it the values it carries from one member to
+	// another, so 4 kV from one meets 4000 V in the next. Nil folds nothing.
+	Units *Units
 }
 
 // A Page limits a pushed goal to the matches behind its first Limit answer rows. An answer row is a

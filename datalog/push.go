@@ -519,7 +519,7 @@ func (b *Base) pushAs(g *pushGroup, c ns.Conjunction) ([]ns.Tuple, error) {
 	}
 	ctx := r.context()
 	var rows []ns.Tuple
-	for row, err := range b.pusher.Push(ctx, c) {
+	for row, err := range b.pusher.Push(ctx, b.withUnits(c)) {
 		if err != nil {
 			return nil, pushErr(ctx, g.text, err)
 		}
@@ -690,7 +690,7 @@ func (b *Base) pushBatch(g *pushGroup, vars []Var, bindings [][]ns.Value) error 
 	ctx := r.context()
 	byBinding := map[string][]ns.Tuple{}
 	fetched := 0
-	for row, err := range b.pusher.Push(ctx, c) {
+	for row, err := range b.pusher.Push(ctx, b.withUnits(c)) {
 		if err != nil {
 			return pushErr(ctx, g.text, err)
 		}

@@ -238,6 +238,25 @@ func (t *Units) Fold(f float64, unit string) (float64, string, bool) {
 	return shift(f, fo.scale), fo.unit, true
 }
 
+// FoldValue is v as the engine holds it once its number's unit is folded (Fold): NU(1000, "mV") is
+// NU(1, "V"). A number whose text only spelled it spells the folded number; text saying more, such as
+// "5 mV", is kept. Anything else, and every value under a nil table, comes back as it is. A store
+// holding prefixed values folds its own with it to compare them with what the engine asks (#205).
+func (t *Units) FoldValue(v Value) Value {
+	if v.Num == nil || v.BaseUnit == "" || v.Absent {
+		return v
+	}
+	f, unit, changed := t.Fold(*v.Num, v.BaseUnit)
+	if !changed {
+		return v
+	}
+	if n, err := strconv.ParseFloat(v.S, 64); err == nil && n == *v.Num {
+		v.S = ftoa(f)
+	}
+	v.Num, v.BaseUnit = &f, unit
+	return v
+}
+
 // SameUnit reports whether two units the engine holds are one unit, through the table's names (so
 // ohm and V/A are). An empty unit is no unit.
 func (t *Units) SameUnit(a, b string) bool {

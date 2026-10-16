@@ -105,7 +105,7 @@ func (b *Base) checkBoundValue(t *typer, goal Body, v Var, val ns.Value) (ns.Val
 			}
 		}
 	}
-	return foldUnit(b.units(), stored), nil // 5 mV bound is 0.005 V, as one bound value is (foldUnits, #205)
+	return b.units().FoldValue(stored), nil // 5 mV bound is 0.005 V, as one bound value is (foldUnits, #205)
 }
 
 func mentions(a *Atom, v Var) bool {
