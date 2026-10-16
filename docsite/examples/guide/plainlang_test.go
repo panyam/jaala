@@ -154,3 +154,45 @@ func Example_grammar() {
 	// sep ::= "; " | ";\n"
 	// rule ::= head " :- " literals
 }
+
+// draftsByQuestion answers each question with its own drafts in turn.
+type draftsByQuestion map[string][]string
+
+func (d draftsByQuestion) Name() string { return "scripted" }
+
+func (d draftsByQuestion) Complete(_ context.Context, p nl.Prompt) (nl.Completion, error) {
+	q := p.Turns[0].Text
+	n := len(p.Turns) / 2 // a refused draft adds two turns
+	return nl.Completion{Text: d[q][n]}, nil
+}
+
+// Eval scores a translator over questions with known answers: a row
+// matches by its values, whatever columns the program chose.
+func Example_eval() {
+	v, err := vocabulary(source())
+	if err != nil {
+		panic(err)
+	}
+	b := datalog.MustBase(v, source())
+	m := draftsByQuestion{
+		"what does app import?":        {`imports("app", ?d) => ?d`},
+		"what license does util have?": {`pkg("util") => ?l`, `pkg("util", ?l) => ?l`},
+		"which packages import log?":   {`imports(?p, log) => ?p`, `imports(?p, "log") => ?p`},
+	}
+	cases := []nl.Case{
+		{Name: "direct", Question: "what does app import?", Want: [][]string{{"api"}}},
+		{Name: "license", Question: "what license does util have?", Want: [][]string{{"Apache-2.0"}}},
+		{Name: "importers", Question: "which packages import log?", Want: [][]string{{"api"}}},
+	}
+	rep := nl.Eval(context.Background(), cases, b, func(ctx context.Context, q string) (nl.Program, nl.Trace, error) {
+		return nl.Translate(ctx, q, v, nil, m, nl.Options{})
+	})
+	fmt.Print(rep)
+	// Output:
+	// case       pass  tries  refused
+	// direct     yes   1
+	// license    yes   2      arity
+	// importers  yes   2      parse
+	// passed 3/3, 1 on the first try; 5 tries, tokens 0 in (0 cached), 0 out
+	// refused: arity 1, parse 1; check errors with a fix 1/1
+}

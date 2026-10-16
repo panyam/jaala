@@ -1,6 +1,6 @@
 ---
 title: "Asking through a model"
-description: "What a host hands a model so it can write a program from a question: the vocabulary as a card, a grammar that keeps its output parseable and to the vocabulary, errors that say where the program is wrong and how to fix it, and the loop that retries until a program checks."
+description: "What a host hands a model so it can write a program from a question: the vocabulary as a card, a grammar that keeps its output parseable and to the vocabulary, errors that say where the program is wrong and how to fix it, the loop that retries until a program checks, and scoring it over questions with known answers."
 prev: {url: "/jaala/guide/versions/", title: "Versions"}
 ---
 
@@ -20,7 +20,7 @@ A type written `~node` is one the engine inferred from a derived relation's rule
 
 ## The grammar
 
-`nl.Grammar()` is the program syntax as a GBNF grammar, the form llama.cpp's `grammar` field takes ([#323](https://github.com/panyam/jaala/issues/323)). A model decoding under it can only write text that parses, so no retry is spent on a missing bracket or a misplaced `=>`. The last example above prints its first rules; the whole grammar is [`nl/testdata/program.gbnf`](https://github.com/panyam/jaala/blob/main/nl/testdata/program.gbnf).
+`nl.Grammar()` is the program syntax as a GBNF grammar, the form llama.cpp's `grammar` field takes ([#323](https://github.com/panyam/jaala/issues/323)). A model decoding under it can only write text that parses, so no retry is spent on a missing bracket or a misplaced `=>`. The fourth example above prints its first rules; the whole grammar is [`nl/testdata/program.gbnf`](https://github.com/panyam/jaala/blob/main/nl/testdata/program.gbnf).
 
 It covers jaala's own spelling, the one these docs use: clauses separated by `; `, `not` for negation, the answer after ` => ` with `having`, `order by`, `after`, `limit` and `offset`. It leaves out the forms jaala reads only so people and agents can write other Datalogs (comments, a `.` ending, `?-`, `!atom`, see [Syntax]({{.Site.PathPrefix}}/guide/syntax/)), and a type that names another head variable (`?k`, `kind(?o)`), which only the parser can check. It allows one space or newline where the spelling has room for one, so a model can't spend tokens on blank space.
 
@@ -49,3 +49,11 @@ jaala runs no model, but it ships clients for local ones already running, in a m
 `Options.Fallback` is a second model, usually a bigger one, asked once the first runs out of tries. It starts a fresh conversation with the question, since the first model's drafts would only cost it tokens. With `Options.Base`, a program that checks is run too (with `Options.Eval`'s options, such as a `Budget`): an error is fed back like a check error, and a program answering nothing goes straight to the fallback, told that one did. A `Complete` that fails moves to the fallback as well.
 
 `Translate` returns the accepted `nl.Program` (its text, `Query`, rows when it ran, and the model that wrote it) and an `nl.Trace` of every try, also when it fails: the model, the text, the error and its `Kind`, tokens in, out and cached, and latency. `Kind` is a `CheckError`'s kind, or `parse`, `eval`, `empty` or `model`, so a host counts where its retries went without reading messages.
+
+## Scoring a translator
+
+`nl.Eval` runs a set of `nl.Case`s, each a question and the rows a right program answers, through a translator and a base, and reports how it went ([#326](https://github.com/panyam/jaala/issues/326)). The translator is a function from a question to `Translate`'s results, usually `Translate` closed over a vocabulary, a model and options, so a host can wrap its own fallback or tool around it. A program whose rows `Translate` already ran over `Options.Base` is scored on those; any other runs over the base given to `Eval`. A case failing, in translating or evaluating, fails alone.
+
+The model chooses the program's columns, so a row matches by its values whatever their names and order: `=> ?b, ?a` answers `{"app", "api"}` as well as `=> ?a, ?b` does. Rows match as a multiset, in order only when the case sets `Ordered`, and an absent value is written `absent`. The last example above scores three questions, two needing a second draft.
+
+The `nl.Report` holds each case's `Result` (the program, its trace, the rows it got and whether they passed) and the totals: passes on the first try and after retries, tries, tokens in, out and cached, latency, the refused tries by kind, and how many of the refused check errors carried a fix. That last pair says how often a model was told how to fix its mistake, and a retry spent on an error without one is where an error message could say more. `Report.String` writes it as the example does. jaala's own `go test ./nl -run TestEval -v` scores a scripted model and fallback the same way, over eight questions on this vocabulary.

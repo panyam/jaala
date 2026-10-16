@@ -58,6 +58,10 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   with `Explain`'s text, a `Complete` error or an empty answer (over `Options.Base`) moves straight to
   the fallback, which starts a fresh conversation, and `Try.Kind` adds `parse`, `eval`, `empty` and
   `model` to a `CheckError`'s kinds. Its tests script the model (`scripted`), so tries are exact.
+  `nl.Eval` (#326) scores a `translate` func over `Case`s, matching a row by its values as a multiset
+  (the model picks the columns' names and order) and rows as a multiset unless `Ordered`. `TestEval`
+  is #322's exercise until Declaire's arm runs: the guide's vocabulary, a scripted small model and
+  fallback (`byQuestion`), and the report in `nl/testdata/eval.golden` (`-update`).
 - **`nl.Grammar()` is GBNF built from a rule table** (`nl/grammar.go`, #323), and every text it
   accepts must parse: `TestEveryProgramTheGrammarWritesParses` samples 70,000 programs from the table
   over several seeds and depths (one seed alone missed `-(9)` as a column). The other direction lives
