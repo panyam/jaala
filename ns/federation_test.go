@@ -373,6 +373,7 @@ func TestAFederationPushesToALoneMember(t *testing.T) {
 type joinMem struct {
 	*MemSource
 	noPartial bool
+	noWhole   bool // refuses a join without Partial
 	noInputs  bool
 	sloppy    bool // returns every match and prefix, whatever the Bindings
 	pushes    int
@@ -380,7 +381,7 @@ type joinMem struct {
 }
 
 func (m *joinMem) Pushes(c Conjunction) bool {
-	return (!c.Partial || !m.noPartial) && (len(c.Inputs) == 0 || !m.noInputs)
+	return (!c.Partial || !m.noPartial) && (c.Partial || len(c.Atoms) == 1 || !m.noWhole) && (len(c.Inputs) == 0 || !m.noInputs)
 }
 
 func (m *joinMem) Push(_ context.Context, c Conjunction) iter.Seq2[[]Tuple, error] {
@@ -723,6 +724,162 @@ func TestAContinuationCarriesOnlyAgreeingPrefixes(t *testing.T) {
 		if n := len(a.pushed); sloppy && n == 0 {
 			t.Errorf("control: A was never pushed")
 		}
+	}
+}
+
+// onlyA is two members serving edge, label and tag, A holding edges and labels and B none of anything,
+// its Holds saying so for every relation (a store with no facts of a relation), counting its calls.
+// Neither holds a tag.
+func onlyA() (a, b *joinMem, members []Member, bCalls *int) {
+	declare := func() *joinMem {
+		return &joinMem{MemSource: NewMemSource().Declare("edge", "from", "to").Declare("label", "id", "text").Declare("tag", "id", "text")}
+	}
+	a, b = declare(), declare()
+	a.Add("edge", Tuple{Vals: []Value{S("a1"), S("a2")}, Cites: []string{"a1-a2"}})
+	a.Add("edge", Tuple{Vals: []Value{S("a2"), S("a3")}, Cites: []string{"a2-a3"}})
+	a.Add("label", Tuple{Vals: []Value{S("a2"), S("x")}, Cites: []string{"a2=x"}})
+	a.Add("label", Tuple{Vals: []Value{S("a3"), S("y")}, Cites: []string{"a3=y"}})
+	bCalls = new(int)
+	members = []Member{
+		{Name: "A", Source: a, Holds: func(rel string, _ map[int]Value) bool { return rel != "tag" }},
+		{Name: "B", Source: b, Holds: func(string, map[int]Value) bool { *bCalls++; return false }},
+	}
+	return a, b, members, bCalls
+}
+
+// A member is asked for prefixes only when another member's Holds allows an atom after the first
+// (#307): with B holding nothing, A gets the join whole, without Partial, and B is never pushed.
+// control: once B may hold labels, A is asked for its prefixes, and the answer is the same; and so is
+// A when it pushes the join only with Partial.
+func TestPartitionedPushAsksNoPrefixesWhenNoOtherMemberHolds(t *testing.T) {
+	c := Conjunction{Atoms: []PushAtom{
+		{Relation: "edge", Args: []PushArg{{Var: 1}, {Var: 2}}},
+		{Relation: "label", Args: []PushArg{{Var: 2}, {Var: 3}}},
+	}}
+	want := []string{"A:a1-a2 A:a2=x", "A:a2-a3 A:a3=y"}
+	for k, bHoldsLabels := range []bool{false, true, false} {
+		a, b, members, _ := onlyA()
+		a.noWhole = k == 2
+		if bHoldsLabels {
+			members[1].Holds = func(rel string, _ map[int]Value) bool { return rel == "label" }
+		}
+		f, err := NewPartitionedFederation(members...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !f.Pushes(c) {
+			t.Fatalf("B holds labels %v: a partitioned federation refuses to push", bHoldsLabels)
+		}
+		if got := pushedRows(t, f, c); !reflect.DeepEqual(got, want) {
+			t.Errorf("B holds labels %v: pushed %q, want %q", bHoldsLabels, got, want)
+		}
+		if a.pushes != 1 {
+			t.Fatalf("B holds labels %v: A was pushed %d times, want once", bHoldsLabels, a.pushes)
+		}
+		switch {
+		case !bHoldsLabels && !a.noWhole && (a.pushed[0].Partial || b.pushes != 0):
+			t.Errorf("A was asked with Partial %v and B pushed %d times, want A without prefixes and B never", a.pushed[0].Partial, b.pushes)
+		case (bHoldsLabels || a.noWhole) && !a.pushed[0].Partial:
+			t.Errorf("control: with B holding labels %v, or A refusing the join whole %v, A wasn't asked for its prefixes", bHoldsLabels, a.noWhole)
+		}
+	}
+}
+
+// A prefix continues only where another member's Holds allows its next atom (#307): A's one-edge
+// prefixes stop at A, since only A holds labels, while its edge-and-label prefixes go on to B, which
+// holds tags. B refuses Inputs, so each prefix it is offered reaches its Holds with the prefix's
+// values. control: the join through B's tag is still found.
+func TestAPrefixContinuesOnlyWhereItsNextAtomIsHeld(t *testing.T) {
+	c := Conjunction{Atoms: []PushAtom{
+		{Relation: "edge", Args: []PushArg{{Var: 1}, {Var: 2}}},
+		{Relation: "label", Args: []PushArg{{Var: 2}, {Var: 3}}},
+		{Relation: "tag", Args: []PushArg{{Var: 3}, {Var: 4}}},
+	}}
+	_, b, members, _ := onlyA()
+	b.Add("tag", Tuple{Vals: []Value{S("y"), S("t")}, Cites: []string{"y#t"}})
+	b.noInputs = true
+	asked := map[string]int{}
+	members[1].Holds = func(rel string, bound map[int]Value) bool {
+		if len(bound) > 0 {
+			asked[rel]++
+		}
+		return rel == "tag"
+	}
+	f, err := NewPartitionedFederation(members...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := pushedRows(t, f, c), []string{"A:a2-a3 A:a3=y B:y#t"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("pushed %q, want %q", got, want)
+	}
+	if asked["label"] != 0 || asked["tag"] == 0 {
+		t.Errorf("B's Holds was asked %d times about a label and %d about a tag, want none and some", asked["label"], asked["tag"])
+	}
+}
+
+// A conjunction with an atom no member's Holds allows has no match, so no member is pushed (#307).
+// control: once A may hold tags, A is pushed.
+func TestPartitionedPushSkipsAtomNoMemberHolds(t *testing.T) {
+	c := Conjunction{Atoms: []PushAtom{
+		{Relation: "edge", Args: []PushArg{{Var: 1}, {Var: 2}}},
+		{Relation: "tag", Args: []PushArg{{Var: 2}, {Var: 3}}},
+	}}
+	for _, aHoldsTags := range []bool{false, true} {
+		a, b, members, _ := onlyA()
+		if aHoldsTags {
+			members[0].Holds = nil
+		}
+		f, err := NewPartitionedFederation(members...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := pushedRows(t, f, c); len(got) != 0 {
+			t.Errorf("A holds tags %v: pushed %q, want nothing", aHoldsTags, got)
+		}
+		switch {
+		case !aHoldsTags && a.pushes+b.pushes != 0:
+			t.Errorf("A was pushed %d times and B %d, want neither", a.pushes, b.pushes)
+		case aHoldsTags && a.pushes != 1:
+			t.Errorf("control: with A holding tags, A was pushed %d times, want once", a.pushes)
+		}
+	}
+}
+
+// routed asks a member's Holds about the relation before each binding (#307): a member whose Holds
+// refuses the relation is asked once, however many bindings there are, and so is a federation none
+// of whose members holds it. control: a Holds allowing the relation is still asked per binding.
+func TestRoutedChecksRelationBeforeBindings(t *testing.T) {
+	c := Conjunction{Atoms: []PushAtom{{Relation: "label", Args: []PushArg{{Var: 1}, {Var: 2}}}}, Inputs: []int{1}}
+	for i := range 50 {
+		c.Bindings = append(c.Bindings, []Value{S(fmt.Sprintf("b%d", i))})
+	}
+	_, _, members, bCalls := onlyA()
+	aCalls := 0
+	members[0].Holds = func(string, map[int]Value) bool { aCalls++; return false }
+	f, err := NewPartitionedFederation(members...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := pushedRows(t, f, c); len(got) != 0 {
+		t.Errorf("pushed %q, want nothing", got)
+	}
+	if aCalls+*bCalls > len(members) {
+		t.Errorf("pushing %d bindings of a relation no member holds asked Holds %d times, want at most once per member", len(c.Bindings), aCalls+*bCalls)
+	}
+	*bCalls = 0
+	if _, ok := f.routed(1, c); ok || *bCalls > 1 {
+		t.Errorf("routed to B: ok %v after %d calls of its Holds, want refused after one", ok, *bCalls)
+	}
+	a, _, members, _ := onlyA()
+	perBinding := 0
+	members[0].Holds = func(rel string, bound map[int]Value) bool {
+		perBinding++
+		return HoldsPrefix("a", map[string][]int{"label": {0}})(rel, bound)
+	}
+	f, _ = NewPartitionedFederation(members...)
+	pushedRows(t, f, c)
+	if perBinding < len(c.Bindings) || a.pushes != 0 {
+		t.Errorf("control: A's Holds, allowing labels but no binding, was asked %d times and A pushed %d, want once per binding and never", perBinding, a.pushes)
 	}
 }
 

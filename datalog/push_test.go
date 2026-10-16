@@ -1022,6 +1022,78 @@ func TestAPartitionedFederationPushesABoundGroup(t *testing.T) {
 	}
 }
 
+// A partitioned federation answers as in memory, cites included, whether a member needs prefixes or
+// not (#307): a two-hop join spans the stores, so a member is asked for its prefixes, and a join
+// through tag, which only store a holds and store b's Holds refuses, is pushed to a whole, with no
+// prefixes asked.
+func TestAPartitionedJoinAnswersAsInMemoryWithOrWithoutPrefixes(t *testing.T) {
+	mem := ns.NewMemSource().Declare("edge", "from", "to").Declare("tag", "id", "text")
+	for _, e := range [][2]string{{"a1", "a2"}, {"a2", "a3"}, {"a2", "b1"}, {"b1", "b2"}, {"b1", "a3"}, {"b2", "a1"}} {
+		mem.Add("edge", ns.Tuple{Vals: []ns.Value{ns.S(e[0]), ns.S(e[1])}, Cites: []string{e[0] + "-" + e[1]}})
+	}
+	for _, id := range []string{"a1", "a3"} {
+		mem.Add("tag", ns.Tuple{Vals: []ns.Value{ns.S(id), ns.S("t" + id)}, Cites: []string{"tag:" + id}})
+	}
+	for _, c := range []struct {
+		q       string
+		partial bool // whether some store is asked for prefixes
+	}{
+		{`edge(?x, ?y), edge(?y, ?z) => ?x, ?z`, true},
+		{`edge("a2", ?y), tag(?y, ?t) => ?y, ?t`, false},
+	} {
+		q := mustParse(t, c.q)
+		want, err := Naive{}.Eval(bg, q, baseFor(std(mem)), Witnesses(), CanonicalCites())
+		if err != nil || len(want) == 0 {
+			t.Fatalf("control: %s in memory %v, %v", c.q, binds(want), err)
+		}
+		stores := make([]*pushing, 2)
+		members := make([]ns.Member, 2)
+		for i, prefix := range []string{"a", "b"} {
+			part := ns.NewMemSource().Declare("edge", "from", "to").Declare("tag", "id", "text")
+			for _, rel := range []string{"edge", "tag"} {
+				for _, tu := range mem.Tuples(rel) {
+					if strings.HasPrefix(tu.Vals[0].S, prefix) {
+						part.Add(rel, tu)
+					}
+				}
+			}
+			stores[i] = pushingAt(part)
+			byPrefix := ns.HoldsPrefix(prefix, map[string][]int{"edge": {0}, "tag": {0}})
+			members[i] = ns.Member{Source: stores[i], Holds: func(rel string, bound map[int]ns.Value) bool {
+				return len(part.Tuples(rel)) > 0 && byPrefix(rel, bound)
+			}}
+		}
+		f, err := ns.NewPartitionedFederation(members...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, opts := range [][]Option{nil, {Witnesses(), CanonicalCites()}} {
+			got, err := SemiNaive{}.Eval(bg, q, MustBase(std(f), f), opts...)
+			if opts == nil {
+				if err != nil || !reflect.DeepEqual(binds(got), binds(want)) {
+					t.Errorf("%s: federated %v %v, in memory %v", c.q, binds(got), err, binds(want))
+				}
+				continue
+			}
+			if err != nil || !reflect.DeepEqual(got, want) {
+				t.Errorf("%s cites differently\n federated: %v %v\n in memory: %v", c.q, got, err, want)
+			}
+		}
+		joins, partial := 0, false
+		for _, st := range stores {
+			for _, pc := range st.pushed {
+				if len(pc.Atoms) > 1 {
+					joins++
+					partial = partial || pc.Partial
+				}
+			}
+		}
+		if joins == 0 || partial != c.partial {
+			t.Errorf("%s: %d joins pushed, some with prefixes %v, want some pushed and prefixes %v", c.q, joins, partial, c.partial)
+		}
+	}
+}
+
 // One literal goes to the store alone when it filters it better than a whole read (#263): a variable
 // repeated in it, or a comparison the store takes. One of distinct free variables, or with a constant
 // (a lookup), isn't pushed; nor one whose only filter is a comparison the store refuses. Either way it

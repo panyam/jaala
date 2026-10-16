@@ -22,7 +22,10 @@ type Member struct {
 	// from 0, values read as the arguments' declared types, as LookupSource's are). A lookup goes only
 	// to the members that can, so a member holding one repo's ids is never asked about another's. It
 	// may answer true when unsure, never false for a fact the member holds, or the answer loses it.
-	// Nil holds anything. Reading a relation whole always reads every member.
+	// Binding fewer arguments never answers false where binding more would answer true: a partitioned
+	// push asks first with only an atom's constants bound, and skips the member, or the whole
+	// conjunction, on false (#307). Nil holds anything. Reading a relation whole always reads every
+	// member.
 	Holds func(rel string, bound map[int]Value) bool
 }
 
@@ -365,7 +368,9 @@ func (f *Federation) cite(i int, t Tuple) Tuple {
 //
 // The answer never depends on how precisely Holds routes: a prefix is continued in every other member
 // whose Holds allows the next atom, so a Holds that answers true when unsure costs calls, never
-// matches. What the partition promises is that pushing pays off.
+// matches. What the partition promises is that pushing pays off. A member is asked for prefixes only
+// when another member's Holds allows an atom after the first, and otherwise gets the conjunction
+// whole; a conjunction with an atom no member's Holds allows is answered with nothing (#307).
 func NewPartitionedFederation(members ...Member) (*Federation, error) {
 	f, err := NewFederation(members...)
 	if err != nil {
@@ -445,6 +450,9 @@ func (f *Federation) Push(ctx context.Context, c Conjunction) iter.Seq2[[]Tuple,
 			f.pushMember(ctx, 0, c, nil, yield)
 			return
 		}
+		if !f.heldSomewhere(c) {
+			return
+		}
 		if c.Page != nil || len(c.Atoms) == 1 {
 			for _, i := range f.serving[c.Atoms[0].Relation] {
 				if q, ok := f.routed(i, c); ok && !f.pushMember(ctx, i, q, nil, yield) {
@@ -479,18 +487,18 @@ func (f *Federation) pushMember(ctx context.Context, i int, c Conjunction, prefi
 
 // pushAcross yields the rows for c from every member but except whose Holds allows c's first atom
 // (under one of c's Bindings, when it has Inputs), continuing their prefixes in the others (see Push
-// and continuePrefixes).
+// and continuePrefixes). A member is asked for its prefixes only when another member's Holds allows an
+// atom after the first, since no other member could continue them (#307).
 func (f *Federation) pushAcross(ctx context.Context, c Conjunction, except int, yield func([]Tuple, error) bool) bool {
-	p := c
-	p.Partial = true
 	for _, i := range f.serving[c.Atoms[0].Relation] {
 		if i == except {
 			continue
 		}
-		q, ok := f.routed(i, p)
+		q, ok := f.routed(i, c)
 		if !ok {
 			continue
 		}
+		q.Partial = f.continued(i, c) || !f.pushes(i, q)
 		var prefixes [][]Tuple
 		more := f.pushMember(ctx, i, q, nil, func(row []Tuple, err error) bool {
 			switch {
@@ -528,6 +536,9 @@ func (f *Federation) continuePrefixes(ctx context.Context, c Conjunction, from i
 	}
 	slices.Sort(lens)
 	for _, k := range lens {
+		if !f.othersHold(from, c.Atoms[k]) {
+			continue // no member could continue them
+		}
 		group := byLen[k]
 		if rest, joined := f.restAfter(c, k, group); rest != nil {
 			more := f.pushAcross(ctx, *rest, from, func(row []Tuple, err error) bool {
@@ -653,6 +664,42 @@ func (f *Federation) restAfter(c Conjunction, k int, prefixes [][]Tuple) (*Conju
 	return &rest, joined
 }
 
+// pushes reports whether member i pushes c, offered without its Bindings as the planner offers it.
+func (f *Federation) pushes(i int, c Conjunction) bool {
+	ps, ok := f.members[i].Source.(PushSource)
+	c.Bindings = nil
+	return ok && ps.Pushes(c)
+}
+
+// heldSomewhere reports whether, for each of c's atoms, some member's Holds allows it with only its
+// constants bound. When one has none, c has no match (#307).
+func (f *Federation) heldSomewhere(c Conjunction) bool {
+	for _, a := range c.Atoms {
+		if !slices.ContainsFunc(f.serving[a.Relation], func(j int) bool { return f.holds(j, a) }) {
+			return false
+		}
+	}
+	return true
+}
+
+// continued reports whether a prefix of c's matches member i returns could continue elsewhere: whether
+// a member other than i may hold an atom after the first, its constants bound.
+func (f *Federation) continued(i int, c Conjunction) bool {
+	for _, a := range c.Atoms[1:] {
+		if f.othersHold(i, a) {
+			return true
+		}
+	}
+	return false
+}
+
+// othersHold reports whether a member other than i serving a's relation has a Holds allowing a, its
+// constants bound. Holds answers true with more bound only where it does with fewer (see Member), so
+// false here is false for every prefix's values.
+func (f *Federation) othersHold(i int, a PushAtom) bool {
+	return slices.ContainsFunc(f.serving[a.Relation], func(j int) bool { return j != i && f.holds(j, a) })
+}
+
 // membersPush reports whether every member pushes c.
 func (f *Federation) membersPush(c Conjunction) bool {
 	for _, m := range f.members {
@@ -733,10 +780,14 @@ func joinKey(v Value, at ArgType) string {
 }
 
 // routed is c for member i: c itself when its Holds allows c's first atom, or with Bindings, c with
-// only the bindings under whose values Holds allows it. ok is false when it allows none.
+// only the bindings under whose values Holds allows it. ok is false when it allows none, which a Holds
+// refusing the atom with only its constants bound answers before any binding is tried (#307).
 func (f *Federation) routed(i int, c Conjunction) (Conjunction, bool) {
+	if !f.holds(i, c.Atoms[0]) {
+		return c, false
+	}
 	if len(c.Inputs) == 0 || f.members[i].Holds == nil {
-		return c, f.holds(i, c.Atoms[0])
+		return c, true
 	}
 	var kept [][]Value
 	for _, b := range c.Bindings {
