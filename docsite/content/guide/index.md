@@ -11,9 +11,11 @@ The [tutorials]({{.Site.PathPrefix}}/tutorials/) teach the language in order. Th
 4. [Negation](negation/) covers anchoring, existential variables, host-bound values and stratification.
 5. [Aggregation](aggregation/) covers groups, rows against values, `having`, and what an aggregate answers over nothing.
 6. [Ordering](ordering/) covers the default order, `order by`, `limit` and `offset`.
-7. [Host options](host-options/) covers `Bind`, `Budget`, `Explain` and the context, from Go.
-8. [Modules and the vocabulary](modules-and-vocabulary/) covers paths, private members, docs, signatures and module errors.
-9. [Absent values](absent-values/) covers a field the source didn't state.
-10. [Versions](versions/) covers a source serving several versions of its facts, `At`, `Across` and `Diff`.
+7. [Host options](host-options/) covers `Bind`, `Budget`, `Explain` and the context, pages and tables, sharing a base, and where a parse error is, from Go.
+8. [Predicates and generators](predicates/) covers a host's own Go inside a query: filters, generators, their modes and types.
+9. [Facts from stores](stores/) covers a source that answers from its own index: lookups, federations, and stores that join, count, page and walk.
+10. [Modules and the vocabulary](modules-and-vocabulary/) covers paths, private members, docs, signatures and module errors.
+11. [Absent values](absent-values/) covers a field the source didn't state.
+12. [Versions](versions/) covers a source serving several versions of its facts, `At`, `Across` and `Diff`, from memory or from stores.
 
-The last four are written in Go, as `Example` functions that `go test` runs, like the [Go tutorial]({{.Site.PathPrefix}}/tutorials/05-go-host/).
+The last six are written in Go, as `Example` functions that `go test` runs, like the [Go tutorial]({{.Site.PathPrefix}}/tutorials/05-go-host/).

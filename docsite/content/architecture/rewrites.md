@@ -2,7 +2,7 @@
 title: "Rewrites"
 description: "What the planned SemiNaive does to a query before running it (inlining, demand, factoring, planning), and when each one stands aside."
 prev: {url: "/jaala/architecture/evaluation/", title: "Evaluation"}
-next: {url: "/jaala/architecture/provenance/", title: "Provenance"}
+next: {url: "/jaala/architecture/stores/", title: "Stores"}
 ---
 
 The planned `SemiNaive{}` rewrites a query before running it, in three steps: inlining, then demand, then planning. Each produces ordinary rules, so the fixpoint, strata and checks apply unchanged, which keeps the rewrites fairly easy to reason about. Every step has cases where it stands aside, and we've come to think of those as part of the design, since a rewrite that makes one query faster can make another slower or wrong. Most of them were found the hard way, by a test. `SemiNaive{WrittenOrder: true}` turns all three off.

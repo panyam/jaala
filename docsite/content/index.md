@@ -26,6 +26,16 @@ hideTitle: true
 <a href="{{.Site.PathPrefix}}/overview/#provenance">How provenance works &rarr;</a>
 </div>
 <div class="feature-card">
+<h3>Facts from your own stores</h3>
+<p>A store answers only what a query binds, and can join, count, page and walk itself. A federation spreads one question over many stores.</p>
+<a href="{{.Site.PathPrefix}}/guide/stores/">Facts from stores &rarr;</a>
+</div>
+<div class="feature-card">
+<h3>Facts across versions</h3>
+<p>One base over every revision: answer at one, across all of them with the versions each row holds in, or list what changed between two.</p>
+<a href="{{.Site.PathPrefix}}/guide/versions/">Versions &rarr;</a>
+</div>
+<div class="feature-card">
 <h3>A library, in Go or in the browser</h3>
 <p>Pure Go with no dependencies outside the standard library, so it embeds in a service and runs in a browser as wasm.</p>
 <a href="{{.Site.PathPrefix}}/overview/#three-packages">The three packages &rarr;</a>
