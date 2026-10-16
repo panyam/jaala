@@ -15,7 +15,7 @@ import (
 // tests and the docs write, because only this package can reach them; nl's own test checks the
 // other direction, that every program the grammar writes parses. The grammar comes from nl's golden
 // file, so no import runs the wrong way.
-const grammarFile = "../nl/testdata/program.gbnf"
+const grammarFile = "../frontends/nl/testdata/program.gbnf"
 
 // Every program the corpus, the fuzz seeds and the docs write, printed in jaala's own spelling, is a
 // program the grammar accepts, so a model decoding under it can still say what they say.

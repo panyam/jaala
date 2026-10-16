@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/panyam/jaala/nl"
+	"github.com/panyam/jaala/frontends/nl"
 )
 
 // server answers as llama-server would, recording each request.

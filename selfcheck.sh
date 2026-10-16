@@ -76,7 +76,7 @@ fi
 
 echo "== llama.cpp keeps a model to nl's grammar"
 llama_ran=yes
-model=nlmodels/testdata/stories260K.gguf
+model=frontends/nlmodels/testdata/stories260K.gguf
 if command -v llama-server >/dev/null 2>&1 && [ -f "$model" ]; then
 	# A real decoder reading the grammar nl renders (#330), on llama.cpp's 1 MB test model.
 	port=$((18000 + $$ % 1000))
@@ -89,7 +89,7 @@ if command -v llama-server >/dev/null 2>&1 && [ -f "$model" ]; then
 		sleep 0.5
 	done
 	if [ $up = yes ]; then
-		(cd nlmodels && JAALA_LLAMACPP_URL="http://127.0.0.1:$port" go test -count=1 ./llamacpp -run '^TestARealServerKeepsTheModelToTheGrammar$' -v) >"$out" 2>&1 || status=1
+		(cd frontends/nlmodels && JAALA_LLAMACPP_URL="http://127.0.0.1:$port" go test -count=1 ./llamacpp -run '^TestARealServerKeepsTheModelToTheGrammar$' -v) >"$out" 2>&1 || status=1
 		grep -E 'finished on their own|leaves the grammar|isn.t a program|refused|control:|^(--- |ok|FAIL)' "$out"
 	else
 		status=1

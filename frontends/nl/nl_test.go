@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/panyam/jaala/datalog"
-	"github.com/panyam/jaala/nl"
+	"github.com/panyam/jaala/frontends/nl"
 	"github.com/panyam/jaala/ns"
 	"github.com/panyam/jaala/stdlib"
 )

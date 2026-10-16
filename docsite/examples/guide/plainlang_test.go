@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/panyam/jaala/datalog"
-	"github.com/panyam/jaala/nl"
+	"github.com/panyam/jaala/frontends/nl"
 )
 
 // Card lists the vocabulary a line per member, for a model's prompt. The

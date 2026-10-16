@@ -11,7 +11,7 @@ setup: souffle llama
 
 # llama.cpp's server and the 1 MB model its own CI tests with, which writes nonsense: the grammar is
 # what selfcheck tests, not the model. The model is ignored by git.
-LLAMA_MODEL := nlmodels/testdata/stories260K.gguf
+LLAMA_MODEL := frontends/nlmodels/testdata/stories260K.gguf
 LLAMA_MODEL_SHA256 := 270cba1bd5109f42d03350f60406024560464db173c0e387d91f0426d3bd256d
 llama:
 	@if command -v llama-server >/dev/null 2>&1; then \

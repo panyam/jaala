@@ -4,7 +4,11 @@ A Datalog engine for graph-shaped data, extracted from agni. Three packages: `ns
 (the namespace tree, value and signature types, members, suggestions, the `Language` hook);
 `stdlib/`, the standard vocabulary (`str.*`, `num.*`, `absent`, the glob and regex compilers); and
 `datalog/`, the engine (parsing, linking, `Check`'s resolution and inference, evaluation). Read
-`ns/doc.go`, then `datalog/doc.go`. jaala is a Datalog engine, not a graph library: a host's fast
+`ns/doc.go`, then `datalog/doc.go`. `frontends/` holds what turns text other than jaala's syntax into a
+program that checks, and no engine-only host imports it: `frontends/nl`, the plain-language front end
+(#321), and `frontends/nlmodels`, its clients for local models in a module of their own (#330); a
+Cypher/GQL front end (#278) would go beside them. They moved there in #337, after v0.1.65 had shipped
+`nl` and `nlmodels` at the root. jaala is a Datalog engine, not a graph library: a host's fast
 path is a generator (its own Go running inside a query), not a jaala function called around the
 engine (#41).
 
@@ -61,12 +65,12 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   `nl.Eval` (#326) scores a `translate` func over `Case`s, matching a row by its values as a multiset
   (the model picks the columns' names and order) and rows as a multiset unless `Ordered`. `TestEval`
   is #322's exercise until Declaire's arm runs: the guide's vocabulary, a scripted small model and
-  fallback (`byQuestion`), and the report in `nl/testdata/eval.golden` (`-update`).
-- **`nl.Grammar()` is GBNF built from a rule table** (`nl/grammar.go`, #323), and every text it
+  fallback (`byQuestion`), and the report in `frontends/nl/testdata/eval.golden` (`-update`).
+- **`nl.Grammar()` is GBNF built from a rule table** (`frontends/nl/grammar.go`, #323), and every text it
   accepts must parse: `TestEveryProgramTheGrammarWritesParses` samples 70,000 programs from the table
   over several seeds and depths (one seed alone missed `-(9)` as a column). The other direction lives
-  in `datalog`'s tests, which can reach the corpus: they read `nl/testdata/program.gbnf` (`go test
-  ./nl -update` writes it) with a small Earley recognizer and require every corpus, fuzz-seed and docs
+  in `datalog`'s tests, which can reach the corpus: they read `frontends/nl/testdata/program.gbnf` (`go
+  test ./frontends/nl -update` writes it) with a small Earley recognizer and require every corpus, fuzz-seed and docs
   program, printed in jaala's spelling, to be accepted. A grammar change regenerates the file, or
   `datalog` checks the old one. The card is memoized on the vocabulary (`Memo`).
 - **`nl.GrammarFor(v)` is that table with the calls replaced by v's members** (`vocabgrammar.go`,
@@ -75,14 +79,15 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   drops rules. Its soundness test also checks each sample against `Grammar()`, so it stays a
   sublanguage. The recognizer lives in `internal/gbnf` for both packages' tests. `Translate` sends
   it as `Prompt.Grammar`.
-- **`nlmodels` is a module of its own** (#330): thin clients for local models already running,
-  `llamacpp` (sends the grammar, `cache_prompt`) and `ollama` (no GBNF, so no grammar). CI's
-  `nlmodels` job tests it; the root's `./...` doesn't reach it. Since nlmodels/v0.1.65 it requires
-  jaala v0.1.65 with no `replace`. A change that needs `nl` API no tag holds yet puts `replace
-  github.com/panyam/jaala => ../` back, and it is tagged (`nlmodels/v0.1.N`) only after that jaala
-  tag and a commit dropping the replace again (Releasing). `./selfcheck.sh` runs a real
+- **`frontends/nlmodels` is a module of its own** (#330): thin clients for local models already
+  running, `llamacpp` (sends the grammar, `cache_prompt`) and `ollama` (no GBNF, so no grammar).
+  CI's `nlmodels` job tests it; the root's `./...` doesn't reach it. It requires jaala with `replace
+  github.com/panyam/jaala => ../../` while it needs `frontends/nl` API no tag holds, and is tagged
+  (`frontends/nlmodels/v0.1.N`, the module's directory as the prefix) only after that jaala tag and
+  a commit dropping the replace (Releasing). Its old path, `github.com/panyam/jaala/nlmodels`, shipped
+  once (nlmodels/v0.1.65) with no consumer, and nothing is tagged under that prefix again. `./selfcheck.sh` runs a real
   `llama-server` on llama.cpp's 1 MB test model when `make llama` has fetched it: every reply must
-  stay inside the grammar as `internal/gbnf` reads it. The model (`nlmodels/testdata/stories260K.gguf`)
+  stay inside the grammar as `internal/gbnf` reads it. The model (`frontends/nlmodels/testdata/stories260K.gguf`)
   is gitignored and found by a relative path, so a selfcheck worktree needs its own copy (`cp` it in
   after `git worktree add`), or the step reports "could not run". `llama-server` exits with "Abort
   trap: 6" when selfcheck's cleanup kills it, after its test, which is not a failure.
@@ -765,9 +770,9 @@ releases are patch bumps on v0.1.x, breaking changes included, pre-1.0. agni con
 notes: write it as a short list of what changed, then publish the page with
 `gh release create v0.1.N --title v0.1.N --notes-from-tag --latest` (from v0.1.32; earlier tags
 have no page), and put the upgrade note on the issue a host filed or the PR's own issue. When
-`nlmodels` changed, release it after: a commit pointing its `go.mod` at the new jaala tag without
-the replace (its CI job then builds against the tag), then `git tag -a nlmodels/v0.1.N` on that
-commit. A consumer ignores `replace`, so an `nlmodels` tag requiring an older jaala would build
+`frontends/nlmodels` changed, release it after: a commit pointing its `go.mod` at the new jaala tag
+without the replace (its CI job then builds against the tag), then `git tag -a
+frontends/nlmodels/v0.1.N` on that commit. A consumer ignores `replace`, so an `nlmodels` tag requiring an older jaala would build
 without what it calls.
 
 ## Issues and missions
@@ -777,9 +782,9 @@ Issues are ranked by the mission they serve (labels `P0`–`P3`, `waiting`, `mis
 missions unblock a host's active mission; such a mission closes when the host's half of its exercise
 passes too, so it can stay open after jaala's tickets close. One is active:
 `mission_agent_frontend` (#322), a host's caller asks in plain language and jaala's front end
-turns it into a program that checks. jaala's half is `nl` and `nlmodels` (#321, #323 to #326, #330,
+turns it into a program that checks. jaala's half is `frontends/nl` and `frontends/nlmodels` (#321, #323 to #326, #330,
 #331, released in v0.1.65 and nlmodels/v0.1.65, and #336, the fix an unknown name lacks); its
-exercise is `go test ./nl -run TestEval -v` until Declaire's translator-alone arm (declaire#290) runs
+exercise is `go test ./frontends/nl -run TestEval -v` until Declaire's translator-alone arm (declaire#290) runs
 on those tags. The two store missions closed on 2026-10-16. `mission_store_federation` (#219), a host answers a question over many stores without holding them
 in memory, measured by the `Stores` benchmark (#218: stores asked, unindexed probes, round trips,
 peak heap and a repeated question's fetches as the number of stores grows) and Declaire's `bench

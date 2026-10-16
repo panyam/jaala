@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/panyam/jaala/nl"
+	"github.com/panyam/jaala/frontends/nl"
 )
 
 func TestCompleteSendsTheChatWithoutTheGrammar(t *testing.T) {
