@@ -43,7 +43,7 @@ import (
 //	term        = variable | string | number ;
 //	variable    = "?" ident | "_" ;
 //	ident       = ( letter | digit | "_" ) { letter | digit | "_" } ;  (* ASCII *)
-//	string      = '"' { char } '"' ;
+//	string      = '"' { char | "\\" char } '"' ;  (* kept as written: \" is a backslash and a quote *)
 //	number      = [ "+" | "-" ] digit { digit } [ "." digit { digit } ] [ ( "e" | "E" ) [ "+" | "-" ] digit { digit } ] ;
 //	relation    = ident { "." | "-" | ident } ;       (* a path: net.max_voltage, component-on-net *)
 //
@@ -705,10 +705,10 @@ func termError(s span) error {
 			return s.errorf("%s", err.Error())
 		}
 	case text[0] == '"':
-		if len(text) < 2 || text[len(text)-1] != '"' {
+		if len(text) < 2 || text[len(text)-1] != '"' || stringEnd(text[1:]) < 0 {
 			return s.errorf("query: unterminated string %q", text)
 		}
-		return s.errorf("query: %s is more than one string; a \"string\" can't hold a quote", text)
+		return s.errorf("query: %s is more than one string; put a backslash before a quote inside a string", text)
 	case isWord(text):
 		return s.errorf("query: bare identifier %q — a term must be a ?variable, a \"string\", or a number; write ?%s for a variable or %q for text", text, text, text)
 	}

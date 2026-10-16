@@ -12,7 +12,7 @@ A term is an argument of a literal, and there are four kinds:
 
 - a variable, `?p`, which takes whatever value makes the goal hold;
 - the wildcard `_`, which matches anything and binds nothing, so two `_` are never the same value;
-- a string in double quotes, `"api"`;
+- a string in double quotes, `"api"`, which takes no escapes: what's between the quotes is the value as written, and a quote inside it follows a backslash, which stays too (`"\"x\""` is the five characters `\"x\"`, which a regex reads as `"x"`);
 - a number, `300` or `-1.5`.
 
 {{ demo "demos/guide/syntax-number.yaml" }}

@@ -443,3 +443,36 @@ func TestAParseErrorSaysWhereItIs(t *testing.T) {
 		}
 	}
 }
+
+// A quote a backslash precedes stays inside its string, and the string keeps the backslash: a string
+// takes no escapes. Declaire's text.find pattern below parsed until v0.1.61 (#314). Two strings with a
+// bare quote between them are still refused, and so is a string whose last quote is escaped.
+func TestAQuoteAfterABackslashStaysInTheString(t *testing.T) {
+	for text, want := range map[string]string{
+		`text.find("\"invalid_client[\":]", "oneauth", ?u, ?l, ?t)`: `\"invalid_client[\":]`,
+		`r("a\"b", ?x)`:         `a\"b`,
+		`r("say \"hi\" # now")`: `say \"hi\" # now`,
+		`r("a\\")`:              `a\\`,
+	} {
+		q, err := Parse(text)
+		if err != nil {
+			t.Errorf("%s: %v", text, err)
+			continue
+		}
+		if got := q.Goal.Literals[0].Pos.Args[0].Const; got == nil || got.S != want {
+			t.Errorf("%s: first argument %v, want the constant %s", text, got, want)
+		}
+	}
+	for text, want := range map[string]string{
+		`r("a" "b")`: `query: "a" "b" is more than one string; put a backslash before a quote inside a string`,
+		`r("a\")`:    `query: unterminated string "\"a\\\""`,
+	} {
+		if _, err := Parse(text); err == nil || err.Error() != want {
+			t.Errorf("%s: %v, want %s", text, err, want)
+		}
+	}
+	vocab, err := parseArgType(lex(`{"a\"b", "c"}`).all())
+	if err != nil || !reflect.DeepEqual(vocab.Domain, []string{`a\"b`, "c"}) {
+		t.Errorf(`{"a\"b", "c"}: %v %v, want the entries a\"b and c`, vocab.Domain, err)
+	}
+}

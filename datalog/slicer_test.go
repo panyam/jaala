@@ -188,6 +188,9 @@ func slSplitTail(proj string) (map[string]string, error) {
 		case c == '"':
 			inQuote = !inQuote
 		case inQuote:
+			if c == '\\' {
+				i++ // #314's change
+			}
 		case c == '(' || c == '{':
 			depth++
 		case c == ')' || c == '}':
@@ -409,8 +412,8 @@ func slStripComments(s string) string {
 	}
 	b := []byte(s)
 	inQuote, inComment := false, false
-	for i, c := range b {
-		switch {
+	for i := 0; i < len(b); i++ {
+		switch c := b[i]; {
 		case inComment:
 			if c == '\n' {
 				inComment = false
@@ -419,6 +422,8 @@ func slStripComments(s string) string {
 			}
 		case c == '"':
 			inQuote = !inQuote
+		case c == '\\' && inQuote:
+			i++ // #314's change
 		case c == '#' && !inQuote:
 			inComment = true
 			b[i] = ' '
@@ -484,6 +489,9 @@ func slTopIndexes(s string, c byte) []int {
 		case b == '"':
 			inQuote = !inQuote
 		case inQuote:
+			if b == '\\' {
+				i++ // #314's change
+			}
 		case b == '(' || b == '{':
 			depth++
 		case b == ')' || b == '}':
@@ -764,11 +772,11 @@ func slParseTerm(s string) (Term, error) {
 		}
 		return Term{Var: Var(name)}, nil
 	case s[0] == '"':
-		if len(s) < 2 || s[len(s)-1] != '"' {
+		if len(s) < 2 || s[len(s)-1] != '"' || stringEnd(s[1:]) < 0 { // #314's change: \" doesn't end it
 			return Term{}, fmt.Errorf("query: unterminated string %q", s)
 		}
-		if strings.Contains(s[1:len(s)-1], `"`) { // #167's one change
-			return Term{}, fmt.Errorf("query: %s is more than one string; a \"string\" can't hold a quote", s)
+		if stringEnd(s[1:]) != len(s)-2 { // #167's one change, #314's backslash
+			return Term{}, fmt.Errorf("query: %s is more than one string; put a backslash before a quote inside a string", s)
 		}
 		return Term{Const: &ns.Value{S: s[1 : len(s)-1]}}, nil
 	default:
@@ -949,6 +957,9 @@ func slSplitTop(s, sep string) []string {
 		case c == '"':
 			inQuote = !inQuote
 		case inQuote:
+			if c == '\\' {
+				i++ // #314's change
+			}
 			// skip
 		case c == '(' || c == '{':
 			depth++
@@ -1065,7 +1076,7 @@ func (p *slExprParser) primary() (Term, error) {
 		p.i++
 		return t, nil
 	case c == '"':
-		end := strings.IndexByte(p.s[p.i+1:], '"')
+		end := stringEnd(p.s[p.i+1:]) // #314's change
 		if end < 0 {
 			return Term{}, fmt.Errorf("query: unterminated string %q", p.s[p.i:])
 		}
@@ -1124,7 +1135,7 @@ func slParseArgType(s string) (ns.ArgType, error) {
 		}
 		for _, item := range slSplitTop(s[i+1:len(s)-1], ",") {
 			item = strings.TrimSpace(item)
-			if len(item) < 2 || item[0] != '"' || item[len(item)-1] != '"' || strings.Contains(item[1:len(item)-1], `"`) { // #167's one change
+			if len(item) < 2 || item[0] != '"' || stringEnd(item[1:]) != len(item)-2 { // #167's one change, #314's backslash
 				return t, fmt.Errorf("query: vocabulary entry %q must be a \"string\"", item)
 			}
 			t.Domain = append(t.Domain, item[1:len(item)-1])

@@ -99,13 +99,13 @@ A variable whose name has anything else in it, such as `?a.b` or the `?)(` a str
 
 `query: unterminated string …`
 
-A string is missing its closing `"`.
+A string is missing its closing `"`. A `"` after a backslash doesn't close one, so a string ending in a backslash is written `"a\\"` (both backslashes stay in it).
 
 {{ demo "demos/errors/unterminated-string.yaml" }}
 
-`query: … is more than one string; a "string" can't hold a quote`
+`query: … is more than one string; put a backslash before a quote inside a string`
 
-Two strings where a term goes, as `"api" "cli"` without a comma between them. Earlier versions read that as the one string `api" "cli`.
+Two strings where a term goes, as `"api" "cli"` without a comma between them. Versions before v0.1.61 read that as the one string `api" "cli`. A quote inside a string follows a backslash: `"say \"hi\""`.
 
 {{ demo "demos/errors/more-than-one-string.yaml" }}
 
