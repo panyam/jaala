@@ -410,3 +410,36 @@ func TestAnUnknownMemberWithAnExtraWordSuggestsTheMember(t *testing.T) {
 		t.Errorf("err = %v, want it to suggest str.suffix", err)
 	}
 }
+
+// A parse error says where the piece it's about starts (#167), counting a line's characters rather
+// than its bytes, and its message stays as it was. A having's error points into the having.
+func TestAParseErrorSaysWhereItIs(t *testing.T) {
+	for _, c := range []struct {
+		text              string
+		rules             bool
+		want              string
+		line, col, offset int
+	}{
+		{"edge(?a, ?b)\n=> ?a, nope", false, `query: projection column "nope" must be a ?variable or an aggregate`, 2, 8, 20},
+		{"r(?a) :- edge(?a, _);\n# naïve\nnode(?n), ?n = \"é\", bad name(?n) => ?n", false, `query: bad relation name "bad name"`, 3, 21, 52},
+		{"edge(?a, ?b) => ?a, count(?b)\n  having count(?b) > nope", false, `query: having "count(?b) > nope": bare identifier "nope" — a term must be a ?variable, a "string", or a number; write ?nope for a variable or "nope" for text`, 2, 22, 51},
+		{"r(?a) :- edge(?a, _).\nr(?a) :- edge(?a,, _).", true, "query: empty term", 2, 18, 39},
+		{"", false, `query: no goal clause (a query needs one clause without ":-" to ask)`, 1, 1, 0},
+	} {
+		var err error
+		if c.rules {
+			_, err = ParseRules(c.text)
+		} else {
+			_, err = Parse(c.text)
+		}
+		var pe *ParseError
+		if !errors.As(err, &pe) {
+			t.Errorf("%q: err = %v (%T), want a *ParseError", c.text, err, err)
+			continue
+		}
+		if err.Error() != c.want || pe.Line != c.line || pe.Column != c.col || pe.Offset != c.offset {
+			t.Errorf("%q: %q at line %d, column %d, offset %d\nwant %q at line %d, column %d, offset %d",
+				c.text, err, pe.Line, pe.Column, pe.Offset, c.want, c.line, c.col, c.offset)
+		}
+	}
+}

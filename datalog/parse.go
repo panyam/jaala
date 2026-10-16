@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
-	"unicode/utf8"
 )
 
 // Parse reads a text query into a Query. Grammar (EBNF; whitespace is insignificant):
@@ -48,7 +47,8 @@ import (
 //	number      = [ "+" | "-" ] digit { digit } [ "." digit { digit } ] [ ( "e" | "E" ) [ "+" | "-" ] digit { digit } ] ;
 //	relation    = ident { "." | "-" | ident } ;       (* a path: net.max_voltage, component-on-net *)
 //
-// A "#" outside a string starts a comment that runs to the end of the line.
+// A "#" outside a string starts a comment that runs to the end of the line. The text is read as tokens
+// first (lex.go, #167), and an error is a *ParseError saying where the piece it is about starts.
 //
 // Clauses are separated by ";", or ended by "." as Datalog and Prolog end them; a clause with ":-" is
 // a rule, and the one clause without one is the goal. A goal may also be written as Prolog and
@@ -82,31 +82,34 @@ import (
 // Compare(?v < 30)], Select: [?r, ?n]}. And `component-on-net(?r,?n) => ?n, count(?r)` parses to a
 // Goal with one Atom and Select [Term{Var:"n"}, Term{Agg: &Aggregate{Func:"count", Var:"r"}}].
 func Parse(s string) (Query, error) {
-	rules, goals, err := splitClauses(stripComments(s))
+	src := lex(s)
+	rules, goals, err := src.clauses()
 	if err != nil {
 		return Query{}, err
 	}
-	if len(goals) == 2 && strings.HasPrefix(goals[1], "=>") && len(splitTop(goals[0], "=>")) == 1 {
-		goals = []string{goals[0] + " " + goals[1]} // `edge(?a, ?b). => ?a`: an ending before the projection (#276)
-	}
-	var goalText string
-	switch len(goals) {
-	case 1:
-		goalText = goals[0]
-	case 0:
-		return Query{}, fmt.Errorf("query: no goal clause (a query needs one clause without %q to ask)", ":-")
+	var parts []span
+	switch {
+	case len(goals) == 2 && goals[1].is(0, "=>") && goals[0].count("=>") == 0:
+		parts = append([]span{goals[0]}, goals[1].split("=>")[1:]...) // `edge(?a, ?b). => ?a`: an ending before the projection (#276)
+	case len(goals) == 1:
+		parts = goals[0].split("=>")
+	case len(goals) == 0:
+		return Query{}, src.all().errorf("query: no goal clause (a query needs one clause without %q to ask)", ":-")
 	default:
-		return Query{}, fmt.Errorf("query: %d goal clauses; a query asks one goal (rules use %q, the goal does not)", len(goals), ":-")
+		return Query{}, goals[1].errorf("query: %d goal clauses; a query asks one goal (rules use %q, the goal does not)", len(goals), ":-")
 	}
-	body, proj, err := splitProjection(goalText)
-	if err != nil {
-		return Query{}, err
+	if len(parts) > 2 {
+		return Query{}, parts[2].errorf("query: more than one %q projection separator", "=>")
 	}
-	if strings.TrimSpace(body) == "" && strings.TrimSpace(proj) != "" {
-		if body, err = goalAfterArrow(proj); err != nil {
+	body, proj := parts[0], parts[0].tokens(parts[0].hi-parts[0].lo, parts[0].hi-parts[0].lo)
+	if len(parts) == 2 {
+		proj = parts[1]
+	}
+	if body.empty() && !proj.empty() {
+		if err := goalAfterArrow(proj); err != nil {
 			return Query{}, err
 		}
-		proj = ""
+		body, proj = proj, proj.tokens(proj.hi-proj.lo, proj.hi-proj.lo)
 	}
 	lits, err := parseLiterals(body)
 	if err != nil {
@@ -125,105 +128,111 @@ func Parse(s string) (Query, error) {
 		return Query{}, err
 	}
 	q := Query{Rules: rules, Goal: Body{Literals: lits}, Select: sel, Having: having}
-	if text, ok := tail["order"]; ok {
-		if q.OrderBy, err = parseOrderBy(text); err != nil {
+	if sp, ok := tail["order"]; ok {
+		if q.OrderBy, err = parseOrderBy(sp); err != nil {
 			return Query{}, err
 		}
 	}
-	if text, ok := tail["after"]; ok {
-		if q.After, err = parseAfter(text); err != nil {
+	if sp, ok := tail["after"]; ok {
+		if q.After, err = parseAfter(sp); err != nil {
 			return Query{}, err
 		}
 	}
-	if text, ok := tail["limit"]; ok {
-		if q.Limit, err = parseCount("limit", text, 1); err != nil {
+	if sp, ok := tail["limit"]; ok {
+		if q.Limit, err = parseCount("limit", sp, 1); err != nil {
 			return Query{}, err
 		}
 	}
-	if text, ok := tail["offset"]; ok {
-		if q.Offset, err = parseCount("offset", text, 0); err != nil {
+	if sp, ok := tail["offset"]; ok {
+		if q.Offset, err = parseCount("offset", sp, 0); err != nil {
 			return Query{}, err
 		}
 	}
 	return q, nil
 }
 
-// goalAfterArrow reads a goal written after "=>" with nothing before it, as `=> r(?u, ?l)` (#276),
+// goalAfterArrow checks a goal written after "=>" with nothing before it, as `=> r(?u, ?l)` (#276),
 // which asks for every row of r: the goal r(?u, ?l), whose columns are its variables. Columns with no
 // goal before them (`=> ?b, count(?a)`) are refused, saying where the goal goes.
-func goalAfterArrow(text string) (string, error) {
-	lits, err := parseLiterals(text)
+func goalAfterArrow(sp span) error {
+	lits, err := parseLiterals(sp)
 	columns := err != nil
 	for _, l := range lits {
 		columns = columns || l.Pos != nil && validAggFunc(l.Pos.Relation)
 	}
 	if columns {
-		return "", fmt.Errorf("query: %q has no goal before it; the goal goes first, as in %q", "=> "+strings.TrimSpace(text), "edge(?a, ?b) => ?b, count(?a)")
+		return sp.errorf("query: %q has no goal before it; the goal goes first, as in %q", "=> "+sp.text(), "edge(?a, ?b) => ?b, count(?a)")
 	}
-	return text, nil
+	return nil
 }
 
 // tailWords are the clauses that may follow the projection, in the order they must be written.
 var tailWords = []string{"having", "order", "after", "limit", "offset"}
 
 // splitTail cuts the projection at the clauses that follow it, keyed by keyword, with the columns
-// themselves under "". A keyword matches as a bare word only, at paren depth zero, outside quotes and
-// bounded on both sides, so a variable whose name merely contains one (?shaving, ?limit) is left
-// alone. Each clause may appear once, in tailWords' order, and `order` must be followed by `by`,
-// which the "order" entry leaves out.
-func splitTail(proj string) (map[string]string, error) {
+// themselves under "". A keyword is a word outside brackets with no name beside it, so a variable or
+// relation whose name merely contains one (?shaving, ?limit, x.having) is left alone. Each clause may
+// appear once, in tailWords' order, and `order` must be followed by `by`, which the "order" entry
+// leaves out.
+func splitTail(proj span) (map[string]span, error) {
 	type cut struct {
-		word  string
-		start int // where the keyword starts
-		body  int // where its text starts
+		word string
+		at   int // where the keyword starts in the text
 	}
 	var cuts []cut
-	depth, inQuote := 0, false
-	for i := 0; i < len(proj); i++ {
-		switch c := proj[i]; {
-		case c == '"':
-			inQuote = !inQuote
-		case inQuote:
-		case c == '(' || c == '{':
-			depth++
-		case c == ')' || c == '}':
-			depth--
-		case depth == 0:
+	text := proj.src.text
+	proj.top(func(_ int, t token) {
+		if t.kind == tokString || t.kind == tokSymbol {
+			return
+		}
+		for i := t.pos; i < t.end; i++ {
 			for _, w := range tailWords {
-				if isWordAt(proj, i, w) {
-					cuts = append(cuts, cut{w, i, i + len(w)})
+				if wordAt(text[proj.from:proj.to], i-proj.from, w) {
+					cuts = append(cuts, cut{w, i})
 					break
 				}
 			}
 		}
-	}
-	out := map[string]string{}
+	})
+	out := map[string]span{}
 	for n, c := range cuts {
+		kw := proj.slice(c.at, c.at+len(c.word))
 		if _, dup := out[c.word]; dup {
-			return nil, fmt.Errorf("query: %s appears twice after %q", clauseName(c.word), "=>")
+			return nil, kw.errorf("query: %s appears twice after %q", clauseName(c.word), "=>")
 		}
 		if n > 0 && slices.Index(tailWords, c.word) < slices.Index(tailWords, cuts[n-1].word) {
-			return nil, fmt.Errorf("query: %s comes after %s, not before it (the order is having, order by, after, limit, offset)", clauseName(cuts[n-1].word), clauseName(c.word))
+			return nil, kw.errorf("query: %s comes after %s, not before it (the order is having, order by, after, limit, offset)", clauseName(cuts[n-1].word), clauseName(c.word))
 		}
-		end := len(proj)
+		end := proj.to
 		if n+1 < len(cuts) {
-			end = cuts[n+1].start
+			end = cuts[n+1].at
 		}
-		text := proj[c.body:end]
+		sp := proj.slice(c.at+len(c.word), end)
 		if c.word == "order" {
-			rest, ok := cutWord(strings.TrimSpace(text)+" ", "by")
-			if !ok {
-				return nil, fmt.Errorf("query: order needs by, as in %q", "order by ?n desc")
+			by := sp.trim()
+			if t := by.text() + " "; !strings.HasPrefix(t, "by") || !isSpace(t[2]) {
+				return nil, kw.errorf("query: order needs by, as in %q", "order by ?n desc")
 			}
-			text = rest
+			sp = sp.slice(by.from+2, sp.to)
 		}
-		out[c.word] = text
+		out[c.word] = sp
 	}
 	out[""] = proj
 	if len(cuts) > 0 {
-		out[""] = proj[:cuts[0].start]
+		out[""] = proj.slice(proj.from, cuts[0].at)
 	}
 	return out, nil
+}
+
+// wordAt reports whether word sits at s[i:] with no name byte (isIdentByte) on either side, so
+// "having" matches and "?shaving" and "having_x" do not. It reads bytes, so a keyword beside a letter
+// beyond ASCII still stands alone.
+func wordAt(s string, i int, word string) bool {
+	if !strings.HasPrefix(s[i:], word) || i > 0 && isIdentByte(s[i-1]) {
+		return false
+	}
+	j := i + len(word)
+	return j == len(s) || !isIdentByte(s[j])
 }
 
 // clauseName is a tail keyword as written: "order" is "order by".
@@ -236,107 +245,71 @@ func clauseName(word string) string {
 
 // parseOrderBy reads the comma-separated sort columns, each a projection column optionally followed
 // by asc or desc. Whether it names a selected column is checked with the projection (validateOrder).
-func parseOrderBy(s string) ([]Order, error) {
+func parseOrderBy(sp span) ([]Order, error) {
 	var out []Order
-	for _, piece := range splitTop(s, ",") {
-		piece = strings.TrimSpace(piece)
+	for _, piece := range sp.split(",") {
+		piece = piece.trim()
 		desc := false
 		for _, dir := range []string{"asc", "desc"} {
-			if i := len(piece) - len(dir); i > 0 && isWordAt(piece, i, dir) {
-				piece, desc = strings.TrimSpace(piece[:i]), dir == "desc"
+			if i := len(piece.text()) - len(dir); i > 0 && wordAt(piece.text(), i, dir) {
+				piece, desc = piece.slice(piece.from, piece.from+i).trim(), dir == "desc"
 				break
 			}
 		}
-		if piece == "" {
-			return nil, fmt.Errorf("query: order by needs a column, as in %q", "order by ?n desc")
+		if piece.empty() {
+			return nil, piece.errorf("query: order by needs a column, as in %q", "order by ?n desc")
 		}
 		t, err := parseSelItem(piece)
 		if err != nil {
-			return nil, &contextParseError{context: "order by", cause: err}
+			return nil, within("order by", err)
 		}
 		out = append(out, Order{Term: t, Desc: desc})
 	}
 	return out, nil
 }
 
-// parseCount reads limit's or offset's row count, a whole number no smaller than min.
 // parseAfter reads an after clause's values, one per order by column, which validateOrder matches up.
-func parseAfter(s string) ([]ns.Value, error) {
+func parseAfter(sp span) ([]ns.Value, error) {
 	var out []ns.Value
-	for _, piece := range splitTop(s, ",") {
+	for _, piece := range sp.split(",") {
 		t, err := parseTerm(piece)
 		if err != nil {
 			return nil, err
 		}
 		if t.Const == nil {
-			return nil, fmt.Errorf("query: after takes values, as in %q, and %s is not one", `after 812, "db"`, strings.TrimSpace(piece))
+			return nil, piece.errorf("query: after takes values, as in %q, and %s is not one", `after 812, "db"`, piece.text())
 		}
 		out = append(out, *t.Const)
 	}
 	return out, nil
 }
 
-func parseCount(word, s string, min int) (int, error) {
-	s = strings.TrimSpace(s)
+// parseCount reads limit's or offset's row count, a whole number no smaller than min.
+func parseCount(word string, sp span, min int) (int, error) {
+	s := sp.text()
 	n, err := strconv.Atoi(s)
 	if err != nil || n < min || strings.HasPrefix(s, "+") {
 		want := "a whole number"
 		if min > 0 {
 			want = "a positive whole number"
 		}
-		return 0, fmt.Errorf("query: %s %q is not %s", word, s, want)
+		return 0, sp.errorf("query: %s %q is not %s", word, s, want)
 	}
 	return n, nil
-}
-
-// isWordAt reports whether word sits at s[i:] with a non-identifier character (or the string edge) on
-// either side, so "having" matches and "?shaving" and "having_x" do not.
-func isWordAt(s string, i int, word string) bool {
-	if !strings.HasPrefix(s[i:], word) {
-		return false
-	}
-	if i > 0 && isIdentByte(s[i-1]) {
-		return false
-	}
-	if j := i + len(word); j < len(s) && isIdentByte(s[j]) {
-		return false
-	}
-	return true
-}
-
-// cutWord strips a leading keyword and the whitespace after it, reporting whether it was there. It
-// requires the whitespace, so `distinct ?x` is the modifier and a variable literally named
-// `?distinctxyz` is not mistaken for one.
-func cutWord(s, word string) (rest string, ok bool) {
-	if !strings.HasPrefix(s, word) {
-		return s, false
-	}
-	rest = s[len(word):]
-	if rest == "" || !isSpaceByte(rest[0]) {
-		return s, false
-	}
-	return rest, true
-}
-
-func isSpaceByte(c byte) bool { return c == ' ' || c == '\t' || c == '\n' || c == '\r' }
-
-func isIdentByte(c byte) bool {
-	return c == '_' || c == '?' || c == '.' || c == '-' ||
-		(c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
 }
 
 // parseHaving reads the comma-separated group filters. Each is a comparison whose LEFT side is an
 // aggregate: the right side is an ordinary term, so `count(?n) < 2` and `count(?n) = ?limit` both
 // parse, and the evaluator rejects the second when nothing binds ?limit per group.
-func parseHaving(s string) ([]Compare, error) {
-	if strings.TrimSpace(s) == "" {
+func parseHaving(sp span) ([]Compare, error) {
+	if sp.empty() {
 		return nil, nil
 	}
 	var out []Compare
-	for _, piece := range splitTop(s, ",") {
-		piece = strings.TrimSpace(piece)
-		if piece == "" {
-			return nil, fmt.Errorf("query: having needs a comparison, as in %q", "having count(?n) > 1")
+	for _, piece := range sp.split(",") {
+		piece = piece.trim()
+		if piece.empty() {
+			return nil, piece.errorf("query: having needs a comparison, as in %q", "having count(?n) > 1")
 		}
 		c, err := parseHavingOne(piece)
 		if err != nil {
@@ -347,96 +320,72 @@ func parseHaving(s string) ([]Compare, error) {
 	return out, nil
 }
 
-type contextParseError struct {
-	context string
-	cause   error
-}
-
-func (e *contextParseError) Error() string {
-	return fmt.Sprintf("query: %s: %s", e.context, strings.TrimPrefix(e.cause.Error(), "query: "))
-}
-
-func (e *contextParseError) Unwrap() error { return e.cause }
-
 // parseHavingOne reads one group filter. The left side goes through parseSelItem (the projection's
 // term parser, which is the one that knows aggregates) rather than parseTerm, so an aggregate stays
 // spellable HERE and stays unspellable in the goal body, where it would have nothing to reduce.
-func parseHavingOne(piece string) (Compare, error) {
+func parseHavingOne(piece span) (Compare, error) {
 	for _, op := range compareOps {
-		parts := splitTop(piece, op)
-		if len(parts) != 2 {
+		if piece.count(op) != 1 {
 			continue
 		}
-		left, err := parseSelItem(strings.TrimSpace(parts[0]))
+		parts := piece.split(op)
+		left, err := parseSelItem(parts[0].trim())
 		if err != nil {
-			return Compare{}, &contextParseError{context: fmt.Sprintf("having %q", piece), cause: err}
+			return Compare{}, within(fmt.Sprintf("having %q", piece.text()), err)
 		}
 		if left.Agg == nil {
-			return Compare{}, fmt.Errorf("query: having %q filters ?%s, which is a group key rather than an aggregate — a comparison over plain variables belongs in the goal, before the %q", piece, left.Var, "=>")
+			return Compare{}, piece.errorf("query: having %q filters ?%s, which is a group key rather than an aggregate — a comparison over plain variables belongs in the goal, before the %q", piece.text(), left.Var, "=>")
 		}
 		right, err := parseTerm(parts[1])
 		if err != nil {
-			return Compare{}, &contextParseError{context: fmt.Sprintf("having %q", piece), cause: err}
+			return Compare{}, within(fmt.Sprintf("having %q", piece.text()), err)
 		}
 		return Compare{Left: left, Op: op, Right: right}, nil
 	}
-	return Compare{}, fmt.Errorf("query: having %q is not a comparison (want an aggregate, an operator and a value, as in %q)", piece, "count(?n) < 2")
+	return Compare{}, piece.errorf("query: having %q is not a comparison (want an aggregate, an operator and a value, as in %q)", piece.text(), "count(?n) < 2")
 }
 
 // ParseRules reads text that holds rules only, such as a derived module's body (see
 // Language). It accepts the same clause syntax as Parse and refuses a goal clause, since
-// rules with nothing to ask are a definition rather than a query.
+// rules with nothing to ask are a definition rather than a query. Its errors are *ParseError, as
+// Parse's are.
 func ParseRules(s string) ([]Rule, error) {
-	rules, goals, err := splitClauses(stripComments(s))
+	rules, goals, err := lex(s).clauses()
 	if err != nil {
 		return nil, err
 	}
 	if len(goals) > 0 {
-		return nil, fmt.Errorf("query: %q is a goal; rules-only text defines relations and asks nothing", goals[0])
+		return nil, goals[0].errorf("query: %q is a goal; rules-only text defines relations and asks nothing", goals[0].text())
 	}
 	return rules, nil
 }
 
-// stripComments blanks every "#" comment, from the "#" to the end of its line, unless the "#" sits
-// inside a string. Blanking rather than deleting keeps the clause text otherwise intact.
-func stripComments(s string) string {
-	if !strings.Contains(s, "#") {
-		return s
-	}
-	b := []byte(s)
-	inQuote, inComment := false, false
-	for i, c := range b {
-		switch {
-		case inComment:
-			if c == '\n' {
-				inComment = false
-			} else {
-				b[i] = ' '
-			}
-		case c == '"':
-			inQuote = !inQuote
-		case c == '#' && !inQuote:
-			inComment = true
-			b[i] = ' '
+// clauses separates the text into its rule definitions and its goal clauses. A clause ends at a ";"
+// outside brackets, or at a "." before whitespace or the end, the ending Datalog and Prolog write
+// (#276): a "." in a path (str.suffix) or a number (1.5) is followed by a letter or digit. A clause
+// with ":-" is a rule (head :- body), and every other clause is a goal, parsed by the caller, which
+// decides how many it accepts: a query asks exactly one, a module none.
+func (src *source) clauses() (rules []Rule, goals []span, err error) {
+	all := src.all()
+	start := 0
+	var clauses []span
+	all.top(func(i int, t token) {
+		if t.kind == tokSymbol && (t.text == ";" || t.text == "." && t.flag) {
+			clauses = append(clauses, all.tokens(start, i))
+			start = i + 1
 		}
-	}
-	return string(b)
-}
-
-// splitClauses separates text into its rule definitions and its goal clauses. Clauses are separated
-// by ";"; a clause containing ":-" is a rule (head :- body), and every other clause is a goal. The
-// caller decides how many goals it accepts: a query asks exactly one, a module none.
-func splitClauses(s string) (rules []Rule, goals []string, err error) {
-	for _, clause := range splitEnds(s) {
-		clause = strings.TrimSpace(clause)
-		if clause == "" {
+	})
+	clauses = append(clauses, all.tokens(start, all.hi))
+	for _, clause := range clauses {
+		clause = clause.trim()
+		if clause.empty() {
 			continue
 		}
-		if rest, ok := strings.CutPrefix(clause, "?-"); ok {
-			goals = append(goals, strings.TrimSpace(rest))
+		if t := clause.toks(); t[0].text == "?" && len(t) > 1 && t[1].text == "-" && t[1].pos == t[0].end {
+			goals = append(goals, clause.after(1).trim())
 			continue
 		}
-		parts := splitTop(clause, ":-")
+		parts := clause.split(":-")
 		switch len(parts) {
 		case 1:
 			goals = append(goals, clause)
@@ -447,63 +396,23 @@ func splitClauses(s string) (rules []Rule, goals []string, err error) {
 			}
 			rules = append(rules, rule)
 		default:
-			return nil, nil, fmt.Errorf("query: clause %q has more than one %q", clause, ":-")
+			return nil, nil, clause.errorf("query: clause %q has more than one %q", clause.text(), ":-")
 		}
 	}
 	return rules, goals, nil
 }
 
-// splitEnds splits text into clauses at each top-level ";", and at each top-level "." followed by
-// whitespace or the end, the ending Datalog and Prolog write (#276). A "." inside a relation path
-// (str.suffix) or a number (1.5) is followed by a letter or digit, so it never ends a clause.
-func splitEnds(s string) []string {
-	var parts []string
-	for _, piece := range splitTop(s, ";") {
-		start := 0
-		for _, i := range topIndexes(piece, '.') {
-			if i+1 == len(piece) || isSpace(piece[i+1]) {
-				parts = append(parts, piece[start:i])
-				start = i + 1
-			}
-		}
-		parts = append(parts, piece[start:])
-	}
-	return parts
-}
-
-// topIndexes returns the positions of c outside strings and brackets, as splitTop reads them.
-func topIndexes(s string, c byte) []int {
-	var out []int
-	depth, inQuote := 0, false
-	for i := 0; i < len(s); i++ {
-		switch b := s[i]; {
-		case b == '"':
-			inQuote = !inQuote
-		case inQuote:
-		case b == '(' || b == '{':
-			depth++
-		case b == ')' || b == '}':
-			depth--
-		case depth == 0 && b == c:
-			out = append(out, i)
-		}
-	}
-	return out
-}
-
-func isSpace(b byte) bool { return b == ' ' || b == '\t' || b == '\n' || b == '\r' }
-
 // parseRule parses one "head :- body" clause into a Rule. The head is a single atom; the body is a
 // conjunction of literals, the same grammar a goal body uses.
-func parseRule(headText, bodyText string) (Rule, error) {
-	head, types, err := parseHead(headText)
+func parseRule(headSp, bodySp span) (Rule, error) {
+	head, types, err := parseHead(headSp)
 	if err != nil {
 		return Rule{}, err
 	}
-	if len(splitTop(bodyText, "=>")) > 1 {
-		return Rule{}, fmt.Errorf("query: the rule for %s holds %q; end the rule with %q or %q, then write the goal", head.Relation, "=>", ";", ".")
+	if at := bodySp.occurrences("=>"); len(at) > 0 {
+		return Rule{}, bodySp.cut(at[0]).errorf("query: the rule for %s holds %q; end the rule with %q or %q, then write the goal", head.Relation, "=>", ";", ".")
 	}
-	lits, err := parseLiterals(bodyText)
+	lits, err := parseLiterals(bodySp)
 	if err != nil {
 		return Rule{}, err
 	}
@@ -513,36 +422,36 @@ func parseRule(headText, bodyText string) (Rule, error) {
 // parseHead parses a rule head, whose arguments may declare their types: `x(?n: net, ?v)`. The
 // declarations come back by position, nil when the head declares none. A KindFrom or Owner must name
 // another variable of the same head, since a type can only point at something the relation carries.
-func parseHead(s string) (Atom, []ns.ArgType, error) {
-	open := strings.IndexByte(s, '(')
-	if open < 0 || !strings.HasSuffix(strings.TrimSpace(s), ")") || !strings.Contains(s, ":") {
-		a, err := parseHeadAtom(s)
+// Every declaration is read before the relation and its arguments, so a bad one is reported first.
+func parseHead(sp span) (Atom, []ns.ArgType, error) {
+	name, inner, ok := sp.parens()
+	if !ok || !strings.Contains(sp.raw(), ":") {
+		a, err := parseHeadAtom(sp)
 		return a, nil, err
 	}
-	inner := strings.TrimSpace(s)
-	inner = inner[open+1 : len(inner)-1]
-	var plain []string
+	var plain []span
 	var types []ns.ArgType
 	declared := false
-	for _, a := range splitTop(inner, ",") {
-		if strings.TrimSpace(a) == "" {
-			return Atom{}, nil, fmt.Errorf("query: empty term")
+	for _, a := range inner.split(",") {
+		if a.empty() {
+			return Atom{}, nil, a.errorf("query: empty term")
 		}
 		var t ns.ArgType
-		if parts := splitTop(a, ":"); len(parts) == 2 {
+		if parts := a.split(":"); len(parts) == 2 {
 			var err error
 			if t, err = parseArgType(parts[1]); err != nil {
-				return Atom{}, nil, err
+				return Atom{}, nil, parts[1].wrap(err)
 			}
-			if v := strings.TrimSpace(parts[0]); len(v) < 2 || v[0] != '?' || v == "?_" || isExpression(v) {
-				return Atom{}, nil, fmt.Errorf("query: only a ?variable can declare a type, not %q", v)
+			v := parts[0].trim()
+			if text := v.text(); len(text) < 2 || text[0] != '?' || text == "?_" || isExpression(v) {
+				return Atom{}, nil, v.errorf("query: only a ?variable can declare a type, not %q", text)
 			}
-			a, declared = parts[0], true
+			a, declared = v, true
 		}
 		plain = append(plain, a)
 		types = append(types, t)
 	}
-	head, err := parseHeadAtom(strings.TrimSpace(s[:open]) + "(" + strings.Join(plain, ",") + ")")
+	head, err := atomOver(name, plain, headTerm)
 	if err != nil || !declared {
 		return head, nil, err
 	}
@@ -552,36 +461,22 @@ func parseHead(s string) (Atom, []ns.ArgType, error) {
 				continue
 			}
 			if ref == string(head.Args[i].Var) || !slices.ContainsFunc(head.Args, func(a Term) bool { return string(a.Var) == ref }) {
-				return Atom{}, nil, fmt.Errorf("query: %s's type %q must name another variable of its head", head.Relation, t)
+				return Atom{}, nil, sp.errorf("query: %s's type %q must name another variable of its head", head.Relation, t)
 			}
 		}
 	}
 	return head, types, nil
 }
 
-// splitProjection splits a query on the top-level "=>" into body and projection (the projection
-// empty when absent). "=>" is unambiguous — no comparison operator is "=>".
-func splitProjection(s string) (body, proj string, err error) {
-	parts := splitTop(s, "=>")
-	switch len(parts) {
-	case 1:
-		return parts[0], "", nil
-	case 2:
-		return parts[0], parts[1], nil
-	default:
-		return "", "", fmt.Errorf("query: more than one %q projection separator", "=>")
-	}
-}
-
-func parseLiterals(body string) ([]Literal, error) {
-	if strings.TrimSpace(body) == "" {
-		return nil, fmt.Errorf("query: empty query")
+func parseLiterals(body span) ([]Literal, error) {
+	if body.empty() {
+		return nil, body.errorf("query: empty query")
 	}
 	var lits []Literal
-	for _, piece := range splitTop(body, ",") {
-		piece = strings.TrimSpace(piece)
-		if piece == "" {
-			return nil, fmt.Errorf("query: empty literal")
+	for _, piece := range body.split(",") {
+		piece = piece.trim()
+		if piece.empty() {
+			return nil, piece.errorf("query: empty literal")
 		}
 		lit, err := parseLiteral(piece)
 		if err != nil {
@@ -592,25 +487,31 @@ func parseLiterals(body string) ([]Literal, error) {
 	return lits, nil
 }
 
-// parseLiteral parses one literal: a "not R(...)" is a negated atom, `?v = func(?x) : { body }` an
-// aggregate over a body of its own, another parenthesised piece a positive atom, anything else a
-// comparison.
-func parseLiteral(s string) (Literal, error) {
-	if parts := splitTop(s, ":"); len(parts) == 2 && strings.HasPrefix(strings.TrimSpace(parts[1]), "{") {
+// parseLiteral parses one literal: a "not R(...)" or "!R(...)" is a negated atom, `?v = func(?x) : {
+// body }` an aggregate over a body of its own, another parenthesised piece a positive atom, anything
+// else a comparison.
+func parseLiteral(s span) (Literal, error) {
+	if parts := s.split(":"); len(parts) == 2 && parts[1].is(0, "{") {
 		return parseBodyAggregate(parts[0], parts[1])
 	}
-	rest, isNeg := strings.CutPrefix(strings.TrimSpace(s), "not ")
-	if bang, ok := strings.CutPrefix(strings.TrimSpace(s), "!"); ok {
-		rest, isNeg = bang, true
+	var rest span
+	isNeg := false
+	switch t := s.first(); {
+	case t.kind == tokWord && t.text == "not" && s.hi-s.lo > 1 && s.src.text[t.end] == ' ':
+		rest, isNeg = s.after(0).trim(), true
+	case t.kind == tokSymbol && t.text == "!":
+		rest, isNeg = s.after(0).trim(), true
+	case t.kind == tokSymbol && t.text == "!=":
+		rest, isNeg = s.cut(t.pos+1).trim(), true
 	}
 	if isNeg {
-		atom, err := parseAtom(strings.TrimSpace(rest))
+		atom, err := parseAtom(rest)
 		if err != nil {
 			return Literal{}, err
 		}
 		return Literal{Neg: &atom}, nil
 	}
-	if strings.Contains(s, "(") && !hasTopComparison(s) {
+	if strings.Contains(s.raw(), "(") && !hasTopComparison(s) {
 		atom, err := parseAtom(s)
 		if err != nil {
 			return Literal{}, err
@@ -625,33 +526,34 @@ func parseLiteral(s string) (Literal, error) {
 }
 
 // parseBodyAggregate parses `?v = func([distinct] ?x) : { body }`, split at its top-level colon.
-func parseBodyAggregate(left, right string) (Literal, error) {
-	right = strings.TrimSpace(right)
-	if !strings.HasSuffix(right, "}") {
-		return Literal{}, fmt.Errorf("query: an aggregate's body %q must close with }", right)
+func parseBodyAggregate(left, right span) (Literal, error) {
+	right = right.trim()
+	if !right.is(right.hi-right.lo-1, "}") {
+		return Literal{}, right.errorf("query: an aggregate's body %q must close with }", right.text())
 	}
-	inner := right[1 : len(right)-1]
-	sides := splitTop(left, "=")
-	if len(sides) != 2 {
-		return Literal{}, fmt.Errorf("query: %q must name the variable an aggregate binds, as ?v = count(?x) : { ... }", strings.TrimSpace(left))
+	inner := right.tokens(1, right.hi-right.lo-1)
+	left = left.trim()
+	if left.count("=") != 1 {
+		return Literal{}, left.errorf("query: %q must name the variable an aggregate binds, as ?v = count(?x) : { ... }", left.text())
 	}
+	sides := left.split("=")
 	v, err := parseTerm(sides[0])
 	if err != nil {
 		return Literal{}, err
 	}
 	if v.Var == "" || v.Var == "_" {
-		return Literal{}, fmt.Errorf("query: an aggregate binds a ?variable, not %s", v)
+		return Literal{}, sides[0].errorf("query: an aggregate binds a ?variable, not %s", v)
 	}
-	fn := strings.TrimSpace(sides[1])
-	if strings.IndexByte(fn, '(') < 0 {
-		return Literal{}, fmt.Errorf("query: %q is not an aggregate, as count(?x)", fn)
+	fn := sides[1].trim()
+	if !strings.Contains(fn.raw(), "(") {
+		return Literal{}, fn.errorf("query: %q is not an aggregate, as count(?x)", fn.text())
 	}
 	agg, err := parseAggregate(fn)
 	if err != nil {
 		return Literal{}, err
 	}
-	if strings.TrimSpace(inner) == "" {
-		return Literal{}, fmt.Errorf("query: the aggregate binding ?%s has an empty body", v.Var)
+	if inner.empty() {
+		return Literal{}, inner.errorf("query: the aggregate binding ?%s has an empty body", v.Var)
 	}
 	lits, err := parseLiterals(inner)
 	if err != nil {
@@ -660,27 +562,28 @@ func parseBodyAggregate(left, right string) (Literal, error) {
 	return Literal{Agg: &BodyAggregate{Result: v.Var, Agg: *agg.Agg, Body: Body{Literals: lits}}}, nil
 }
 
-func parseAtom(s string) (Atom, error) { return parseAtomArgs(s, parseTerm) }
+func parseAtom(s span) (Atom, error) { return parseAtomArgs(s, parseTerm) }
 
 // parseHeadAtom parses a rule head, whose arguments may also be aggregates: degree(?n, count(?m)).
-func parseHeadAtom(s string) (Atom, error) {
-	return parseAtomArgs(s, func(a string) (Term, error) {
-		if a = strings.TrimSpace(a); a != "" && a[0] != '"' && strings.IndexByte(a, '(') >= 0 && !isExpression(a) {
-			return parseAggregate(a)
-		}
-		if isExpression(a) {
-			return parseOperand(a)
-		}
-		return parseTerm(a)
-	})
+func parseHeadAtom(s span) (Atom, error) { return parseAtomArgs(s, headTerm) }
+
+func headTerm(a span) (Term, error) {
+	a = a.trim()
+	if text := a.text(); text != "" && text[0] != '"' && strings.Contains(text, "(") && !isExpression(a) {
+		return parseAggregate(a)
+	}
+	if isExpression(a) {
+		return parseOperand(a)
+	}
+	return parseTerm(a)
 }
 
 // isExpression reports whether a head argument or a projection column is arithmetic (#206) rather
 // than a term or an aggregate. A whole column name(...) with an undotted name is an aggregate's
 // syntax, so avg(?m) and count(0) still fail as aggregates; a dotted call, num.add(?r, 1), or an
 // operator over terms is arithmetic.
-func isExpression(s string) bool {
-	s = strings.TrimSpace(s)
+func isExpression(s span) bool {
+	s = s.trim()
 	if _, err := parseTerm(s); err == nil {
 		return false
 	}
@@ -691,110 +594,138 @@ func isExpression(s string) bool {
 	return t.Expr.Op != "call" || strings.Contains(t.Expr.Func, ".")
 }
 
-func parseAtomArgs(s string, term func(string) (Term, error)) (Atom, error) {
-	open := strings.IndexByte(s, '(')
-	if open < 0 || !strings.HasSuffix(strings.TrimSpace(s), ")") {
-		return Atom{}, fmt.Errorf("query: malformed atom %q (want reln(args))", s)
+// parseAtomArgs parses relation(args), the relation being the text before the first "(".
+func parseAtomArgs(s span, term func(span) (Term, error)) (Atom, error) {
+	name, inner, ok := s.parens()
+	if !ok {
+		return Atom{}, s.errorf("query: malformed atom %q (want reln(args))", s.raw())
 	}
-	rel := strings.TrimSpace(s[:open])
+	return atomOver(name, inner.split(","), term)
+}
+
+// parens cuts name(inner) at its first "(" and last ")". They are found in the text, so a stray quote
+// (r(v1", ?b)) leaves the brackets where the writer put them, and the string it opens is what's
+// refused, inside the arguments; a "(" or ")" inside a string ends up in a name or an argument, which
+// is refused too.
+func (s span) parens() (name, inner span, ok bool) {
+	t := s.trim()
+	open := strings.IndexByte(t.raw(), '(')
+	if open < 0 || !strings.HasSuffix(t.raw(), ")") {
+		return span{}, span{}, false
+	}
+	return t.slice(t.from, t.from+open), t.slice(t.from+open+1, t.to-1), true
+}
+
+// atomOver makes the atom of the relation relSp names over args.
+func atomOver(relSp span, args []span, term func(span) (Term, error)) (Atom, error) {
+	rel := relSp.text()
 	if !isRelation(rel) {
-		return Atom{}, fmt.Errorf("query: bad relation name %q", rel)
+		return Atom{}, relSp.errorf("query: bad relation name %q", rel)
 	}
-	inner := strings.TrimSpace(s)
-	inner = inner[open+1 : len(inner)-1]
-	if strings.TrimSpace(inner) == "" {
+	if len(args) == 1 && args[0].empty() {
 		return Atom{Relation: rel}, nil
 	}
-	var args []Term
-	for _, a := range splitTop(inner, ",") {
+	var out []Term
+	for _, a := range args {
 		t, err := term(a)
 		if err != nil {
 			return Atom{}, err
 		}
-		args = append(args, t)
+		out = append(out, t)
 	}
-	return Atom{Relation: rel, Args: args}, nil
+	return Atom{Relation: rel, Args: out}, nil
 }
 
 var compareOps = []string{"<=", ">=", "!=", "<", ">", "="} // longest first
 
-// hasTopComparison reports whether s has a comparison operator outside parentheses and quotes, so
-// ?y = f(?x) is a comparison over a call rather than an atom.
-func hasTopComparison(s string) bool {
+// hasTopComparison reports whether s has one comparison operator outside brackets, so ?y = f(?x) is
+// a comparison over a call rather than an atom.
+func hasTopComparison(s span) bool {
 	for _, op := range compareOps {
-		if len(splitTop(s, op)) == 2 {
+		if s.count(op) == 1 {
 			return true
 		}
 	}
 	return false
 }
 
-func parseComparison(s string) (Compare, error) {
+// parseComparison splits s at the first operator, longest first, that occurs exactly once outside
+// brackets. Counting the operators inside longer ones too means that one is always a whole symbol.
+func parseComparison(s span) (Compare, error) {
 	for _, op := range compareOps {
-		if parts := splitTop(s, op); len(parts) == 2 {
-			l, err := parseOperand(parts[0])
-			if err != nil {
-				return Compare{}, err
-			}
-			r, err := parseOperand(parts[1])
-			if err != nil {
-				return Compare{}, err
-			}
-			return Compare{Left: l, Op: op, Right: r}, nil
+		if s.count(op) != 1 {
+			continue
 		}
+		parts := s.split(op)
+		l, err := parseOperand(parts[0])
+		if err != nil {
+			return Compare{}, err
+		}
+		r, err := parseOperand(parts[1])
+		if err != nil {
+			return Compare{}, err
+		}
+		return Compare{Left: l, Op: op, Right: r}, nil
 	}
-	return Compare{}, fmt.Errorf("query: %q is neither an atom nor a comparison", strings.TrimSpace(s))
+	return Compare{}, s.errorf("query: %q is neither an atom nor a comparison", s.text())
 }
 
-func parseTerm(s string) (Term, error) {
-	s = strings.TrimSpace(s)
+// parseTerm reads a term: one ?variable, _, string or number token, a number possibly signed. Anything
+// else is refused, saying what it reads as (termError).
+func parseTerm(s span) (Term, error) {
+	s = s.trim()
+	t := s.toks()
 	switch {
-	case s == "":
-		return Term{}, fmt.Errorf("query: empty term")
-	case s == "_":
+	case len(t) == 1 && t[0].kind == tokVar && len(t[0].text) > 1:
+		return Term{Var: Var(t[0].text[1:])}, nil
+	case len(t) == 1 && t[0].kind == tokWord && t[0].text == "_":
 		return Term{Var: "_"}, nil
-	case s[0] == '?':
-		name := s[1:]
-		if err := checkVarName(name); err != nil {
-			return Term{}, err
+	case len(t) == 1 && t[0].kind == tokString && t[0].flag:
+		return Term{Const: &ns.Value{S: t[0].text[1 : len(t[0].text)-1]}}, nil
+	case len(t) == 1 && t[0].kind == tokNumber:
+		if c, ok := numberConst("", t[0]); ok {
+			return *c, nil
 		}
-		return Term{Var: Var(name)}, nil
-	case s[0] == '"':
-		if len(s) < 2 || s[len(s)-1] != '"' {
-			return Term{}, fmt.Errorf("query: unterminated string %q", s)
+	case len(t) == 2 && t[1].kind == tokNumber && t[1].pos == t[0].end && (s.is(0, "-") || s.is(0, "+")):
+		if c, ok := numberConst(t[0].text, t[1]); ok {
+			return *c, nil
 		}
-		return Term{Const: &ns.Value{S: s[1 : len(s)-1]}}, nil
-	default:
-		if f, err := strconv.ParseFloat(s, 64); err == nil && isDecimal(s) {
-			return Term{Const: &ns.Value{S: s, Num: &f}}, nil
-		}
-		// A number with a unit after it, as in 3.3V or 1kohm (#5, #79): the unit is read through the
-		// vocabulary when the query is checked (coerceConstants).
-		// A bare e or E reads as an exponent left unfinished, which #163 refuses (1eV is a unit).
-		if num, unit := splitUnitSuffix(s); unit != "" && unit != "e" && unit != "E" && isDecimal(num) {
-			if f, err := strconv.ParseFloat(num, 64); err == nil {
-				return Term{Const: &ns.Value{S: num, Num: &f, BaseUnit: unit}}, nil
-			}
-		}
-		if isWord(s) {
-			return Term{}, fmt.Errorf("query: bare identifier %q — a term must be a ?variable, a \"string\", or a number; write ?%s for a variable or %q for text", s, s, s)
-		}
-		return Term{}, fmt.Errorf("query: bare identifier %q — a term must be a ?variable, a \"string\", or a number", s)
 	}
+	return Term{}, termError(s)
+}
+
+// termError says why a span is no term, by what its text starts with.
+func termError(s span) error {
+	text := s.text()
+	switch {
+	case text == "":
+		return s.errorf("query: empty term")
+	case text[0] == '?':
+		if err := checkVarName(text[1:]); err != nil {
+			return s.errorf("%s", err.Error())
+		}
+	case text[0] == '"':
+		if len(text) < 2 || text[len(text)-1] != '"' {
+			return s.errorf("query: unterminated string %q", text)
+		}
+		return s.errorf("query: %s is more than one string; a \"string\" can't hold a quote", text)
+	case isWord(text):
+		return s.errorf("query: bare identifier %q — a term must be a ?variable, a \"string\", or a number; write ?%s for a variable or %q for text", text, text, text)
+	}
+	return s.errorf("query: bare identifier %q — a term must be a ?variable, a \"string\", or a number", text)
 }
 
 // parseSelect parses the projection columns: each is a ?variable (a group key), an aggregate
 // func(?variable), func in {count,min,max,sum,list}, or arithmetic over variables (#206).
-func parseSelect(proj string) ([]Term, error) {
-	proj = strings.TrimSpace(proj)
-	if proj == "" {
+func parseSelect(proj span) ([]Term, error) {
+	if proj.empty() {
 		return nil, nil
 	}
 	var sel []Term
-	for _, p := range splitTop(proj, ",") {
-		p = strings.TrimSpace(p)
-		if p == "" {
-			return nil, fmt.Errorf("query: the projection has an empty column, as in %q", "=> ?a, ?b")
+	for _, p := range proj.split(",") {
+		p = p.trim()
+		if p.empty() {
+			return nil, p.errorf("query: the projection has an empty column, as in %q", "=> ?a, ?b")
 		}
 		t, err := parseSelItem(p)
 		if err != nil {
@@ -805,20 +736,21 @@ func parseSelect(proj string) ([]Term, error) {
 	return sel, nil
 }
 
-func parseSelItem(p string) (Term, error) {
+func parseSelItem(p span) (Term, error) {
 	if isExpression(p) {
 		return parseOperand(p)
 	}
-	if strings.IndexByte(p, '(') >= 0 {
+	text := p.text()
+	if strings.Contains(text, "(") {
 		return parseAggregate(p)
 	}
-	if p == "" || p[0] != '?' || len(p) == 1 {
-		return Term{}, fmt.Errorf("query: projection column %q must be a ?variable or an aggregate", p)
+	if text == "" || text[0] != '?' || len(text) == 1 {
+		return Term{}, p.errorf("query: projection column %q must be a ?variable or an aggregate", text)
 	}
-	if err := checkVarName(p[1:]); err != nil {
-		return Term{}, err
+	if t := p.toks(); len(t) == 1 && t[0].kind == tokVar {
+		return Term{Var: Var(text[1:])}, nil
 	}
-	return Term{Var: Var(p[1:])}, nil
+	return Term{}, termError(p)
 }
 
 // checkVarName refuses a variable name that isn't an ident (#163): letters, digits and _, so `?)(`
@@ -828,7 +760,7 @@ func checkVarName(name string) error {
 		return fmt.Errorf("query: empty variable name")
 	}
 	for i := 0; i < len(name); i++ {
-		if c := name[i]; !(c == '_' || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
+		if !isNameByte(name[i]) {
 			return fmt.Errorf("query: variable ?%s: a variable's name is letters, digits and _", name)
 		}
 	}
@@ -845,77 +777,28 @@ func isWord(s string) bool {
 	return err != nil
 }
 
-// splitUnitSuffix splits the letters at the end of s off it: 3.3V is 3.3 and V. Letters only, so a
-// compound unit is written as arithmetic: 3m / 1s.
-func splitUnitSuffix(s string) (num, unit string) {
-	i := len(s)
-	for i > 0 {
-		r, w := utf8.DecodeLastRuneInString(s[:i])
-		if !unicode.IsLetter(r) {
-			break
-		}
-		i -= w
-	}
-	return s[:i], s[i:]
-}
-
-// isDecimal reports whether s is a number as the grammar spells one: digits, an optional fraction and
-// an optional exponent, after an optional sign. strconv.ParseFloat also reads inf, nan, hex floats and
-// a bare leading or trailing dot, which the language doesn't (#163).
-func isDecimal(s string) bool {
-	i := 0
-	if i < len(s) && (s[i] == '+' || s[i] == '-') {
-		i++
-	}
-	digits := func() int {
-		n := 0
-		for i < len(s) && s[i] >= '0' && s[i] <= '9' {
-			i++
-			n++
-		}
-		return n
-	}
-	if digits() == 0 {
-		return false
-	}
-	if i < len(s) && s[i] == '.' {
-		i++
-		if digits() == 0 {
-			return false
-		}
-	}
-	if i < len(s) && (s[i] == 'e' || s[i] == 'E') {
-		i++
-		if i < len(s) && (s[i] == '+' || s[i] == '-') {
-			i++
-		}
-		if digits() == 0 {
-			return false
-		}
-	}
-	return i == len(s)
-}
-
 // parseAggregate parses func([distinct] ?x), the form an aggregate takes in a projection, a having
-// and a rule head.
-func parseAggregate(p string) (Term, error) {
-	i := strings.IndexByte(p, '(')
-	fn := strings.TrimSpace(p[:i])
-	if !strings.HasSuffix(p, ")") {
-		return Term{}, fmt.Errorf("query: malformed aggregate %q", p)
+// and a rule head. The function is the text before the "(", checked when the query is (validAggFunc).
+func parseAggregate(p span) (Term, error) {
+	p = p.trim()
+	name, inner, ok := p.parens()
+	if !ok || strings.Contains(name.text(), `"`) {
+		return Term{}, p.errorf("query: malformed aggregate %q", p.text())
 	}
-	inner := strings.TrimSpace(p[i+1 : len(p)-1])
+	fn := name.text()
+	inner = inner.trim()
 	distinct := false
-	if rest, ok := cutWord(inner, "distinct"); ok {
-		distinct, inner = true, strings.TrimSpace(rest)
+	if t := inner.toks(); len(t) > 1 && t[0].kind == tokWord && t[0].text == "distinct" && isSpace(p.src.text[t[0].end]) {
+		distinct, inner = true, inner.after(0).trim()
 	}
-	if len(inner) < 2 || inner[0] != '?' {
-		return Term{}, fmt.Errorf("query: aggregate %s(...) expects a ?variable, got %q", fn, inner)
+	text := inner.text()
+	if len(text) < 2 || text[0] != '?' {
+		return Term{}, inner.errorf("query: aggregate %s(...) expects a ?variable, got %q", fn, text)
 	}
-	if err := checkVarName(inner[1:]); err != nil {
-		return Term{}, err
+	if t := inner.toks(); len(t) != 1 || t[0].kind != tokVar {
+		return Term{}, termError(inner)
 	}
-	return Term{Agg: &Aggregate{Func: fn, Var: Var(inner[1:]), Distinct: distinct}}, nil
+	return Term{Agg: &Aggregate{Func: fn, Var: Var(text[1:]), Distinct: distinct}}, nil
 }
 
 // isRelation reports whether name is a valid relation identifier (letters, digits, '.', '-', '_').
@@ -929,30 +812,4 @@ func isRelation(name string) bool {
 		}
 	}
 	return true
-}
-
-// splitTop splits s on sep at the top level: not inside parentheses or braces and not inside a
-// double-quoted string. Returns the whole string as one element when sep does not occur at the top level.
-func splitTop(s, sep string) []string {
-	var parts []string
-	depth, inQuote, start := 0, false, 0
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		switch {
-		case c == '"':
-			inQuote = !inQuote
-		case inQuote:
-			// skip
-		case c == '(' || c == '{':
-			depth++
-		case c == ')' || c == '}':
-			depth--
-		case depth == 0 && strings.HasPrefix(s[i:], sep):
-			parts = append(parts, s[start:i])
-			i += len(sep) - 1
-			start = i + 1
-		}
-	}
-	parts = append(parts, s[start:])
-	return parts
 }
