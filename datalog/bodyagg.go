@@ -114,7 +114,7 @@ func (l *lowerer) body(b Body, outside []Term) (*Body, error) {
 	for _, lit := range b.Literals {
 		if lit.Agg != nil {
 			if results[lit.Agg.Result] {
-				return nil, fmt.Errorf("query: two aggregates bind ?%s", lit.Agg.Result)
+				return nil, checkErr(KindAggregate, fmt.Sprintf("query: two aggregates bind ?%s", lit.Agg.Result)).about(lit.Agg.Result)
 			}
 			results[lit.Agg.Result] = true
 		}
@@ -167,13 +167,13 @@ func (l *lowerer) body(b Body, outside []Term) (*Body, error) {
 func (l *lowerer) aggregate(a BodyAggregate, elsewhere, bound map[Var]bool, dom []Literal) (Literal, error) {
 	text := (Literal{Agg: &a}).String()
 	if !validAggFunc(a.Agg.Func) {
-		return Literal{}, fmt.Errorf("query: unknown aggregate %q (want count/min/max/sum/list)", a.Agg.Func)
+		return Literal{}, unknownAggregateErr(a.Agg.Func)
 	}
 	inner := map[Var]bool{} // what a positive relation inside the braces binds
 	var all []Var
 	for _, lit := range a.Body.Literals {
 		if lit.Agg != nil {
-			return Literal{}, fmt.Errorf("query: %s holds another aggregate in its braces, which is not supported", text)
+			return Literal{}, checkErr(KindAggregate, fmt.Sprintf("query: %s holds another aggregate in its braces, which is not supported", text))
 		}
 		if lit.Pos != nil {
 			bindAll(lit.Pos, inner)
@@ -185,10 +185,10 @@ func (l *lowerer) aggregate(a BodyAggregate, elsewhere, bound map[Var]bool, dom 
 		}
 	}
 	if inner[a.Result] || slices.Contains(all, a.Result) {
-		return Literal{}, fmt.Errorf("query: %s uses ?%s inside its own braces; the aggregate binds it", text, a.Result)
+		return Literal{}, checkErr(KindAggregate, fmt.Sprintf("query: %s uses ?%s inside its own braces; the aggregate binds it", text, a.Result)).about(a.Result)
 	}
 	if !inner[a.Agg.Var] {
-		return Literal{}, fmt.Errorf("query: %s aggregates ?%s, which no relation in its braces binds", text, a.Agg.Var)
+		return Literal{}, checkErr(KindUnbound, fmt.Sprintf("query: %s aggregates ?%s, which no relation in its braces binds", text, a.Agg.Var)).about(a.Agg.Var)
 	}
 	var shared []Var
 	for _, v := range all {
@@ -196,10 +196,10 @@ func (l *lowerer) aggregate(a BodyAggregate, elsewhere, bound map[Var]bool, dom 
 			continue
 		}
 		if !bound[v] {
-			return Literal{}, fmt.Errorf("query: %s shares ?%s with the rest of its body, so a relation outside the braces must bind it (one that doesn't need an aggregate's value)", text, v)
+			return Literal{}, checkErr(KindUnbound, fmt.Sprintf("query: %s shares ?%s with the rest of its body, so a relation outside the braces must bind it (one that doesn't need an aggregate's value)", text, v)).about(v)
 		}
 		if !inner[v] {
-			return Literal{}, fmt.Errorf("query: %s shares ?%s with the rest of its body, so a relation inside the braces must bind it too", text, v)
+			return Literal{}, checkErr(KindUnbound, fmt.Sprintf("query: %s shares ?%s with the rest of its body, so a relation inside the braces must bind it too", text, v)).about(v)
 		}
 		shared = append(shared, v)
 	}

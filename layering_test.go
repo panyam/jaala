@@ -14,6 +14,8 @@ import (
 //	ns       the contract                imports nothing in jaala
 //	stdlib   the standard vocabulary     imports ns, never datalog
 //	datalog  the engine                  imports ns only
+//	nl       the plain-language front    imports ns and datalog, and nothing imports it
+//	         end (#321)
 //
 // Test files are not checked: datalog's tests use stdlib for their fixtures.
 func TestLayering(t *testing.T) {
@@ -22,6 +24,7 @@ func TestLayering(t *testing.T) {
 		"ns":      {},
 		"stdlib":  {"ns"},
 		"datalog": {"ns"},
+		"nl":      {"ns", "datalog"},
 	}
 	for dir, may := range allowed {
 		pkg, err := build.ImportDir(dir, 0)

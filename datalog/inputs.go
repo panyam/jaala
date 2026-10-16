@@ -212,7 +212,7 @@ func (l *inputLowerer) clause(where string, b Body, hostBound map[Var]bool, coun
 		for _, in := range inputsOf(l.ins[c.rel], l.ins, l.reg) {
 			t := c.args[in]
 			if t.Const == nil && (t.Var == "" || t.Var == "_" || !bound[t.Var]) {
-				return Body{}, false, fmt.Errorf("query: %s's ?%s is an input argument, and the call in %s doesn't bind it", displayName(c.rel), in, where)
+				return Body{}, false, checkErr(KindUnbound, fmt.Sprintf("query: %s's ?%s is an input argument, and the call in %s doesn't bind it", displayName(c.rel), in, where)).call(c.rel, len(c.args)).about(in)
 			}
 		}
 	}
@@ -226,7 +226,7 @@ func (l *inputLowerer) body(where string, lits []Literal, calls *[]call, counts 
 	for _, lit := range lits {
 		switch {
 		case lit.Neg != nil && l.isInput(lit.Neg.Relation):
-			return nil, fmt.Errorf("query: %s takes an argument from its caller, so %s can't negate it", displayName(lit.Neg.Relation), where)
+			return nil, checkErr(KindDefinition, fmt.Sprintf("query: %s takes an argument from its caller, so %s can't negate it", displayName(lit.Neg.Relation), where)).call(lit.Neg.Relation, len(lit.Neg.Args))
 		case lit.Pos == nil || !l.isInput(lit.Pos.Relation):
 			out = append(out, lit)
 			continue
@@ -234,7 +234,7 @@ func (l *inputLowerer) body(where string, lits []Literal, calls *[]call, counts 
 		rel := lit.Pos.Relation
 		r := l.ins[rel]
 		if counts && projects(r) {
-			return nil, fmt.Errorf("query: %s counts its bindings, and %s, which takes an argument from its caller, binds variables its head drops, so the count would include them; count(distinct ...) counts its tuples", where, displayName(rel))
+			return nil, checkErr(KindAggregate, fmt.Sprintf("query: %s counts its bindings, and %s, which takes an argument from its caller, binds variables its head drops, so the count would include them; count(distinct ...) counts its tuples", where, displayName(rel))).call(rel, len(lit.Pos.Args))
 		}
 		inlined, c := l.inline(r, *lit.Pos)
 		*calls = append(*calls, c)

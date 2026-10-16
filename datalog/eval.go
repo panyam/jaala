@@ -524,10 +524,10 @@ func (b *Base) checkNegatedRelations(negs []Literal) error {
 		rel := lit.Neg.Relation
 		ok, known := b.arityAccepts(rel, len(lit.Neg.Args))
 		if !known {
-			return fmt.Errorf("query: negation over %s", b.reg.Unknown(rel))
+			return b.unknownErr(lit.Neg, "query: negation over %s")
 		}
 		if !ok {
-			return fmt.Errorf("query: negated relation %q takes %s args, got %d", rel, b.arityLabelOf(rel), len(lit.Neg.Args))
+			return b.arityErr(fmt.Sprintf("query: negated relation %q takes %s args, got %d", rel, b.arityLabelOf(rel), len(lit.Neg.Args)), lit.Neg)
 		}
 	}
 	return nil
@@ -585,9 +585,9 @@ func (b *Base) checkWrittenArity(q Query) error {
 				case !goal:
 					continue
 				case neg:
-					return fmt.Errorf("query: negation over %s", b.reg.Unknown(a.Relation))
+					return b.unknownErr(a, "query: negation over %s")
 				default:
-					return fmt.Errorf("query: %s", b.reg.Unknown(a.Relation))
+					return b.unknownErr(a, "query: %s")
 				}
 			} else if ok {
 				continue
@@ -599,13 +599,13 @@ func (b *Base) checkWrittenArity(q Query) error {
 			}
 			switch {
 			case neg:
-				return fmt.Errorf("query: negated relation %q takes %s args, got %d", a.Relation, label, len(a.Args))
+				return b.arityErr(fmt.Sprintf("query: negated relation %q takes %s args, got %d", a.Relation, label, len(a.Args)), a)
 			case want < 0:
 				if _, isPred := b.reg.Predicate(a.Relation); isPred {
-					return fmt.Errorf("query: %s takes %s args, got %d", a.Relation, label, len(a.Args))
+					return b.arityErr(fmt.Sprintf("query: %s takes %s args, got %d", a.Relation, label, len(a.Args)), a)
 				}
 			}
-			return fmt.Errorf("query: relation %q takes %s args, got %d", a.Relation, label, len(a.Args))
+			return b.arityErr(fmt.Sprintf("query: relation %q takes %s args, got %d", a.Relation, label, len(a.Args)), a)
 		}
 		return nil
 	}
@@ -665,8 +665,9 @@ func checkNegationAnchored(a *Atom, bound map[Var]bool) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("query: negated relation %q shares no variable with the rest of the query (?%s appears only inside the `not`, so the negation has nothing to range over and matches either every row or none)",
-		a.Relation, vars[0])
+	return checkErr(KindUnbound, fmt.Sprintf("query: negated relation %q shares no variable with the rest of the query (?%s appears only inside the `not`, so the negation has nothing to range over and matches either every row or none)",
+		a.Relation, vars[0])).call(a.Relation, len(a.Args)).about(vars[0]).
+		fix(fmt.Sprintf("bind ?%s with a positive relation outside the not, or write _ for it if any value will do", vars[0]))
 }
 
 // isIDB reports whether a relation is a rule-defined (IDB) relation in this query's materialized set.
@@ -1318,7 +1319,7 @@ func evalCompare(c Compare, bnd *binding) (bool, error) {
 	l, okl := resolve(c.Left, bnd)
 	r, okr := resolve(c.Right, bnd)
 	if !okl || !okr {
-		return false, fmt.Errorf("query: comparison operand is unbound (a variable must appear in a relation before it is compared)")
+		return false, unboundOperand(c, bnd)
 	}
 	return compareValues(l, c.Op, r), nil
 }
@@ -1477,10 +1478,11 @@ func validateSelect(sel []Term, having []Compare, goal Body) error {
 		// Caught here rather than at evaluation so the query fails on the query, not on whichever
 		// design happened to produce the first group.
 		if h.Right.Var != "" && !keys[h.Right.Var] {
-			return fmt.Errorf("query: having compares against ?%s, which is not a group key — after grouping only a selected variable or a constant is bound", h.Right.Var)
+			return checkErr(KindAnswer, fmt.Sprintf("query: having compares against ?%s, which is not a group key — after grouping only a selected variable or a constant is bound", h.Right.Var)).
+				about(h.Right.Var).fix(fmt.Sprintf("select ?%s in the answer, or compare against a constant", h.Right.Var))
 		}
 		if h.Right.Agg != nil {
-			return fmt.Errorf("query: having compares two aggregates, which is not supported (compare an aggregate against a constant or a group key)")
+			return checkErr(KindAnswer, "query: having compares two aggregates, which is not supported (compare an aggregate against a constant or a group key)")
 		}
 	}
 	return nil
@@ -1495,24 +1497,26 @@ func validateOrder(cols []Term, q Query) error {
 	}
 	for _, o := range q.OrderBy {
 		if o.Term.Var == "_" || !selected[colLabel(o.Term)] {
-			return fmt.Errorf("query: order by %s, which is not an answer column (sort on a column the projection selects)", o.Term)
+			return checkErr(KindAnswer, fmt.Sprintf("query: order by %s, which is not an answer column (sort on a column the projection selects)", o.Term)).
+				about(o.Term.Var).fix(fmt.Sprintf("select %s after =>, or order by a column that is", o.Term))
 		}
 	}
 	if q.Limit < 0 || q.Offset < 0 {
-		return fmt.Errorf("query: limit %d offset %d: a row count can't be negative", q.Limit, q.Offset)
+		return checkErr(KindAnswer, fmt.Sprintf("query: limit %d offset %d: a row count can't be negative", q.Limit, q.Offset))
 	}
 	// Paging needs a stable order: a page continues from the one before it (#194).
 	if q.Offset > 0 && len(q.OrderBy) == 0 {
-		return fmt.Errorf("query: offset needs an order by, so each page continues where the one before it stopped")
+		return checkErr(KindAnswer, "query: offset needs an order by, so each page continues where the one before it stopped").fix("add an order by over the answer's columns")
 	}
 	if q.After == nil {
 		return nil
 	}
 	if len(q.OrderBy) == 0 {
-		return fmt.Errorf("query: after needs an order by: it continues from the last row in that order")
+		return checkErr(KindAnswer, "query: after needs an order by: it continues from the last row in that order").fix("add an order by over the answer's columns")
 	}
 	if len(q.After) != len(q.OrderBy) {
-		return fmt.Errorf("query: after gives %d values for %d order by columns", len(q.After), len(q.OrderBy))
+		return checkErr(KindAnswer, fmt.Sprintf("query: after gives %d values for %d order by columns", len(q.After), len(q.OrderBy))).
+			fix("give after one value per order by column")
 	}
 	ordered := map[Var]bool{}
 	for _, o := range q.OrderBy {
@@ -1520,7 +1524,8 @@ func validateOrder(cols []Term, q Query) error {
 	}
 	for _, c := range cols {
 		if c.Agg == nil && c.Var != "" && !ordered[c.Var] {
-			return fmt.Errorf("query: after needs an order by naming ?%s too, or a row tying with the last one would be skipped", c.Var)
+			return checkErr(KindAnswer, fmt.Sprintf("query: after needs an order by naming ?%s too, or a row tying with the last one would be skipped", c.Var)).
+				about(c.Var).fix(fmt.Sprintf("add ?%s to the order by", c.Var))
 		}
 	}
 	return nil
@@ -1530,13 +1535,15 @@ func validateAggOrVar(t Term, pv map[Var]bool) error {
 	switch {
 	case t.Agg != nil:
 		if !validAggFunc(t.Agg.Func) {
-			return fmt.Errorf("query: unknown aggregate %q (want count/min/max/sum/list)", t.Agg.Func)
+			return unknownAggregateErr(t.Agg.Func)
 		}
 		if t.Agg.Var != "" && !pv[t.Agg.Var] {
-			return fmt.Errorf("query: %s aggregates ?%s, which no relation binds", t.Agg.Func, t.Agg.Var)
+			return checkErr(KindUnbound, fmt.Sprintf("query: %s aggregates ?%s, which no relation binds", t.Agg.Func, t.Agg.Var)).
+				about(t.Agg.Var).fix(fmt.Sprintf("bind ?%s with a positive relation in the body", t.Agg.Var))
 		}
 	case t.Var != "" && !pv[t.Var]:
-		return fmt.Errorf("query: projected ?%s is not bound by a positive relation (a variable used only under negation is existential and cannot be selected)", t.Var)
+		return checkErr(KindUnbound, fmt.Sprintf("query: projected ?%s is not bound by a positive relation (a variable used only under negation is existential and cannot be selected)", t.Var)).
+			about(t.Var).fix(fmt.Sprintf("bind ?%s with a positive relation in the goal, or drop it from the answer", t.Var))
 	}
 	return nil
 }

@@ -99,7 +99,11 @@ func FuzzEval(f *testing.F) {
 		if err != nil {
 			return
 		}
-		keepsPrefix(t, "Validate", text, Validate(q, v))
+		verr := Validate(q, v)
+		keepsPrefix(t, "Validate", text, verr)
+		if pos, ok := Locate(text, verr); ok && (pos.Offset < 0 || pos.Offset >= len(text) || pos.Line < 1 || pos.Column < 1) {
+			t.Fatalf("%q: Locate(%v) = %+v, outside the text", text, verr, pos)
+		}
 		b := baseFor(v)
 		var over *BudgetExceeded
 		_, err = Naive{}.Eval(bg, q, b, Budget(fuzzBudget))

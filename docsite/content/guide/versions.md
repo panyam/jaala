@@ -2,6 +2,7 @@
 title: "Versions"
 description: "One base over several versions of the facts: answering at a revision with At, across many at once with Across, and what changed between two with Diff."
 prev: {url: "/jaala/guide/absent-values/", title: "Absent values"}
+next: {url: "/jaala/guide/plain-language/", title: "Asking through a model"}
 ---
 
 A host often keeps several versions of the same facts: the revisions of a design, or the commits of a repo. Most facts don't change between two of them, so serving each version as its own source repeats nearly everything. A source implementing `ns.TimedSource` serves each fact once, with the versions it holds in, and one base answers at any of them ([#179](https://github.com/panyam/jaala/issues/179)).

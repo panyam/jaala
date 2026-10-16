@@ -1721,21 +1721,41 @@ func TestBrokenProgramsFailTheSameWay(t *testing.T) {
 		rnd := rand.New(rand.NewSource(seed))
 		facts := genGraph(rnd)
 		prog := newGenerator(rnd, facts).program()
-		for _, broken := range breakProgram(prog, rnd) {
-			q, err := Parse(broken.String())
+		for i, broken := range breakProgram(prog, rnd) {
+			text := broken.String()
+			q, err := Parse(text)
 			if err != nil {
 				continue // refused by the parser, the same for every evaluator
 			}
 			b := baseFor(std(facts.source()))
 			var errs []string
+			var first error
 			for _, ev := range []Evaluator{Naive{}, SemiNaive{WrittenOrder: true}, SemiNaive{}} {
-				errs = append(errs, fmt.Sprint(errorOf(ev, q, b)))
+				err := errorOf(ev, q, b)
+				if first == nil {
+					first = err
+				}
+				errs = append(errs, fmt.Sprint(err))
 			}
 			checked++
 			ok := strings.HasPrefix(errs[0], "query: ") && errs[1] == errs[0] && errs[2] == errs[0]
 			if !ok {
 				failed++
 				t.Errorf("seed %d: %s\n naive:    %s\n written:  %s\n planned:  %s", seed, broken, errs[0], errs[1], errs[2])
+			}
+			// The literal breakProgram changed is what the error is about, and Locate finds it (#321).
+			// Dropping an argument can drop a negation's only anchor, which is checked first.
+			want := []ErrorKind{KindArity, KindArity, KindUnknown}[i]
+			var ce *CheckError
+			if errors.As(first, &ce) && i == 0 && ce.Kind == KindUnbound {
+				continue
+			}
+			if !errors.As(first, &ce) || ce.Kind != want {
+				failed++
+				t.Errorf("seed %d: %s\n gave %T %v, want a %s CheckError", seed, broken, first, first, want)
+			} else if pos, found := Locate(text, ce); !found || !strings.HasPrefix(text[pos.Offset:], ce.Relation+"(") {
+				failed++
+				t.Errorf("seed %d: %s\n %v: Locate = %+v %v, not a call to %s", seed, broken, ce, pos, found, ce.Relation)
 			}
 			if failed >= 5 {
 				t.Fatal("stopping after 5")

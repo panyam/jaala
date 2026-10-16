@@ -51,10 +51,10 @@ func (language) Members(text string) ([]ns.MemberDecl, error) {
 	for _, rule := range rules {
 		name := rule.Head.Relation
 		if strings.Contains(name, ".") {
-			return nil, fmt.Errorf("query: rule head %q is qualified; a module defines its own members, written bare", name)
+			return nil, checkErr(KindDefinition, fmt.Sprintf("query: rule head %q is qualified; a module defines its own members, written bare", name))
 		}
 		if prev, ok := arity[name]; ok && prev != len(rule.Head.Args) {
-			return nil, fmt.Errorf("query: the module defines %q with %d and %d args (arity must be consistent)", name, prev, len(rule.Head.Args))
+			return nil, checkErr(KindArity, fmt.Sprintf("query: the module defines %q with %d and %d args (arity must be consistent)", name, prev, len(rule.Head.Args)))
 		}
 		arity[name] = len(rule.Head.Args)
 		if strings.HasPrefix(name, "_") {
@@ -166,7 +166,7 @@ func resolveAll(v *ns.Vocabulary) (*resolution, error) {
 			for _, rule := range rules {
 				for _, a := range ruleAtoms(rule.Body) {
 					if !privates[a.Relation] && !isAggHelper(a.Relation) && !v.Has(a.Relation) {
-						return nil, fail(i, fmt.Errorf("query: module %q rule %q reads %s", mods[i].Path, displayName(rule.Head.Relation), v.Unknown(a.Relation)))
+						return nil, fail(i, checkErr(KindUnknown, fmt.Sprintf("query: module %q rule %q reads %s", mods[i].Path, displayName(rule.Head.Relation), v.Unknown(a.Relation))))
 					}
 				}
 			}
