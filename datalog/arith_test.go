@@ -101,9 +101,10 @@ func TestDemandDoesNotMakeAComputingRuleRecursive(t *testing.T) {
 }
 
 // A function runs backwards only for what nothing else in its body binds (#273). Demanded, r's ?z is
-// bound when its body runs, and the plan puts num.mul(?e, 0, ?z) first, whose mode from its second
-// argument and its result is satisfied: solving ?e * 0 = 0 for ?e answers nothing, where the product
-// of the ?e that num.add computes is 0. The call waits for num.add, as Naive's written order has it.
+// bound when its body runs, and num.mul(?e, 0, ?z)'s mode from its second argument and its result is
+// satisfied: solving ?e * 0 = 0 for ?e answers nothing, where the product of the ?e that num.add
+// computes is 0. The call waits for num.add, as Naive's written order has it: since #331 the plan
+// puts it after num.add, and deferComparisons holds it at solve time too (the test below).
 func TestAFunctionWaitsForWhatItWouldSolveFor(t *testing.T) {
 	src := ns.NewMemSource().Declare("weight", "n", "w")
 	for i, w := range []float64{9, 4, 0} {
@@ -121,8 +122,45 @@ func TestAFunctionWaitsForWhatItWouldSolveFor(t *testing.T) {
 			ran = b.Ran
 		}
 	}
-	if i, j := strings.Index(ran, "num.mul("), strings.Index(ran, "num.add("); i < 0 || j < 0 || i > j {
-		t.Errorf("control: r ran as %q, so num.mul doesn't come first and this proves nothing", ran)
+	if i, j := strings.Index(ran, "num.mul("), strings.Index(ran, "num.add("); i < 0 || j < 0 || i < j {
+		t.Errorf("r ran as %q, want num.add planned before the num.mul that would solve for its result", ran)
+	}
+}
+
+// Written before what binds its operand, a function waits at solve time (#273's hold in
+// deferComparisons), which Naive and the written-order SemiNaive reach now that the plan doesn't (#331):
+// zero binds ?z, so num.mul(?e, 0, ?z) could run from its second argument and its result, and solving
+// ?e * 0 = 0 for ?e answers nothing.
+func TestAFunctionWrittenFirstWaitsAtSolveTime(t *testing.T) {
+	src := ns.NewMemSource().Declare("weight", "n", "w").Declare("zero", "z")
+	src.Add("weight", ns.Tuple{Vals: []ns.Value{ns.S("v0"), ns.N(9)}})
+	src.Add("zero", ns.Tuple{Vals: []ns.Value{ns.N(0)}})
+	q := mustParse(t, `zero(?z), ?z = ?e * 0, ?e = ?w + 4, weight(?n, ?w) => ?n`)
+	for _, ev := range []Evaluator{Naive{}, SemiNaive{WrittenOrder: true}, SemiNaive{}} {
+		rows, err := ev.Eval(bg, q, baseFor(std(src)))
+		if err != nil || col(rows, "n") != "v0" {
+			t.Errorf("%T: %v, %v; want v0", ev, col(rows, "n"), err)
+		}
+	}
+}
+
+// The planner holds a function that would solve for what a later literal binds, as deferComparisons
+// does at solve time (#331): planned first, num.mul(?x8, 0, ?x9) became the demand rule for the
+// count's value, solving ?x8 * 0 = 0 for ?x8, which answers nothing, so no count was demanded and r0(0)
+// lost its row. Plain evaluation inlines r0 and never demands the count, so only Witnesses and
+// CanonicalCites, which turn inlining off, showed it.
+func TestDemandDoesntRunAFunctionBackwardsPastItsOperand(t *testing.T) {
+	q := mustParse(t, `r0(?p) :- ?n = count(?x) : { edge(?x, ?y) }, ?p = ?n * 0; r0(0)`)
+	for _, opts := range [][]Option{nil, {Witnesses()}, {CanonicalCites()}} {
+		if rows, err := both(q, baseFor(std(graph())), opts...); err != nil || len(rows) != 1 {
+			t.Errorf("%d options: %v, %v; want r0(0)'s row", len(opts), rows, err)
+		}
+	}
+	_, r := reported(t, graph(), `r0(?p) :- ?n = count(?x) : { edge(?x, ?y) }, ?p = ?n * 0; r0(0)`, Witnesses())
+	for _, b := range r.Rules {
+		if strings.HasPrefix(b.Ran, "demand:") && strings.Contains(b.Ran, "num.mul(") {
+			t.Errorf("a demand rule runs num.mul: %s", b.Ran)
+		}
 	}
 }
 

@@ -1,0 +1,11 @@
+case        pass  tries  refused
+direct      yes   1
+transitive  yes   2      unknown
+license     yes   2      arity
+unstated    yes   2      unbound
+count       yes   2      parse
+reverse     yes   2      empty
+columns     yes   1
+missing     no    4      unknown unknown unknown
+passed 7/8, 2 on the first try; 16 tries, tokens 11105 in (10608 cached), 100 out
+refused: arity 1, empty 1, parse 1, unbound 1, unknown 4; check errors with a fix 3/6

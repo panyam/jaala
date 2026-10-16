@@ -222,6 +222,9 @@ func planBody(b *Base, body Body, entry map[Var]bool) Body {
 					continue
 				}
 				flags := boundFlags(lit.Pos, bound)
+				if lit.computed && awaitsOperand(lit, pos, bound, b.reg) {
+					continue
+				}
 				if bi, ok := b.reg.Predicate(lit.Pos.Relation); ok && bi.IsGenerator() && bi.Satisfied(flags) && (generatorBound(bi, lit.Pos, flags) > 0 || !slices.ContainsFunc(pos, b.readsWhole)) {
 					pick = i
 					break
@@ -231,7 +234,7 @@ func planBody(b *Base, body Body, entry map[Var]bool) Body {
 		if pick < 0 {
 			best, bestSize, bestGen := -1, -1, false
 			for i, lit := range pos {
-				if isCheck(b, lit) {
+				if isCheck(b, lit) || lit.computed && awaitsOperand(lit, pos, bound, b.reg) {
 					continue
 				}
 				flags := boundFlags(lit.Pos, bound)
