@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/panyam/jaala/ns"
@@ -138,35 +139,90 @@ func (b *Base) atVersion(v ns.Version) (*Base, error) {
 	lookLimit := b.lookups.limit
 	b.lookups.mu.Unlock()
 	c := b.versions
-	c.mu.Lock()
-	vb := c.base(b, v, func(vb *Base) {
-		vb.derived.limit, vb.derived.store, vb.lookups.limit = limit, store, lookLimit
+	vb, err := c.base(v, func() (*Base, error) {
+		vb, err := b.versionBase(v)
+		if err == nil {
+			vb.derived.limit, vb.derived.store, vb.lookups.limit = limit, store, lookLimit
+		}
+		return vb, err
 	})
-	c.mu.Unlock()
+	if err != nil {
+		return nil, err
+	}
 	if b.noIndex {
 		return vb.Unindexed(), nil
 	}
 	return vb, nil
 }
 
-// base is v's Base, made on first use with settle giving it the Base's settings, and marked used.
-// Called with mu held.
-func (c *versionCache) base(b *Base, v ns.Version, settle func(*Base)) *Base {
+// base is v's Base, made by build on first use and marked used. build runs without the cache locked,
+// since a SourceAt may open a store; when two Evals build v's at once, the first one kept wins.
+func (c *versionCache) base(v ns.Version, build func() (*Base, error)) (*Base, error) {
+	c.mu.Lock()
 	if el, ok := c.bases[v]; ok {
 		c.lru.MoveToFront(el)
-		return el.Value.(*versionBase).base
+		c.mu.Unlock()
+		return el.Value.(*versionBase).base, nil
 	}
-	var src ns.Source = &atSource{ts: b.timed, v: v, cache: c}
-	if vs, ok := b.src.(ns.Versioned); ok {
-		src = &versionedAtSource{atSource{ts: b.timed, v: v, cache: c}, vs}
+	c.mu.Unlock()
+	vb, err := build()
+	if err != nil {
+		return nil, err
 	}
-	vb := &Base{src: src, reg: b.reg, edb: newEDBCache(), derived: newDerivedCache(), lookups: newLookupCache(), work: b.work, at: &v}
-	settle(vb)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if el, ok := c.bases[v]; ok {
+		c.lru.MoveToFront(el)
+		return el.Value.(*versionBase).base, nil
+	}
 	if c.limit > 0 {
 		c.bases[v] = c.lru.PushFront(&versionBase{v: v, base: vb})
 		c.evict()
 	}
-	return vb
+	return vb, nil
+}
+
+// versionBase makes the Base for version v: over the TimedSource's own Source for v when it serves one
+// (ns.SourceAt, #312), read through whatever that Source implements, and otherwise over v's facts
+// filtered from TimedTuples (atSource).
+func (b *Base) versionBase(v ns.Version) (*Base, error) {
+	var vb *Base
+	if sa, ok := b.timed.(ns.SourceAt); ok {
+		src, err := sa.SourceAt(v)
+		if err != nil {
+			return nil, fmt.Errorf("query: version %d: %w", v, err)
+		}
+		if vb, err = NewBase(b.reg, src); err != nil {
+			return nil, fmt.Errorf("query: version %d: %s", v, strings.TrimPrefix(err.Error(), "query: "))
+		}
+		vb.timed, vb.versions = nil, nil
+	} else {
+		vb = &Base{src: &atSource{ts: b.timed, v: v, cache: b.versions}, reg: b.reg, edb: newEDBCache(), derived: newDerivedCache(), lookups: newLookupCache()}
+	}
+	vb.work, vb.at = b.work, &v
+	if b.versioned != nil || vb.versioned != nil {
+		vb.versioned = versionTag{outer: b.versioned, inner: vb.versioned, v: v}
+	}
+	return vb, nil
+}
+
+// versionTag is a version's Base's ns.Versioned: the TimedSource's version, the version's number, and
+// the version Source's own version when it has one, so what the Base keeps is filed under all three and
+// dropped when either Source moves.
+type versionTag struct {
+	outer, inner ns.Versioned
+	v            ns.Version
+}
+
+func (t versionTag) Version() string {
+	s := "@" + strconv.FormatUint(uint64(t.v), 10)
+	if t.outer != nil {
+		s = t.outer.Version() + s
+	}
+	if t.inner != nil {
+		s += "/" + t.inner.Version()
+	}
+	return s
 }
 
 // atSource is a TimedSource's facts at one version, as a plain Source: the facts holding in v, with v's
@@ -204,17 +260,6 @@ func (s *atSource) NoVocabularyHint() string {
 		return h.NoVocabularyHint()
 	}
 	return "no relations are installed"
-}
-
-// versionedAtSource is an atSource over a Versioned TimedSource, so what a version's Base keeps in a
-// DerivedStore is filed under the version as well as the Source's.
-type versionedAtSource struct {
-	atSource
-	vs ns.Versioned
-}
-
-func (s *versionedAtSource) Version() string {
-	return s.vs.Version() + "@" + strconv.FormatUint(uint64(s.v), 10)
 }
 
 // A Diff is what changed in a base relation between two versions of a TimedSource: the facts that hold

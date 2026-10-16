@@ -96,3 +96,62 @@ func Example_acrossCount() {
 	// 2 [{0 1}]
 	// 2 [{1 3}]
 }
+
+// revisions is history served a revision at a time as a store of its own
+// (ns.SourceAt), the way a host keeps revisions in a database: a question
+// at a revision asks that revision's store for what it binds.
+type revisions struct{ *ns.TimedMemSource }
+
+func (r revisions) SourceAt(v ns.Version) (ns.Source, error) {
+	return revisionStore{r.TimedMemSource, v}, nil
+}
+
+// revisionStore is one revision's facts, answering lookups. A real store
+// would ask its database for the revision's rows.
+type revisionStore struct {
+	*ns.TimedMemSource
+	v ns.Version
+}
+
+func (s revisionStore) Tuples(rel string) []ns.Tuple {
+	all, _ := s.TimedTuples(context.Background(), rel)
+	var out []ns.Tuple
+	for _, t := range all {
+		if t.Versions.Contains(s.v) {
+			out = append(out, ns.Tuple{Vals: t.Vals, Cites: t.CitesAt(s.v)})
+		}
+	}
+	return out
+}
+
+func (s revisionStore) Lookup(_ context.Context, rel string, bound map[int]ns.Value) ([]ns.Tuple, error) {
+	fmt.Println("revision", s.v, "looks up", rel, bound[0].S)
+	var out []ns.Tuple
+	for _, t := range s.Tuples(rel) {
+		if v, ok := bound[0]; !ok || t.Vals[0].S == v.S {
+			out = append(out, t)
+		}
+	}
+	return out, nil
+}
+
+// A timed source that serves each revision as a store is asked at a
+// revision as any store is, and a Federation of it with a source that
+// doesn't change between revisions (licenses here) answers At over both.
+func Example_atFromStores() {
+	licenses := ns.NewMemSource()
+	licenses.Declare("pkg", "name", "license")
+	licenses.Add("pkg", ns.Tuple{Vals: []ns.Value{ns.S("log"), ns.S("MIT")}})
+	f, _ := ns.NewFederation(ns.Member{Source: revisions{history()}}, ns.Member{Source: licenses})
+	tf, _ := f.Timed()
+	v, _ := vocabulary(tf)
+	b, ctx := datalog.MustBase(v, tf), context.Background()
+	q := datalog.MustParse(`imports("api", ?d), pkg(?d, ?l) => ?d, ?l`)
+	rows, _ := datalog.SemiNaive{}.Eval(ctx, q, b, datalog.At(2))
+	for _, r := range rows {
+		fmt.Println(r.Bind["d"].S, r.Bind["l"].S)
+	}
+	// Output:
+	// revision 2 looks up imports api
+	// log MIT
+}

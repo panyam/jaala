@@ -86,6 +86,9 @@ type Base struct {
 	timed    ns.TimedSource
 	versions *versionCache
 	at       *ns.Version
+	// versioned is what the Base's caches are keyed by when its facts can move (ns.Versioned): the
+	// Source, or for a version's Base the TimedSource's version and that version's (versionTag).
+	versioned ns.Versioned
 	// across is the Source of a Base an Across Eval runs on (#180), whose tuples each hold in some of
 	// its versions, and nil on any other.
 	across *acrossSource
@@ -147,7 +150,8 @@ func NewBase(v *ns.Vocabulary, src ns.Source) (*Base, error) {
 	stepWalker, _ := src.(ns.ConjunctionWalkSource)
 	summarizer, _ := src.(ns.SummarySource)
 	timed, _ := src.(ns.TimedSource)
-	return &Base{src: src, reg: v, looker: looker, lookRels: lookRels, indexed: indexed, pusher: pusher, filterer: filterer, walker: walker, stepWalker: stepWalker, summarizer: summarizer, timed: timed, versions: newVersionCache(), edb: newEDBCache(), derived: newDerivedCache(), lookups: newLookupCache(), work: new(int64)}, nil
+	versioned, _ := src.(ns.Versioned)
+	return &Base{src: src, reg: v, looker: looker, lookRels: lookRels, indexed: indexed, pusher: pusher, filterer: filterer, walker: walker, stepWalker: stepWalker, summarizer: summarizer, timed: timed, versions: newVersionCache(), versioned: versioned, edb: newEDBCache(), derived: newDerivedCache(), lookups: newLookupCache(), work: new(int64)}, nil
 }
 
 // MustBase is NewBase for a Source known to match its vocabulary, such as a test fixture. It panics

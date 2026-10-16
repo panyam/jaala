@@ -71,21 +71,37 @@ func timedOver(src ns.Source) (timed *ns.TimedMemSource, at func(ns.Version) *ns
 }
 
 // atPrograms counts the corpus programs whose answer differs between two versions, the control that
-// agreeAt's versions tell anything apart.
-var atPrograms int
+// agreeAt's versions tell anything apart, and atStoredPrograms those whose versions' stores were looked
+// up, pushed to or walked (#312).
+var atPrograms, atStoredPrograms int
 
 // agreeAt requires, for every version v of b's facts dealt across versions, every evaluator under
 // At(v) to answer q as Naive does over a Base holding only v's facts, and to cite and witness as it
-// does under CanonicalCites (#179). The versions share one Base, which keeps a single version's
-// caches on every other seed, so a version's answer never reads another's.
+// does under CanonicalCites (#179), both reading the versions from TimedTuples and served as a store
+// per version (ns.SourceAt, #312; through a timed Federation every third seed). The versions share one
+// Base each, which keeps a single version's caches on every other seed, so a version's answer never
+// reads another's.
 func agreeAt(q Query, b *Base, opts []Option, seed int) string {
 	if anyRows(q) {
 		q.Limit = 0
 	}
 	timed, at := timedOver(b.src)
 	tb := MustBase(b.reg, timed)
+	stored := storing(timed)
+	var storedSrc ns.Source = stored
+	if seed%3 == 0 {
+		f, err := ns.NewFederation(ns.Member{Source: stored})
+		if err != nil {
+			return err.Error()
+		}
+		if storedSrc, err = f.Timed(); err != nil {
+			return err.Error()
+		}
+	}
+	sb := MustBase(b.reg, storedSrc)
 	if seed%2 == 1 {
 		tb.LimitVersions(1)
+		sb.LimitVersions(1)
 	}
 	var answers []string
 	for v := range ns.Version(timedVersions) {
@@ -94,9 +110,11 @@ func agreeAt(q Query, b *Base, opts []Option, seed int) string {
 		answers = append(answers, fmt.Sprint(errText(werr), len(want), binds(want)))
 		atV := append(opts[:len(opts):len(opts)], At(v))
 		for _, ev := range []Evaluator{Naive{}, SemiNaive{WrittenOrder: true}, SemiNaive{}} {
-			got, err := ev.Eval(bg, q, tb, atV...)
-			if errText(err) != errText(werr) || !reflect.DeepEqual(binds(got), binds(want)) {
-				return fmt.Sprintf("%T at version %d answers differently from a Source holding only its facts on %v\n only v: %v %v\n At(v):  %v %v", ev, v, q, binds(want), werr, binds(got), err)
+			for how, base := range map[string]*Base{"read from TimedTuples": tb, "served as a store": sb} {
+				got, err := ev.Eval(bg, q, base, atV...)
+				if errText(err) != errText(werr) || !reflect.DeepEqual(binds(got), binds(want)) {
+					return fmt.Sprintf("%T at version %d %s answers differently from a Source holding only its facts on %v\n only v: %v %v\n At(v):  %v %v", ev, v, how, q, binds(want), werr, binds(got), err)
+				}
 			}
 		}
 		if werr != nil {
@@ -105,11 +123,19 @@ func agreeAt(q Query, b *Base, opts []Option, seed int) string {
 		canon := append(opts[:len(opts):len(opts)], CanonicalCites())
 		w, _ := Naive{}.Eval(bg, q, mb, canon...)
 		for _, ev := range []Evaluator{Naive{}, SemiNaive{WrittenOrder: true}, SemiNaive{}} {
-			g, _ := ev.Eval(bg, q, tb, append(canon, At(v))...)
-			if !reflect.DeepEqual(w, g) {
-				return fmt.Sprintf("%T at version %d cites differently under CanonicalCites on %v\n only v: %v\n At(v):  %v", ev, v, q, w, g)
+			for how, base := range map[string]*Base{"read from TimedTuples": tb, "served as a store": sb} {
+				g, _ := ev.Eval(bg, q, base, append(canon, At(v))...)
+				if !reflect.DeepEqual(w, g) {
+					return fmt.Sprintf("%T at version %d %s cites differently under CanonicalCites on %v\n only v: %v\n At(v):  %v", ev, v, how, q, w, g)
+				}
 			}
 		}
+	}
+	if stored.timedReads > 0 {
+		return fmt.Sprintf("At read TimedTuples %d times from a Source serving its versions as stores, on %v", stored.timedReads, q)
+	}
+	if stored.asking() {
+		atStoredPrograms++
 	}
 	for _, a := range answers[1:] {
 		if a != answers[0] {

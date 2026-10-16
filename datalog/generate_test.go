@@ -1492,7 +1492,7 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 	compared, known, skipped, failed := map[string]int{}, map[int]int{}, 0, 0
 	lookedUpPrograms, federatedPrograms, batchedPrograms, pushedPrograms, partitionedPrograms, walkedPrograms, unitAnswers, mixedAnswers, foldedAnswers = 0, 0, 0, 0, 0, 0, 0, 0, 0
 	pagedPrograms, summarizedPrograms, batchPushedPrograms, stepWalkedPrograms, streamedPrograms, partitionedBatchPrograms, alonePushedPrograms = 0, 0, 0, 0, 0, 0, 0
-	atPrograms, acrossPrograms, acrossAggregates = 0, 0, 0
+	atPrograms, atStoredPrograms, acrossPrograms, acrossAggregates = 0, 0, 0, 0
 	withUnits := 0
 	for seed := first; seed < first+int64(seeds); seed++ {
 		rnd := rand.New(rand.NewSource(seed))
@@ -1585,13 +1585,16 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 	if streamedPrograms == 0 {
 		t.Errorf("control: no program's goal streamed a relation into its answer")
 	}
-	t.Logf("versions: %d programs answered differently between versions", atPrograms)
+	t.Logf("versions: %d programs answered differently between versions, %d asked a version's store", atPrograms, atStoredPrograms)
 	t.Logf("across: %d programs answered rows holding in some versions only, %d of them aggregating", acrossPrograms, acrossAggregates)
 	if acrossAggregates < seeds/10 {
 		t.Errorf("control: %d aggregating programs answered across versions with a row holding in some only, over %d seeds", acrossAggregates, seeds)
 	}
 	if acrossPrograms < seeds/10 {
 		t.Errorf("control: %d programs answered across versions with a row holding in some only, over %d seeds", acrossPrograms, seeds)
+	}
+	if atStoredPrograms < seeds/10 {
+		t.Errorf("control: %d programs asked a version's store over %d seeds", atStoredPrograms, seeds)
 	}
 	if atPrograms < seeds/10 {
 		t.Errorf("control: %d programs answered differently between versions over %d seeds", atPrograms, seeds)

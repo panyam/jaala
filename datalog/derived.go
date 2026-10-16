@@ -108,8 +108,8 @@ func (b *Base) refresh() (gen int64, version string, versioned bool) {
 		return 0, "", false
 	}
 	c := b.derived
-	vs, ok := b.src.(ns.Versioned)
-	if !ok {
+	vs := b.versioned
+	if vs == nil {
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		return c.gen, "", false
