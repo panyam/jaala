@@ -1,0 +1,2 @@
+go test fuzz v1
+string("r3(0,0,min(?x)):-node(?000),?000=num.add(?x*0,0);r3(0,0,0)=>?0")

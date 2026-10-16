@@ -728,12 +728,17 @@ func (b *binding) clone() *binding {
 func deferComparisons(lits []Literal, reg *ns.Vocabulary) []Literal {
 	bound := map[Var]bool{}
 	var rest, waiting []Literal
+	// What a waiting call waits on: every waiting literal, until the body runs out, and then only the
+	// calls that could run now. A call that can't is no binder to wait for, or num.add solving
+	// ?e + 0 = ?r and the num.mul computing ?e from it would each wait on the other, and the order
+	// they were left in would decide whether the body errs or answers.
+	others := func() []Literal { return waiting }
 	ready := func(l Literal) bool {
 		if l.computed && l.Pos != nil {
 			// A call an expression was written as waits for one of its function's modes (#5).
 			bi, ok := reg.Predicate(l.Pos.Relation)
 			return !ok || !bi.IsGenerator() || bi.Satisfied(boundFlags(l.Pos, bound)) && !awaitsBinder(l, rest, bound, reg) &&
-				!awaitsOperand(l, rest, bound, reg) && !awaitsOperand(l, waiting, bound, reg)
+				!awaitsOperand(l, rest, bound, reg) && !awaitsOperand(l, others(), bound, reg)
 		}
 		if l.Pos != nil {
 			// A filter waits for its arguments as a comparison does (#215).
@@ -754,17 +759,7 @@ func deferComparisons(lits []Literal, reg *ns.Vocabulary) []Literal {
 		return true
 	}
 	out := make([]Literal, 0, len(lits))
-	for i, lit := range lits {
-		rest = lits[i+1:]
-		if !ready(lit) {
-			waiting = append(waiting, lit)
-			continue
-		}
-		out = append(out, lit)
-		if lit.Pos == nil {
-			continue
-		}
-		bindAll(lit.Pos, bound)
+	drain := func() {
 		for progress := true; progress; {
 			progress = false
 			var still []Literal // a new slice, since ready reads waiting
@@ -782,6 +777,32 @@ func deferComparisons(lits []Literal, reg *ns.Vocabulary) []Literal {
 			waiting = still
 		}
 	}
+	for i, lit := range lits {
+		rest = lits[i+1:]
+		if !ready(lit) {
+			waiting = append(waiting, lit)
+			continue
+		}
+		out = append(out, lit)
+		if lit.Pos == nil {
+			continue
+		}
+		bindAll(lit.Pos, bound)
+		drain()
+	}
+	others = func() []Literal {
+		var able []Literal
+		for _, w := range waiting {
+			if !w.computed || w.Pos == nil {
+				continue
+			}
+			if bi, ok := reg.Predicate(w.Pos.Relation); ok && bi.Satisfied(boundFlags(w.Pos, bound)) {
+				able = append(able, w)
+			}
+		}
+		return able
+	}
+	drain()
 	return append(out, waiting...)
 }
 
