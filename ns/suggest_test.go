@@ -142,3 +142,46 @@ func TestAMemberWithAnExtraWordSuggestsTheMemberOrListsTheModule(t *testing.T) {
 		}
 	}
 }
+
+// A name nothing misspells is offered the members it might have meant: at its arity, those sharing a
+// word with it first, relations before predicates, at most four.
+func TestRelatedOffersMembersAtTheCallsArity(t *testing.T) {
+	src := NewMemSource().
+		DeclareSchema("pkg", Schema{Arity: 2, Labels: []string{"name", "license"}, Doc: "A package and its license."}).
+		DeclareSchema("owns", Schema{Arity: 2, Labels: []string{"team", "pkg"}, Doc: "Which team maintains a package."}).
+		DeclareSchema("node", Schema{Arity: 1, Labels: []string{"name"}})
+	v := MustVocabulary(src)
+	for path, arity := range map[string]int{"str.prefix": 2, "pkg2": 3} {
+		if err := v.AddPredicate(path, Filter(arity, func([]Value) (bool, error) { return true, nil })); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, c := range []struct {
+		name  string
+		arity int
+		want  []string
+	}{
+		{"zzz", 2, []string{"owns", "pkg", "str.prefix"}},        // control: the Source's order (sorted), then predicates
+		{"license_of", 2, []string{"pkg", "owns", "str.prefix"}}, // "license" is in pkg's doc, so it moves first
+		{"has_prefix", 2, []string{"str.prefix", "owns", "pkg"}}, // a predicate sharing a word beats relations that don't
+		{"zzz", 1, []string{"node"}},
+		{"zzz", 5, nil},
+		{"zzz", -1, []string{"node", "owns", "pkg", "pkg2"}}, // any arity, cut at four
+	} {
+		if got := v.Related(c.name, c.arity); !equalStrings(got, c.want) {
+			t.Errorf("Related(%q, %d) = %v, want %v", c.name, c.arity, got, c.want)
+		}
+	}
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
