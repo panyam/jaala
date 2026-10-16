@@ -569,6 +569,14 @@ A glob given to `str.glob` doesn't compile.
 
 {{ demo "demos/errors/invalid-glob.yaml" }}
 
+`query: Materialize: … is not a derived relation`
+
+`SemiNaive.Materialize` was asked to keep a relation that no rule of the query and no module member derives, such as a base relation or a typo. Only a derived relation has anything to keep.
+
+`query: Materialize: keeping …: …`
+
+The `DerivedStore` given to `Base.KeepDerivedIn` refused to keep a relation `Materialize` derived. The message carries the store's own error. An `Eval` ignores the same failure, since it already has its answer.
+
 ## Grouping and ordering
 
 These concern `having`, `order by`, `after`, `limit` and `offset`. A few can only come from a query built in Go, since the parser refuses the text first.

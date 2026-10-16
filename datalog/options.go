@@ -21,6 +21,7 @@ type evalOptions struct {
 	cold      bool // a cold run Explain started (see coldCost), which starts none of its own
 	after     map[Var]ns.Value
 	total     *int
+	kept      *error // set by Materialize: where a DerivedStore's failed write is reported
 }
 
 // Bind gives goal variables values from the host, so a parameterized query needs no program text built
@@ -113,6 +114,11 @@ type evalRun struct {
 	// the Base already held (see reuseDerived). Both nil unless SemiNaive's rewrite ran.
 	keys    map[string]string
 	preload map[string]*derivedEntry
+	// gen is the derived cache's generation the Eval may store into, and version the Source's version
+	// it read (versioned false when the Source has none), which files what it keeps in a DerivedStore.
+	gen       int64
+	version   string
+	versioned bool
 	// looked holds what the Source's Lookup returned, by lookupKey, for this Eval only (see lookup),
 	// and lookGen is the generation of the Base's lookupCache it may store into.
 	looked  map[string][]ns.Tuple
