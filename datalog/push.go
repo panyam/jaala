@@ -34,6 +34,8 @@ func isPushed(rel string) bool { return strings.HasPrefix(rel, pushPrefix) }
 type pushGroup struct {
 	lits    []Literal // as written in the planned body, with their written positions
 	compare []Compare // the comparisons pushed with them, which the body keeps too
+	filter  []Atom    // the filter predicates pushed with them (#297), which the body keeps too
+	members []int     // the literals' places in the body growGroup read, while it plans
 	text    string    // the literals as query text, for errors
 }
 
@@ -84,9 +86,26 @@ func pushBody(b *Base, body Body) Body {
 // growGroup is the group starting at pos[i], or nil when none of two literals or more does and pos[i]
 // alone isn't worth pushing, marking its members used.
 func growGroup(b *Base, pos []Literal, i int, bound map[Var]bool, used []bool) *pushGroup {
-	if !b.pushable(pos[i]) {
-		return nil
+	g, passed := growPast(b, pos, i, bound, used, true)
+	if passed && g != nil && g.filter == nil {
+		// The store refused the filters the group grew past, so it would join what they drop (#291).
+		g, _ = growPast(b, pos, i, bound, used, false)
 	}
+	if g != nil {
+		for _, m := range g.members {
+			used[m] = true
+		}
+	}
+	return g
+}
+
+// growPast is growGroup, growing past a filter the store could take with the group (#297) when
+// filters is set, and reporting whether it did.
+func growPast(b *Base, pos []Literal, i int, bound map[Var]bool, used []bool, filters bool) (*pushGroup, bool) {
+	if !b.pushable(pos[i]) {
+		return nil, false
+	}
+	passed := false
 	members := []int{i}
 	vars := map[Var]bool{}
 	bindAll(pos[i].Pos, vars)
@@ -104,6 +123,10 @@ func growGroup(b *Base, pos []Literal, i int, bound map[Var]bool, used []bool) *
 				continue
 			}
 		}
+		if filters && b.filters(lit, vars) {
+			passed = true
+			continue // it goes with the group, if the store takes it
+		}
 		if filtersGroup(lit.Pos, vars, bound) {
 			break // what follows would join before this filter narrows the group (#291)
 		}
@@ -111,25 +134,31 @@ func growGroup(b *Base, pos []Literal, i int, bound map[Var]bool, used []bool) *
 	}
 	alone := len(members) == 1
 	if alone && !filtersAlone(pos[i].Pos, bound) {
-		return nil
+		return nil, passed
 	}
 	var cmps []Compare
+	var flts []Atom
 	for _, lit := range pos {
 		if c := lit.Compare; c != nil && pushOperand(c.Left, vars) && pushOperand(c.Right, vars) {
 			cmps = append(cmps, *c)
 		}
+		if b.filters(lit, vars) {
+			flts = append(flts, *lit.Pos)
+		}
 	}
 	g := groupOf(pos, members, cmps)
+	g.filter = flts
+	if len(flts) > 0 && !b.pusher.Pushes(g.offered(bound)) {
+		g.filter = nil
+	}
 	if len(cmps) > 0 && !b.pusher.Pushes(g.offered(bound)) {
 		g.compare = nil
 	}
-	if alone && ((g.compare == nil && !repeatsVar(pos[i].Pos)) || !b.pusher.Pushes(g.offered(bound))) {
-		return nil // nothing the store filters by, or it doesn't push it
+	if alone && ((g.compare == nil && g.filter == nil && !repeatsVar(pos[i].Pos)) || !b.pusher.Pushes(g.offered(bound))) {
+		return nil, passed // nothing the store filters by, or it doesn't push it
 	}
-	for _, m := range members {
-		used[m] = true
-	}
-	return g
+	g.members = members
+	return g, passed
 }
 
 // filtersAlone reports whether a literal could be worth pushing alone (#263): nothing before it binds
@@ -192,6 +221,26 @@ func pushOperand(t Term, vars map[Var]bool) bool {
 	return t.Const != nil || (t.Agg == nil && t.Expr == nil && t.Var != "" && vars[t.Var])
 }
 
+// filters reports whether lit is a filter predicate the store applies to a group's rows (#297): one
+// it names in ns.FilterSource, every argument a constant or a variable the group binds. A store that
+// accepted a conjunction and ignored a filter it didn't know would join every row the filter drops,
+// so a store names none until it says so. Declaire's x05 pushed 67,650 callsites,
+// which two str.glob filters cut to 21.
+func (b *Base) filters(lit Literal, vars map[Var]bool) bool {
+	if lit.Pos == nil {
+		return false
+	}
+	if bi, ok := b.reg.Predicate(lit.Pos.Relation); !ok || bi.IsGenerator() || b.filterer == nil || !b.filterer.PushesFilter(lit.Pos.Relation) {
+		return false
+	}
+	for _, t := range lit.Pos.Args {
+		if !pushOperand(t, vars) {
+			return false
+		}
+	}
+	return true
+}
+
 // filtersGroup reports whether a, outside a group, reads one of the group's variables and binds
 // nothing new: it only narrows what the group found, so a literal after it joins after the filter. A
 // group growing past it made the store join every row the filter would have dropped (#291: Declaire's
@@ -229,7 +278,16 @@ func groupOf(pos []Literal, members []int, cmps []Compare) *pushGroup {
 // atom is the literal standing for g in its body, over the variables g binds, in the order they're
 // first written; the run keeps g under its name for extendPushed.
 func (g *pushGroup) atom(b *Base) *Atom {
-	a := &Atom{Relation: pushPrefix + "{" + g.text + "}"}
+	// The name carries what goes with the literals, or two rules pushing the same atoms under
+	// different comparisons or filters would share one group, the second's (#297).
+	name := g.text
+	for _, c := range g.compare {
+		name += ", " + Literal{Compare: &c}.String()
+	}
+	for _, f := range g.filter {
+		name += ", " + f.String()
+	}
+	a := &Atom{Relation: pushPrefix + "{" + name + "}"}
 	seen := map[Var]bool{}
 	for _, lit := range g.lits {
 		for _, t := range lit.Pos.Args {
@@ -287,6 +345,13 @@ func (g *pushGroup) numbered(bnd *binding) (ns.Conjunction, map[Var]int) {
 	for _, cmp := range g.compare {
 		c.Compare = append(c.Compare, ns.PushComparison{Op: cmp.Op, Left: arg(cmp.Left), Right: arg(cmp.Right)})
 	}
+	for _, f := range g.filter {
+		pf := ns.PushFilter{Predicate: f.Relation, Args: make([]ns.PushArg, len(f.Args))}
+		for i, t := range f.Args {
+			pf.Args[i] = arg(t)
+		}
+		c.Filter = append(c.Filter, pf)
+	}
 	return c, nums
 }
 
@@ -333,6 +398,13 @@ func pushKey(c ns.Conjunction) string {
 		sb.WriteString(cmp.Op)
 		arg(cmp.Left)
 		arg(cmp.Right)
+		sb.WriteByte(';')
+	}
+	for _, f := range c.Filter {
+		sb.WriteString("filter" + strconv.Itoa(len(f.Predicate)) + ":" + f.Predicate)
+		for _, x := range f.Args {
+			arg(x)
+		}
 		sb.WriteByte(';')
 	}
 	if p := c.Page; p != nil {

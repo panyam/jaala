@@ -115,10 +115,17 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
 - **A `PushSource` evaluates a conjunction of a body's base literals** (`push.go`, `ns/push.go`, #237).
   `pushConjunctions` runs after `plan`, in the planned SemiNaive only, and replaces each group the
   Source's `Pushes` accepts with one literal over `\x00p:{…}` whose arguments are the group's
-  variables (`run.pushed` holds the group). A group starts at a pushable literal and takes each later
+  variables (`run.pushed` holds the group, keyed by a name carrying its comparisons and filters too:
+  two rules pushing the same atoms under different comparisons shared one, the second's, and answered
+  wrongly from #237 to #297). A group starts at a pushable literal and takes each later
   literal sharing a variable with it and none with a literal outside it before its place, stopping at
   a literal outside it that only filters the group's variables (`filtersGroup`, #291: otherwise the
-  store joins every row the filter would drop); one literal
+  store joins every row the filter would drop), unless it is a filter predicate over the group's
+  variables whose predicate the store names in `ns.FilterSource`, which goes with it as
+  `Conjunction.Filter` (`filters`, #297: Declaire's x05 pushed 67,650 callsites two `str.glob`s cut
+  to 21), offered before the comparisons are and regrown with #291's stops when the store refuses it
+  (`growPast`). Opt-in on purpose: a store from before #297 accepts a conjunction and ignores the field,
+  so growing past filters for it took x04 from 334k rows fetched to 2.1M; one literal
   alone is a group when nothing binds it, it has no constant, and a variable repeats in it or a
   comparison the store takes goes with it (`filtersAlone`, `repeatsVar`, #263); variables
   bound before it are `Inputs` (`offered`), which the store must take (#246), and `prefetchPushed`
@@ -518,11 +525,10 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   (`constantRun`, #290) is never demanded either: demand runs each generator once per caller value
   (Declaire's `sends` over `graph.reach`: 86,460 walks for 7,205 callees, against 12 in full). A
   rule reading a base relation keeps demand, since in full it is scanned rather than probed. A call
-  whose bound arguments all come from a generator called with nothing bound is not demanded
-  (`enumerates`, `fromWide`, #291): it listed every value, so the guard would be the whole relation,
-  and the planner keeps a guard first. That holds in the goal, `sideways`, and a body under a
-  zero-argument guard (Declaire's `sent/ff`, whose `loc.home` demanded all 136,181 functions). A
-  rule evaluated in full also has its
+  that only a generator called with nothing bound would bind isn't demanded per value (#291:
+  Declaire's `sent/ff`, whose `loc.home` demanded all 136,181 functions), because the planner runs
+  the derived call first (#293), so it binds nothing; #291's own check (`fromWide`) went with that,
+  as no plan reached it. A rule evaluated in full also has its
   constant calls rewritten (`fromConstants`, #57), adorned by the constants alone, so their demand
   rules are facts and add no dependency. A call its earlier literals bind is not demanded there, since
   a full rule binds it for every row (doing so cost `series-from-a-net` 170 times its baseline),
@@ -569,9 +575,16 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
 - **Generators declare `Modes`; `checkModes` is shared validation, the planner is SemiNaive's.** A
   body that can never satisfy a generator is refused by every evaluator and by `Validate` with one
   message, checked on the linked program before any rewrite. Planning lives in `plan.go`, called
-  only by `SemiNaive`. A generator runs as soon as one of its modes is satisfied, after only the
-  ready checks (comparisons, filters, and relations with every argument bound), so a host never
-  has to write a body generator-first (#36). Naive doesn't plan: it calls a generator where it is
+  only by `SemiNaive`. A generator runs as soon as one of its modes is satisfied with an argument
+  bound, after only the ready checks (comparisons, filters, and relations with every argument
+  bound), so a host never has to write a body generator-first (#36). One called with nothing bound
+  lists every value, so it ranks after a relation the engine derives or holds (`readsWhole`, #293:
+  Declaire's `loc.home` listed 136,181 homes ahead of `http.pattern`'s 100), and still ahead of one the
+  Source looks up or the goal may stream, whose whole read goes to the store (the prefetch tests'
+  `step(?h, ?x), attr(?x, ?v)`). A generator also waits in `deferComparisons`, as an expression does,
+  for a relation still to run that binds a variable it reads where its `Types` say number
+  (`numbersRead`, #244), so it reads the spelling they agree on; one typing nothing, as most hosts'
+  do, is never held. Naive doesn't plan: it calls a generator where it is
   written, mode or not, with the unbound inputs `Bound: false`, so a generator must refuse what it
   can't run without (`str.distance` errors like a filter, #77) rather than read the zero value; a
   `both()` test of a generator-first body catches it as Naive answering differently. A filter is

@@ -70,6 +70,9 @@ type Base struct {
 	indexed ns.IndexedLookups
 	// pusher is the Source when it evaluates conjunctions itself (ns.PushSource, #237), else nil.
 	pusher ns.PushSource
+	// filterer is the Source when it says which filter predicates it applies to a pushed group
+	// (ns.FilterSource, #297), else nil, and no filter is pushed.
+	filterer ns.FilterSource
 	// walker is the Source when it follows a relation from value to value itself (ns.WalkSource, #239).
 	walker ns.WalkSource
 	// stepWalker is the Source when it follows a step of several literals itself
@@ -130,10 +133,11 @@ func NewBase(v *ns.Vocabulary, src ns.Source) (*Base, error) {
 	lookRels, _ := src.(ns.LookupRelations)
 	indexed, _ := src.(ns.IndexedLookups)
 	pusher, _ := src.(ns.PushSource)
+	filterer, _ := src.(ns.FilterSource)
 	walker, _ := src.(ns.WalkSource)
 	stepWalker, _ := src.(ns.ConjunctionWalkSource)
 	summarizer, _ := src.(ns.SummarySource)
-	return &Base{src: src, reg: v, looker: looker, lookRels: lookRels, indexed: indexed, pusher: pusher, walker: walker, stepWalker: stepWalker, summarizer: summarizer, edb: newEDBCache(), derived: newDerivedCache(), lookups: newLookupCache(), work: new(int64)}, nil
+	return &Base{src: src, reg: v, looker: looker, lookRels: lookRels, indexed: indexed, pusher: pusher, filterer: filterer, walker: walker, stepWalker: stepWalker, summarizer: summarizer, edb: newEDBCache(), derived: newDerivedCache(), lookups: newLookupCache(), work: new(int64)}, nil
 }
 
 // MustBase is NewBase for a Source known to match its vocabulary, such as a test fixture. It panics
@@ -741,9 +745,14 @@ func deferComparisons(lits []Literal, reg *ns.Vocabulary) []Literal {
 				!awaitsOperand(l, rest, bound, reg) && !awaitsOperand(l, others(), bound, reg)
 		}
 		if l.Pos != nil {
-			// A filter waits for its arguments as a comparison does (#215).
-			if bi, ok := reg.Predicate(l.Pos.Relation); ok && !bi.IsGenerator() {
+			bi, ok := reg.Predicate(l.Pos.Relation)
+			switch {
+			case ok && !bi.IsGenerator():
+				// A filter waits for its arguments as a comparison does (#215).
 				return !slices.Contains(boundFlags(l.Pos, bound), false)
+			case ok:
+				// A generator waits as an expression does for what binds a number it reads (#244).
+				return !awaitsBinder(numbersRead(l, bi), rest, bound, reg)
 			}
 			return true
 		}
@@ -911,8 +920,8 @@ func bindArg(bnd *binding, arg Term, val ns.Value) bool {
 	}
 }
 
-// awaitsBinder reports whether a call an expression was written as reads a bound variable that a
-// relation among rest also binds. Arithmetic over 1 A, where the data says 1 V, answers in amps, so an
+// awaitsBinder reports whether a call an expression was written as, or a generator's numbers (see
+// numbersRead), reads a bound variable that a relation among rest also binds. Arithmetic over 1 A, where the data says 1 V, answers in amps, so an
 // expression runs only once every relation binding what it reads has met it and bindArg has settled
 // the spelling, whatever order the body runs in (#227). Only relations count: a generator may itself
 // wait for the expression's result.
@@ -936,6 +945,19 @@ func awaitsBinder(lit Literal, rest []Literal, bound map[Var]bool, reg *ns.Vocab
 		}
 	}
 	return false
+}
+
+// numbersRead is a generator call with only the arguments its Builtin types as numbers, the ones
+// whose spelling a relation binding them settles (#148): a host generator reading text, such as
+// Declaire's graph.reach, keeps running as soon as a mode is satisfied (#36).
+func numbersRead(lit Literal, bi ns.Builtin) Literal {
+	a := &Atom{Relation: lit.Pos.Relation}
+	for i, t := range lit.Pos.Args {
+		if i < len(bi.Types) && bi.Types[i].Type == ns.TypeNumber {
+			a.Args = append(a.Args, t)
+		}
+	}
+	return Literal{Pos: a}
 }
 
 // awaitsOperand reports whether a call an expression was written as would solve for a variable that

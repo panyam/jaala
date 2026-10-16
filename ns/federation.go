@@ -412,6 +412,23 @@ func (f *Federation) Pushes(c Conjunction) bool {
 	return f.membersPush(p)
 }
 
+// PushesFilter implements FilterSource: a Federation applies a filter predicate when every member that
+// pushes does, and at least one pushes.
+func (f *Federation) PushesFilter(name string) bool {
+	some := false
+	for _, m := range f.members {
+		if _, ok := m.Source.(PushSource); !ok {
+			continue
+		}
+		fs, ok := m.Source.(FilterSource)
+		if !ok || !fs.PushesFilter(name) {
+			return false
+		}
+		some = true
+	}
+	return some
+}
+
 // Push implements PushSource, citing each tuple to the member it came from. With one member it asks
 // that member. One atom, or a page of one, goes to each member whose Holds allows it, each answering
 // its own facts' matches, or its own first rows, which hold the federation's (see Page). Partitioned, it asks each member whose Holds allows c's first atom for c with its
@@ -575,6 +592,11 @@ func (f *Federation) restAfter(c Conjunction, k int, prefixes [][]Tuple) (*Conju
 		_, r := inRest[cmp.Right.Var]
 		if (cmp.Left.Var == 0 || l) && (cmp.Right.Var == 0 || r) {
 			rest.Compare = append(rest.Compare, cmp)
+		}
+	}
+	for _, flt := range c.Filter {
+		if !slices.ContainsFunc(flt.Args, func(x PushArg) bool { _, in := inRest[x.Var]; return x.Var > 0 && !in }) {
+			rest.Filter = append(rest.Filter, flt)
 		}
 	}
 	offered := rest
@@ -767,8 +789,8 @@ func (f *Federation) citedRow(i int, prefix, row []Tuple) []Tuple {
 	return out
 }
 
-// after is the rest of c once a prefix of its atoms matched the tuples in row: the atoms and
-// comparisons after them, each variable the prefix bound replaced by its value.
+// after is the rest of c once a prefix of its atoms matched the tuples in row: the atoms,
+// comparisons and filters after them, each variable the prefix bound replaced by its value.
 func (c Conjunction) after(row []Tuple) Conjunction {
 	vals := map[int]Value{}
 	for k, t := range row {
@@ -794,6 +816,13 @@ func (c Conjunction) after(row []Tuple) Conjunction {
 	}
 	for _, cmp := range c.Compare {
 		rest.Compare = append(rest.Compare, PushComparison{Op: cmp.Op, Left: arg(cmp.Left), Right: arg(cmp.Right)})
+	}
+	for _, flt := range c.Filter {
+		nf := PushFilter{Predicate: flt.Predicate, Args: make([]PushArg, len(flt.Args))}
+		for i, x := range flt.Args {
+			nf.Args[i] = arg(x)
+		}
+		rest.Filter = append(rest.Filter, nf)
 	}
 	return rest
 }
@@ -978,7 +1007,7 @@ func (f *Federation) across(c Conjunction, ok func(Source) bool) bool {
 
 // prefixesOf is c asking for its prefixes alone, with no page.
 func prefixesOf(c Conjunction) Conjunction {
-	return Conjunction{Atoms: c.Atoms, Compare: c.Compare, Partial: true, PrefixesOnly: true}
+	return Conjunction{Atoms: c.Atoms, Compare: c.Compare, Filter: c.Filter, Partial: true, PrefixesOnly: true}
 }
 
 // spanning yields every match of c whose facts lie in more than one member (#253): each member whose

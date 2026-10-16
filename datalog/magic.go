@@ -295,11 +295,10 @@ func (m *magician) sideways(r Rule) Body {
 	bound := map[Var]bool{}
 	supply := !m.b.canonical() && !countsBindings(r.Head.Args, nil)
 	var front []Literal
-	wide := map[Var]bool{}
 	pos, negs := splitNegations(planBody(m.b, r.Body, nil).Literals)
 	for _, lit := range pos {
 		if lit.Pos != nil {
-			if a := *lit.Pos; !m.reaches(a.Relation, r.Head.Relation) && !fromWide(a, bound, wide) && m.wants(a, bound, false) {
+			if a := *lit.Pos; !m.reaches(a.Relation, r.Head.Relation) && m.wants(a, bound, false) {
 				var call Atom
 				if readsAny(a, bound) {
 					if supply && doesWork(front) {
@@ -311,7 +310,6 @@ func (m *magician) sideways(r Rule) Body {
 				}
 				lit = Literal{Pos: &call, at: lit.at}
 			}
-			m.enumerates(*lit.Pos, bound, wide)
 			bindAll(lit.Pos, bound)
 		}
 		front = append(front, lit)
@@ -408,15 +406,11 @@ func (m *magician) body(guard *Atom, lits []Literal, entry map[Var]bool, supply 
 	if guard != nil {
 		front = []Literal{{Pos: guard}}
 	}
-	wide := map[Var]bool{} // bound only by a generator called with nothing bound (see enumerates)
 	demand := func(a Atom) (Atom, bool) {
 		if guard == nil {
 			if call, ok := m.factor(a, bound); ok {
 				return call, true
 			}
-		}
-		if fromWide(a, bound, wide) {
-			return a, false
 		}
 		if !m.wants(a, bound, guard != nil) {
 			return a, false
@@ -432,7 +426,6 @@ func (m *magician) body(guard *Atom, lits []Literal, entry map[Var]bool, supply 
 			if call, ok := demand(*lit.Pos); ok {
 				lit = Literal{Pos: &call, at: lit.at}
 			}
-			m.enumerates(*lit.Pos, bound, wide)
 			bindAll(lit.Pos, bound)
 		}
 		front = append(front, lit)
@@ -446,43 +439,6 @@ func (m *magician) body(guard *Atom, lits []Literal, entry map[Var]bool, supply 
 		outNegs = append(outNegs, lit)
 	}
 	return append(front, outNegs...)
-}
-
-// enumerates marks in wide the variables a binds when it is a generator called with nothing bound:
-// such a call lists every value it has (Declaire's loc.home(?f, ...) lists all 136,181 functions), so
-// a call those values alone bind would be demanded for its whole relation, behind a guard the
-// planner keeps first (#291).
-func (m *magician) enumerates(a Atom, bound, wide map[Var]bool) {
-	if bi, ok := m.b.reg.Predicate(a.Relation); !ok || !bi.IsGenerator() || slices.Contains(boundFlags(&a, bound), true) {
-		return
-	}
-	for _, t := range a.Args {
-		if t.Var != "" && t.Var != "_" {
-			wide[t.Var] = true
-		}
-	}
-}
-
-// fromWide reports whether everything a call has bound comes from a generator that listed every
-// value (see enumerates): no constant, and each bound variable wide. Demand there is the whole
-// relation, so the call reads it in full, as a rule evaluated in full reads what its earlier
-// literals bind (see fromConstants). What a guard binds is never wide, so this holds only in the
-// goal, a rule standing in for it, or a body under a zero-argument guard (#60): Declaire's sent/ff,
-// called with nothing bound from called/b.
-func fromWide(a Atom, bound, wide map[Var]bool) bool {
-	some := false
-	for _, t := range a.Args {
-		switch {
-		case t.Const != nil:
-			return false
-		case t.Var != "" && t.Var != "_" && bound[t.Var]:
-			if !wide[t.Var] {
-				return false
-			}
-			some = true
-		}
-	}
-	return some
 }
 
 // wants reports whether a call can be rewritten for demand: it reads a derived relation and binds at

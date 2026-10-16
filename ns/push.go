@@ -31,7 +31,8 @@ type PushSource interface {
 	// left out, or the answer silently loses it. Values compare as Lookup's do: each read as its
 	// argument's declared type, two numbers equal when the numbers are, two texts when the text is,
 	// and a number never text. A store may skip any comparison it can't evaluate exactly as the
-	// engine does (see PushComparison) and leave it to the engine. A row repeated is two
+	// engine does (see PushComparison), or any filter (see PushFilter), and leave it to the engine. A
+	// row repeated is two
 	// derivations, as a fact a Source serves twice is two facts, so a row is never sent twice.
 	//
 	// Each row is charged to the Eval's Budget as it arrives, so the engine may stop ranging early
@@ -42,11 +43,27 @@ type PushSource interface {
 	Push(ctx context.Context, c Conjunction) iter.Seq2[[]Tuple, error]
 }
 
+// FilterSource is optionally implemented by a PushSource that applies filter predicates to a
+// conjunction's rows (#297). The planner sends a filter in Conjunction.Filter, and grows a group past
+// it, only when PushesFilter names its predicate: a store that ignored a filter it was sent would
+// still answer correctly, but it would join every row the filter drops, so a store that doesn't
+// implement this is sent none. Like Pushes, it is asked while planning and must be cheap.
+type FilterSource interface {
+	// PushesFilter reports whether the store applies the predicate registered under name exactly as
+	// the vocabulary does, as stdlib's str.glob has SQLite GLOB's semantics.
+	PushesFilter(name string) bool
+}
+
 // A Conjunction is a group of base literals a PushSource evaluates together, and the comparisons over
 // their variables.
 type Conjunction struct {
 	Atoms   []PushAtom
 	Compare []PushComparison
+	// Filter is the filter predicates over the conjunction's variables (#297), each one the store
+	// names in FilterSource, which it applies as it does Compare, only to whole rows. The planner offers a group with its comparisons and
+	// filters, then without the filters, then without either, so a store refusing filters in Pushes is
+	// still asked the rest.
+	Filter []PushFilter
 	// Partial asks for every prefix of each match too: besides the rows satisfying every atom, for
 	// each k from 1 below len(Atoms), one row of k tuples per combination of facts satisfying the
 	// first k atoms (comparisons apply only to whole rows). A Federation over partitioned members
@@ -176,6 +193,17 @@ type PushAtom struct {
 type PushArg struct {
 	Var   int
 	Const *Value
+}
+
+// A PushFilter is a filter predicate the conjunction's rows must pass: Predicate is its name as the
+// vocabulary registered it (str.glob, str.match), and Args one per argument, each a variable of the
+// Conjunction or a constant, never a wildcard. A store may apply one only when it answers exactly as
+// the predicate does, and otherwise skips it: a row the filter would drop may come back, since the
+// engine checks every row again, but a row it keeps must not be left out. stdlib's str.glob has SQLite
+// GLOB's semantics (whole string, case-sensitive), so a SQLite store can apply it as GLOB.
+type PushFilter struct {
+	Predicate string
+	Args      []PushArg
 }
 
 // A PushComparison is a comparison the conjunction's rows must pass: Op is one of = != < <= > >=,

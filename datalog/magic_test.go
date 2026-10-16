@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -450,10 +451,10 @@ func TestAWitnessedRuleStandingInForTheGoalPassesItsBindingsOn(t *testing.T) {
 		if how != c.how {
 			t.Errorf("%s: route derived %q, want %q", c.name, how, c.how)
 		}
-		var bound int
+		var bound []int // per push with Inputs: route's two rules each push their own glob (#297)
 		for _, p := range store.pushed {
 			if len(p.Inputs) > 0 {
-				bound += len(p.Bindings)
+				bound = append(bound, len(p.Bindings))
 			}
 		}
 		if c.opts != nil && c.how == "demand" {
@@ -466,8 +467,8 @@ func TestAWitnessedRuleStandingInForTheGoalPassesItsBindingsOn(t *testing.T) {
 				t.Errorf("%s: witness %s over %v, want issues over hop,route,attr as written", c.name, w.Relation, kids)
 			}
 		}
-		if c.how == "demand" && bound != 5 {
-			t.Errorf("%s: pushed %d bindings of route's join, want the walk's 5: %+v", c.name, bound, store.pushed)
+		if c.how == "demand" && !reflect.DeepEqual(bound, []int{5, 5}) {
+			t.Errorf("%s: pushed %v bindings of route's join, want the walk's 5 per rule: %+v", c.name, bound, store.pushed)
 		}
 	}
 }
@@ -777,23 +778,35 @@ func TestTwoAdornmentsReadOnlyThatRelationInFull(t *testing.T) {
 	}
 }
 
-// A call bound only by a generator that listed every value is read in full rather than demanded
-// (#291): demand would list its whole relation, behind a guard the planner keeps first. Declaire's
-// x04 calls sent with nothing bound from called/b, so sent/ff runs under a zero-argument guard (#60),
-// and loc.home(?f, ...) there demanded http.path for all 136,181 functions. Here s plays sent and d
-// http.path. control: a constant in the generator's call still demands d.
+// A call written after a generator that lists every value isn't demanded per value of it (#291):
+// demand would list its whole relation. Declaire's x04 calls sent with nothing bound from called/b,
+// so sent/ff runs under a zero-argument guard (#60), and loc.home(?f, ...) there demanded http.path
+// for all 136,181 functions. The planner now runs the derived call first (#293), so it binds nothing
+// and is read whole, in full or as d/ff. Here s plays sent and d http.path. control: a constant in
+// the generator's call still demands d per value, and so does a constant in d's.
 func TestACallBoundByAnEnumeratingGeneratorIsNotDemanded(t *testing.T) {
 	const rules = `d(?f, ?p) :- edge(?f, ?p); d(?f, ?p) :- edge(?p, ?f); `
 	const called = `c(?r) :- node(?r), s(?p), ?p != ?r; c(?r) :- node(?r), edge(?r, "v9"); `
+	// perValue says whether d was derived only for values its callers bound, rather than whole.
+	perValue := func(rr *RelationReport) bool {
+		switch rr.How {
+		case "full":
+			return false
+		case "demand":
+			return slices.ContainsFunc(rr.Adornments, func(a string) bool { return strings.Contains(a, "b") })
+		}
+		return true // factored, by a constant
+	}
 	for _, c := range []struct {
-		goal, how string
+		goal     string
+		perValue bool
 	}{
-		{called + `s(?p) :- d(?f, ?p), step(?f, _); node(?r), c(?r) => ?r`, "full"},
-		{called + `s(?p) :- d(?f, ?p), step("v1", ?f); node(?r), c(?r) => ?r`, "demand"}, // control
+		{called + `s(?p) :- d(?f, ?p), step(?f, _); node(?r), c(?r) => ?r`, false},
+		{called + `s(?p) :- d(?f, ?p), step("v1", ?f); node(?r), c(?r) => ?r`, true}, // control
 		// u stands in for the goal: inlined into it, or under Witnesses demanded sideways (#270).
-		{`u(?f, ?g, ?p) :- step(?f, ?g), d(?f, ?p); u(?f, ?g, ?p) => ?p`, "full"},
-		{`u(?f, ?p) :- step("v1", ?f), d(?f, ?p); u(?f, ?p) => ?p`, "demand"}, // control
-		{`u(?f, ?g) :- step(?f, ?g), d(?f, "v3"); u(?f, ?g) => ?f`, "demand"}, // control: a constant narrows the demand
+		{`u(?f, ?g, ?p) :- step(?f, ?g), d(?f, ?p); u(?f, ?g, ?p) => ?p`, false},
+		{`u(?f, ?p) :- step("v1", ?f), d(?f, ?p); u(?f, ?p) => ?p`, true}, // control
+		{`u(?f, ?g) :- step(?f, ?g), d(?f, "v3"); u(?f, ?g) => ?f`, true}, // control: a constant narrows the demand
 	} {
 		for _, opts := range [][]Option{nil, {Witnesses()}} {
 			v := std(line(10))
@@ -808,8 +821,8 @@ func TestACallBoundByAnEnumeratingGeneratorIsNotDemanded(t *testing.T) {
 			if err != nil || len(got) != len(want) {
 				t.Fatalf("%s: %d rows %v, want %d", c.goal, len(got), err, len(want))
 			}
-			if rr := relationIn(&r, "d"); rr == nil || rr.How != c.how {
-				t.Errorf("%s, %d options: d %+v, want %s", c.goal, len(opts), rr, c.how)
+			if rr := relationIn(&r, "d"); rr == nil || perValue(rr) != c.perValue {
+				t.Errorf("%s, %d options: d %+v, want derived per value %v", c.goal, len(opts), rr, c.perValue)
 			}
 		}
 	}
