@@ -844,6 +844,9 @@ func (c genCase) check() (genOutcome, string) {
 	if diff := agreeAt(q, b, c.opts(), len(text)); diff != "" {
 		return genDisagreed, diff
 	}
+	if diff := agreeAcross(q, b, c.opts()); diff != "" {
+		return genDisagreed, diff
+	}
 	return genAgreed, ""
 }
 
@@ -1489,7 +1492,7 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 	compared, known, skipped, failed := map[string]int{}, map[int]int{}, 0, 0
 	lookedUpPrograms, federatedPrograms, batchedPrograms, pushedPrograms, partitionedPrograms, walkedPrograms, unitAnswers, mixedAnswers, foldedAnswers = 0, 0, 0, 0, 0, 0, 0, 0, 0
 	pagedPrograms, summarizedPrograms, batchPushedPrograms, stepWalkedPrograms, streamedPrograms, partitionedBatchPrograms, alonePushedPrograms = 0, 0, 0, 0, 0, 0, 0
-	atPrograms = 0
+	atPrograms, acrossPrograms, acrossRefused = 0, 0, 0
 	withUnits := 0
 	for seed := first; seed < first+int64(seeds); seed++ {
 		rnd := rand.New(rand.NewSource(seed))
@@ -1583,6 +1586,10 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 		t.Errorf("control: no program's goal streamed a relation into its answer")
 	}
 	t.Logf("versions: %d programs answered differently between versions", atPrograms)
+	t.Logf("across: %d programs answered rows holding in some versions only, %d refused for aggregating", acrossPrograms, acrossRefused)
+	if acrossPrograms < seeds/10 {
+		t.Errorf("control: %d programs answered across versions with a row holding in some only, over %d seeds", acrossPrograms, seeds)
+	}
 	if atPrograms < seeds/10 {
 		t.Errorf("control: %d programs answered differently between versions over %d seeds", atPrograms, seeds)
 	}

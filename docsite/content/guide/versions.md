@@ -1,6 +1,6 @@
 ---
 title: "Versions"
-description: "One base over several versions of the facts: answering at a revision with At, and what changed between two with Diff."
+description: "One base over several versions of the facts: answering at a revision with At, across many at once with Across, and what changed between two with Diff."
 prev: {url: "/jaala/guide/absent-values/", title: "Absent values"}
 ---
 
@@ -23,6 +23,14 @@ A fact is its values. Two versions holding the same values hold one fact, even w
 A query without `At` reads a timed source as any other, through `Tuples`, so it sees whichever facts the source serves there, usually its latest version. `ns.TimedMemSource` serves its last version that way.
 
 A timed source that is also `ns.Versioned` drops every version's caches when its version moves, as it would its own, so a host adding a new revision bumps the version.
+
+## `Across`
+
+`datalog.Across(vs)` evaluates a query once over every version in `vs`, and each row carries the versions it holds in, in `Row.Versions` ([#180](https://github.com/panyam/jaala/issues/180)). The rows holding version `v` are exactly the rows `At(v)` answers. A join holds in the versions all its facts hold in, a tuple derived two ways holds in the versions either holds in, and a `not` holds in the versions the negated relation doesn't. So when most facts hold in most versions, a recursive relation is worked out about once rather than once per version. On a points-to analysis over 50 revisions with 4% of its facts changing somewhere, `Across` does a ninth of the work of 50 `At`s and takes about a fifth of the time (`BenchmarkVersions`).
+
+A row that holds in some versions and not others says when it started or stopped holding, like `log` above, which `app` depends on from revision 1. Where a row is derived differently in two versions, it's answered once per derivation, each copy with the versions it holds that way in, so each version's copy is the row `At` gives it, witness included. A `limit` and `offset` page each version's rows separately, as `At` would.
+
+Citations differ per version, so a row's `Cites` are its facts' citations in the latest version it holds in, and `Row.CitesAt(v)` gives another version's. Likewise `Witness.At(v)` turns a row's witness into the one `At(v)` gives. A generator, filter or comparison holds in every version, since jaala can't know what a host's Go reads, so a generator reading versioned data of its own belongs under `At`. `Across` reads the source's facts whole, without lookups or pushdown, and keeps no derived relation for a later query. It doesn't evaluate aggregates yet ([#181](https://github.com/panyam/jaala/issues/181)) and refuses a query that has one.
 
 ## `Diff`
 

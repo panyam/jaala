@@ -200,6 +200,13 @@ type Row struct {
 	// absent, and an aggregate a rule stores keeps only its value, so it's set on a goal's own
 	// aggregates.
 	Why map[Var]string
+	// Versions are the versions the row holds in, when an Across Eval answered it (#180), else nil. Its
+	// Cites are then its citations in the latest of them, and CitesAt gives another's.
+	Versions ns.VersionSet
+	// across and raw are, for a row an Across Eval answered, its Source and its citations as made,
+	// which CitesAt resolves.
+	across *acrossSource
+	raw    []string
 }
 
 // v builds a variable term; k builds a constant string term. Kept unexported helpers for tests and

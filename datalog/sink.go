@@ -436,7 +436,8 @@ type answerRow struct {
 	why   []string
 	bnd   *binding
 	key   string
-	slot  int // its place in the page heap
+	slot  int           // its place in the page heap
+	vs    ns.VersionSet // under Across, the versions this copy of the row holds in (see rowAlts)
 }
 
 // order is the answer's order on answerRows: the order by columns, then the default order over the
@@ -542,6 +543,8 @@ type projector struct {
 	held    int
 	scratch answerRow
 	key     []byte
+	// alts are, under Across, each row's copies by key, held instead of rows (see projector.addAcross).
+	alts map[string]rowAlts
 }
 
 func (p *projector) add(bnd *binding) error {
@@ -568,11 +571,15 @@ func (p *projector) add(bnd *binding) error {
 	if p.cursor != nil && !p.ord.after(r, p.cursor) {
 		return nil
 	}
-	cur, had := p.rows[string(p.key)]
 	r.bnd = nil
 	if p.ord.canonic {
 		r.bnd = p.canonical(bnd)
 	}
+	if p.alts != nil {
+		p.addAcross(r, bnd, r.bnd, bnd.versions(p.base.across.vs))
+		return nil
+	}
+	cur, had := p.rows[string(p.key)]
 	switch {
 	case had && !p.ord.survives(r, cur):
 		return nil

@@ -3,6 +3,7 @@ package guide_test
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/panyam/jaala/datalog"
 	"github.com/panyam/jaala/ns"
@@ -62,4 +63,20 @@ func Example_diff() {
 	// Output:
 	// + api log [api.go:5]
 	// - api util [api.go:4]
+}
+
+// Across evaluates once over a range of revisions, and each row carries
+// the revisions it holds in, so "since when does app depend on log" is one
+// query rather than one per revision.
+func Example_across() {
+	b, ctx := versionedBase(), context.Background()
+	q := datalog.MustParse(`deps.depends_on("app", ?d) => ?d`)
+	rows, _ := datalog.SemiNaive{}.Eval(ctx, q, b, datalog.Across(ns.Span(0, 3)))
+	for _, r := range rows {
+		fmt.Println(r.Bind["d"].S, slices.Collect(r.Versions.Ranges()))
+	}
+	// Output:
+	// api [{0 3}]
+	// log [{1 3}]
+	// util [{0 1}]
 }

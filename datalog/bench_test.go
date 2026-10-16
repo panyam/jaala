@@ -69,6 +69,8 @@ var workloads = []workload{
 	{"canonical/closure-reversed-from-start", func() ns.Source { return reversedLine(400) }, closure + `reach("v0", ?b) => ?b`, []Option{CanonicalCites()}},
 	{"canonical/same-generation-tree", func() ns.Source { return binaryTree(7) }, sameGen + `sg(?x, ?y) => ?x, ?y`, []Option{CanonicalCites()}},
 	{"canonical/points-to-one-variable", func() ns.Source { return pointerProgram(1) }, pointsTo + `pt("p7", ?o) => ?o`, []Option{CanonicalCites()}},
+	// Across (#180) derives points-to once over 50 versions; BenchmarkVersions sets it against 50 Ats.
+	{"versions/points-to-across-50", func() ns.Source { return historyOf(pointerProgram(1), 50, 0.04) }, pointsTo + `pt(?v, ?o) => ?v, ?o`, []Option{Across(ns.Span(0, 50))}},
 }
 
 // binaryTree is a complete binary tree of the given depth as parent->child edges, t0 the root and

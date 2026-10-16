@@ -199,32 +199,45 @@ func (b *Base) extendEDB(atom *Atom, bnd *binding, yield func(*binding) error) e
 
 // unifyEach unifies atom with each candidate, rows[pos[i]] for every i, or every row when all is set.
 func (b *Base) unifyEach(atom *Atom, rows []ns.Tuple, pos []int, all bool, bnd *binding, yield func(*binding) error) error {
+	var sets []ns.VersionSet // under Across, the versions each row holds in
+	if b.across != nil {
+		sets = b.across.setsOf(atom.Relation)
+	}
 	for i := 0; ; i++ {
 		var t ns.Tuple
+		k := i
 		if all {
 			if i >= len(rows) {
 				break
 			}
-			t = rows[i]
 		} else {
 			if i >= len(pos) {
 				break
 			}
-			t = rows[pos[i]]
+			k = pos[i]
 		}
+		t = rows[k]
 		if err := b.countWork(); err != nil {
 			return err
 		}
 		m := bnd.mark()
+		if sets != nil && !bnd.narrow(b.across.vs, sets[k]) {
+			continue
+		}
 		if unify(atom.Args, t, bnd) {
 			if b.witnessing() {
 				bnd.last = leaf(atom.Relation, t.Vals, t.Cites)
+				if sets != nil {
+					bnd.last.Versions = sets[k]
+				}
 			}
 			err := yield(bnd)
 			bnd.reset(m)
 			if err != nil {
 				return err
 			}
+		} else if sets != nil {
+			bnd.reset(m) // the versions narrow pushed
 		}
 	}
 	return nil
@@ -241,7 +254,11 @@ func (b *Base) extendIDB(atom *Atom, bnd *binding, yield func(*binding) error) e
 			return err
 		}
 		m := bnd.mark()
+		if t.vs != nil && !bnd.narrow(b.across.vs, t.vs) {
+			continue
+		}
 		if !unify(atom.Args, ns.Tuple{Vals: t.vals, Cites: t.cites}, bnd) {
+			bnd.reset(m)
 			continue
 		}
 		bnd.last, bnd.parts = t.wit, t.parts

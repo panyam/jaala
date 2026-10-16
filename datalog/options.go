@@ -23,6 +23,7 @@ type evalOptions struct {
 	total     *int
 	kept      *error // set by Materialize: where a DerivedStore's failed write is reported
 	at        *ns.Version
+	across    ns.VersionSet
 }
 
 // Bind gives goal variables values from the host, so a parameterized query needs no program text built

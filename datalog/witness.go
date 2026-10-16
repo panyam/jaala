@@ -32,8 +32,15 @@ type Witness struct {
 	// generators, filters and negations; not comparisons), in the order the rule is WRITTEN, whatever
 	// order it was evaluated in.
 	Children []*Witness
+	// Versions are, for a witness an Across Eval answered (#180), the versions this node's fact holds
+	// in, or this derivation was found for; nil otherwise. At gives the witness of one version.
+	Versions ns.VersionSet
 	// height is the number of rule steps above the facts, which CanonicalCites keeps shortest.
 	height int
+	// across and raw are, for a fact an Across Eval answered, its Source and its citations as made,
+	// which At resolves to another version's.
+	across *acrossSource
+	raw    []string
 }
 
 // Witnesses asks an Eval to record how each answer was derived, in Row.Witness. Recording keeps the

@@ -86,6 +86,9 @@ type Base struct {
 	timed    ns.TimedSource
 	versions *versionCache
 	at       *ns.Version
+	// across is the Source of a Base an Across Eval runs on (#180), whose tuples each hold in some of
+	// its versions, and nil on any other.
+	across *acrossSource
 	// run is one Eval's own state (its context and budget), set on that Eval's copy of the Base and
 	// nil on a Base no Eval is running on.
 	run *evalRun
@@ -296,6 +299,16 @@ func evaluate(ctx context.Context, q Query, b *Base, opts []Option, rewrite func
 	for _, opt := range opts {
 		opt(&o)
 	}
+	if o.at != nil && o.across != nil {
+		return nil, fmt.Errorf("query: At and Across can't both be given")
+	}
+	if o.across != nil && b.across == nil {
+		ab, err := b.acrossBase(o.across)
+		if err != nil {
+			return nil, err
+		}
+		b = ab
+	}
 	if o.at != nil && b.at == nil {
 		// A version's own Base, whose caches are that version's; a cold rerun of it starts there.
 		b.refresh()
@@ -334,6 +347,9 @@ func evaluateOn(b *Base, gen int64, q Query, o evalOptions, rewrite func(*Base, 
 	}
 	if q, err = lowerExpressions(q, b.reg); err != nil {
 		return nil, err
+	}
+	if b.across != nil && hasAggregates(q) {
+		return nil, fmt.Errorf("query: Across can't evaluate an aggregate yet; ask At at each version")
 	}
 	written := q
 	if o.after != nil {
@@ -668,6 +684,9 @@ func (b *Base) isIDB(rel string) bool {
 // binding is kept iff NO param fact has subject == the bound ?m and symbol == "VIN" — i.e. "?m has
 // no VIN param at any value". A part whose ?m does have such a fact is dropped.
 func passesNegations(bnd *binding, negs []Literal, b *Base) (bool, error) {
+	if b.across != nil {
+		return passesNegationsAcross(bnd, negs, b, nil)
+	}
 	if b.run != nil && b.run.explain != nil && b.run.explain.body != nil {
 		return passesNegationsExplained(bnd, negs, b, b.run.explain)
 	}
@@ -688,6 +707,13 @@ func passesNegations(bnd *binding, negs []Literal, b *Base) (bool, error) {
 func passesNegationsExplained(bnd *binding, negs []Literal, b *Base, e *explainer) (bool, error) {
 	prev := e.cur
 	defer func() { e.cur = prev }()
+	if b.across != nil {
+		return passesNegationsAcross(bnd, negs, b, func(k int) {
+			if lr, _ := e.literal(len(e.body.Literals) - len(negs) + k); lr != nil {
+				lr.Passed++
+			}
+		})
+	}
 	for k, lit := range negs {
 		lr, _ := e.literal(len(e.body.Literals) - len(negs) + k)
 		matched, err := b.atomHolds(lit.Neg, bnd)
@@ -719,6 +745,9 @@ type binding struct {
 	parts []placed // set instead of last by a supplementary tuple (see idbTuple.parts)
 	// What set overwrote, such as bindArg's better spelling of a bound number, for reset to restore.
 	undo []overwrite
+	// vers are, under Across, the versions the binding holds in after each fact that narrowed them
+	// (see narrow); empty, it holds in every version asked about.
+	vers []ns.VersionSet
 }
 
 type varVal struct {
@@ -732,7 +761,7 @@ type overwrite struct {
 }
 
 // mark is how far a binding had been extended, for reset.
-type mark struct{ vals, cites, wit, undo int }
+type mark struct{ vals, cites, wit, undo, vers int }
 
 func newBinding() *binding { return &binding{} }
 
@@ -764,7 +793,9 @@ func (b *binding) set(v Var, val ns.Value) {
 	b.vals = append(b.vals, varVal{v, val})
 }
 
-func (b *binding) mark() mark { return mark{len(b.vals), len(b.cites), len(b.wit), len(b.undo)} }
+func (b *binding) mark() mark {
+	return mark{len(b.vals), len(b.cites), len(b.wit), len(b.undo), len(b.vers)}
+}
 
 // reset undoes every extension made since m, newest first.
 func (b *binding) reset(m mark) {
@@ -773,13 +804,13 @@ func (b *binding) reset(m mark) {
 			b.vals[o.i].val = o.val
 		}
 	}
-	b.vals, b.cites, b.wit, b.undo = b.vals[:m.vals], b.cites[:m.cites], b.wit[:m.wit], b.undo[:m.undo]
+	b.vals, b.cites, b.wit, b.undo, b.vers = b.vals[:m.vals], b.cites[:m.cites], b.wit[:m.wit], b.undo[:m.undo], b.vers[:m.vers]
 	b.last, b.parts = nil, nil
 }
 
 // keep is a copy of b that later extensions of b leave alone.
 func (b *binding) keep() *binding {
-	return &binding{vals: slices.Clone(b.vals), cites: slices.Clone(b.cites), wit: slices.Clone(b.wit)}
+	return &binding{vals: slices.Clone(b.vals), cites: slices.Clone(b.cites), wit: slices.Clone(b.wit), vers: slices.Clone(b.vers)}
 }
 
 // solve recurses over the goal literals: a positive atom fans out through extendAtom (the one

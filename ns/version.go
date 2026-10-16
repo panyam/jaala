@@ -113,7 +113,21 @@ func (s IntervalSet) Ranges() iter.Seq[VersionRange] {
 }
 
 func (s IntervalSet) Intersect(o VersionSet) VersionSet {
+	// A fact usually holds across one range covering what it meets, so that case allocates nothing.
+	if oi, ok := o.(IntervalSet); ok {
+		if covers(s.r, oi.r) {
+			return oi
+		}
+		if covers(oi.r, s.r) {
+			return s
+		}
+	}
 	return IntervalSet{combine(s.r, rangesOf(o), func(a, b bool) bool { return a && b })}
+}
+
+// covers reports whether a is one range holding every range of b.
+func covers(a, b []VersionRange) bool {
+	return len(a) == 1 && (len(b) == 0 || a[0].From <= b[0].From && b[len(b)-1].To <= a[0].To)
 }
 
 func (s IntervalSet) Union(o VersionSet) VersionSet {
@@ -121,6 +135,9 @@ func (s IntervalSet) Union(o VersionSet) VersionSet {
 }
 
 func (s IntervalSet) Minus(o VersionSet) VersionSet {
+	if oi, ok := o.(IntervalSet); ok && (len(oi.r) == 0 || len(s.r) == 0) {
+		return s
+	}
 	return IntervalSet{combine(s.r, rangesOf(o), func(a, b bool) bool { return a && !b })}
 }
 
