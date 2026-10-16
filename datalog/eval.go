@@ -291,9 +291,10 @@ func evaluate(ctx context.Context, q Query, b *Base, opts []Option, rewrite func
 	}
 	// The query runs on its own copy of the Base: its context, its budget and its derived relations
 	// are its own, while the Source's tuples and their indexes stay shared (see Base).
-	gen := b.refresh()
+	gen, version, versioned := b.refresh()
 	nb := *b
-	nb.run = &evalRun{ctx: ctx, budget: o.budget, witness: o.witness || o.canonical, canonical: o.canonical, lookGen: b.lookups.generation()}
+	nb.run = &evalRun{ctx: ctx, budget: o.budget, witness: o.witness || o.canonical, canonical: o.canonical, lookGen: b.lookups.generation(),
+		gen: gen, version: version, versioned: versioned}
 	if o.explain == nil {
 		return evaluateOn(&nb, gen, q, o, rewrite, fixpoint)
 	}
@@ -427,7 +428,9 @@ func evaluateOn(b *Base, gen int64, q Query, o evalOptions, rewrite func(*Base, 
 		if err := fixpoint(b, q.Rules); err != nil {
 			return nil, err
 		}
-		keepDerived(b, gen, q.Rules)
+		if err := keepDerived(b, gen, q.Rules); err != nil && o.kept != nil {
+			*o.kept = err
+		}
 	}
 	pos, negs := splitNegations(q.Goal.Literals)
 	if err := b.checkNegatedRelations(negs); err != nil {
