@@ -331,7 +331,7 @@ func (ag *aggregator) newGroup() *aggGroup {
 }
 
 func (ag *aggregator) value(bnd *binding, v Var) (ns.Value, bool) {
-	val, ok := bnd.vals[v]
+	val, ok := bnd.get(v)
 	if ok && ag.canonical {
 		val = canonicalNumber(val)
 	}
@@ -554,7 +554,7 @@ func (p *projector) add(bnd *binding) error {
 		if v, ok := p.fixed[i]; ok {
 			r.vals[i] = v
 		} else {
-			r.vals[i] = canonicalNumber(bnd.vals[c])
+			r.vals[i] = canonicalNumber(bnd.value(c))
 		}
 	}
 	p.key = p.key[:0]
@@ -607,7 +607,7 @@ func (p *projector) add(bnd *binding) error {
 // canonical is the binding as CanonicalCites compares it: a copy with its negations' witnesses, and
 // its numbers written as canonicalAnswers writes them.
 func (p *projector) canonical(bnd *binding) *binding {
-	c := bnd.clone()
+	c := bnd.keep()
 	c.wit = append(c.wit, p.base.negationWitnesses(p.negs, bnd)...)
 	canonicalAnswers([]*binding{c})
 	return c

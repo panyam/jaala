@@ -689,24 +689,81 @@ func passesNegationsExplained(bnd *binding, negs []Literal, b *Base, e *explaine
 }
 
 // binding is a partial solution: variable bindings plus the cites of the facts consumed so far.
+//
+// A solve extends one binding in place and undoes each extension when its candidate is done (mark,
+// then reset), so a candidate allocates nothing whether or not it unifies (#260). Anything keeping a
+// binding past the callback it was handed keeps a copy (keep), since the next candidate rewrites it.
 type binding struct {
-	vals  map[Var]ns.Value
+	vals  []varVal // a body binds a handful of variables, so a scan beats a map
 	cites []string
 	// For a witnessed Eval: the witness of each literal solved so far, and of the one just extended
 	// by (set by extendAtom, placed by solve, which knows the literal's written position).
 	wit   []placed
 	last  *Witness
 	parts []placed // set instead of last by a supplementary tuple (see idbTuple.parts)
+	// What set overwrote, such as bindArg's better spelling of a bound number, for reset to restore.
+	undo []overwrite
 }
 
-func newBinding() *binding { return &binding{vals: map[Var]ns.Value{}} }
+type varVal struct {
+	v   Var
+	val ns.Value
+}
 
-func (b *binding) clone() *binding {
-	nv := make(map[Var]ns.Value, len(b.vals))
-	for k, v := range b.vals {
-		nv[k] = v
+type overwrite struct {
+	i   int
+	val ns.Value
+}
+
+// mark is how far a binding had been extended, for reset.
+type mark struct{ vals, cites, wit, undo int }
+
+func newBinding() *binding { return &binding{} }
+
+// get is v's value, when v is bound.
+func (b *binding) get(v Var) (ns.Value, bool) {
+	for i := range b.vals {
+		if b.vals[i].v == v {
+			return b.vals[i].val, true
+		}
 	}
-	return &binding{vals: nv, cites: append([]string(nil), b.cites...), wit: append([]placed(nil), b.wit...)}
+	return ns.Value{}, false
+}
+
+// value is v's value, the zero Value when v is unbound.
+func (b *binding) value(v Var) ns.Value {
+	val, _ := b.get(v)
+	return val
+}
+
+// set binds v to val, replacing the value it has (which reset restores).
+func (b *binding) set(v Var, val ns.Value) {
+	for i := range b.vals {
+		if b.vals[i].v == v {
+			b.undo = append(b.undo, overwrite{i, b.vals[i].val})
+			b.vals[i].val = val
+			return
+		}
+	}
+	b.vals = append(b.vals, varVal{v, val})
+}
+
+func (b *binding) mark() mark { return mark{len(b.vals), len(b.cites), len(b.wit), len(b.undo)} }
+
+// reset undoes every extension made since m, newest first.
+func (b *binding) reset(m mark) {
+	for i := len(b.undo) - 1; i >= m.undo; i-- {
+		if o := b.undo[i]; o.i < m.vals {
+			b.vals[o.i].val = o.val
+		}
+	}
+	b.vals, b.cites, b.wit, b.undo = b.vals[:m.vals], b.cites[:m.cites], b.wit[:m.wit], b.undo[:m.undo]
+	b.last, b.parts = nil, nil
+}
+
+// keep is a copy of b that later extensions of b leave alone.
+func (b *binding) keep() *binding {
+	return &binding{vals: slices.Clone(b.vals), cites: slices.Clone(b.cites), wit: slices.Clone(b.wit)}
 }
 
 // solve recurses over the goal literals: a positive atom fans out through extendAtom (the one
@@ -864,11 +921,12 @@ func solveAt(lits []Literal, i int, bnd *binding, b *Base, emit func(*binding) e
 		return fmt.Errorf("query: internal: negated literal reached the positive solver")
 	case lit.Pos != nil:
 		return b.extendAtom(lit.Pos, bnd, func(ext *binding) error {
+			// What this appends to ext.wit goes when the extension resets to its mark.
 			if b.witnessing() {
 				if ext.parts != nil {
-					ext.wit = append(ext.wit[:len(ext.wit):len(ext.wit)], ext.parts...)
+					ext.wit = append(ext.wit, ext.parts...)
 				} else {
-					ext.wit = append(ext.wit[:len(ext.wit):len(ext.wit)], placed{at: lit.at, node: ext.last})
+					ext.wit = append(ext.wit, placed{at: lit.at, node: ext.last})
 				}
 				ext.last, ext.parts = nil, nil
 			}
@@ -882,22 +940,24 @@ func solveAt(lits []Literal, i int, bnd *binding, b *Base, emit func(*binding) e
 	}
 }
 
-// unify matches an atom's args against one fact, extending bnd: a constant must equal the field, a
-// variable binds it (or must equal its existing binding). Returns the extended binding, or false.
+// unify matches an atom's args against one fact, extending bnd in place: a constant must equal the
+// field, a variable binds it (or must equal its existing binding). On false bnd is as it was; on true
+// the caller resets it to a mark taken before, once done with the extension.
 //
 // This is logic-programming pattern matching (as in Prolog/datalog), not function application: it
 // is symmetric — an argument matches whether the value comes from the fact or from an existing
 // binding — and it commits variables into the binding as a side result, closer to destructuring a
 // value against a pattern than to calling a function with arguments.
-func unify(args []Term, t ns.Tuple, bnd *binding) (*binding, bool) {
-	out := bnd.clone()
+func unify(args []Term, t ns.Tuple, bnd *binding) bool {
+	m := bnd.mark()
 	for j, arg := range args {
-		if !bindArg(out, arg, t.Vals[j]) {
-			return nil, false
+		if !bindArg(bnd, arg, t.Vals[j]) {
+			bnd.reset(m)
+			return false
 		}
 	}
-	out.cites = append(out.cites, t.Cites...)
-	return out, true
+	bnd.cites = append(bnd.cites, t.Cites...)
+	return true
 }
 
 // bindArg unifies one argument term with a value: a constant must equal it, a variable binds it (or
@@ -909,16 +969,16 @@ func bindArg(bnd *binding, arg Term, val ns.Value) bool {
 	case arg.Var == "" || arg.Var == "_":
 		return true
 	default:
-		if bound, ok := bnd.vals[arg.Var]; ok {
+		if bound, ok := bnd.get(arg.Var); ok {
 			if !valueEq(val, bound) {
 				return false
 			}
 			if val.Num != nil && bound.Num != nil && (val.S != bound.S || val.BaseUnit != bound.BaseUnit) && spelledBefore(val, bound) {
-				bnd.vals[arg.Var] = val
+				bnd.set(arg.Var, val)
 			}
 			return true
 		}
-		bnd.vals[arg.Var] = val
+		bnd.vals = append(bnd.vals, varVal{arg.Var, val})
 		return true
 	}
 }
@@ -1049,9 +1109,9 @@ func canonicalNumber(v ns.Value) ns.Value {
 // after, so it keeps the value as bound.
 func canonicalAnswers(raw []*binding) {
 	for _, bnd := range raw {
-		for v, val := range bnd.vals {
-			if c := canonicalNumber(val); c.S != val.S {
-				bnd.vals[v] = c
+		for i := range bnd.vals {
+			if c := canonicalNumber(bnd.vals[i].val); c.S != bnd.vals[i].val.S {
+				bnd.vals[i].val = c
 			}
 		}
 		for i, p := range bnd.wit {
@@ -1103,8 +1163,7 @@ func resolve(t Term, bnd *binding) (ns.Value, bool) {
 	if t.Const != nil {
 		return *t.Const, true
 	}
-	val, ok := bnd.vals[t.Var]
-	return val, ok
+	return bnd.get(t.Var)
 }
 
 // valueEq reports whether two values are the same value: two numbers when their numbers are equal,
@@ -1479,7 +1538,7 @@ func passesHaving(row Row, having []Compare) (bool, error) {
 func groupKeyOf(keyVars []Var, bnd *binding) string {
 	var b strings.Builder
 	for _, kv := range keyVars {
-		b.WriteString(valueKey(bnd.vals[kv]))
+		b.WriteString(valueKey(bnd.value(kv)))
 		b.WriteByte('\x1f')
 	}
 	return b.String()

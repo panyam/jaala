@@ -48,9 +48,11 @@ func extendBuiltin(bi ns.Builtin, atom *Atom, bnd *binding, b *Base, yield func(
 			return nil
 		}
 		if b.witnessing() {
-			c := bnd.clone()
-			c.last = leaf(atom.Relation, args, nil)
-			return yield(c)
+			m := bnd.mark()
+			bnd.last = leaf(atom.Relation, args, nil)
+			err := yield(bnd)
+			bnd.reset(m)
+			return err
 		}
 		return yield(bnd)
 	}
@@ -59,6 +61,7 @@ func extendBuiltin(bi ns.Builtin, atom *Atom, bnd *binding, b *Base, yield func(
 		v, ok := resolve(a, bnd)
 		args[i] = ns.Arg{Value: v, Bound: ok}
 	}
+	m := bnd.mark()
 	return bi.Gen(b.run.context(), b.src, args, func(vals []ns.Value, cites []string) error {
 		if err := b.countWork(); err != nil {
 			return err
@@ -67,17 +70,15 @@ func extendBuiltin(bi ns.Builtin, atom *Atom, bnd *binding, b *Base, yield func(
 			return fmt.Errorf("query: internal: %s emitted %d values for %d arguments", atom.Relation, len(vals), len(atom.Args))
 		}
 		vals, _ = normalizeValues(vals, bi.Types) // read as its declared types, as a relation's tuples are
-		next := bnd.clone()
-		for j, arg := range atom.Args {
-			if !bindArg(next, arg, vals[j]) {
-				return nil
-			}
+		if !unify(atom.Args, ns.Tuple{Vals: vals, Cites: cites}, bnd) {
+			return nil
 		}
-		next.cites = append(next.cites, cites...)
 		if b.witnessing() {
-			next.last = leaf(atom.Relation, vals, cites)
+			bnd.last = leaf(atom.Relation, vals, cites)
 		}
-		return yield(next)
+		err := yield(bnd)
+		bnd.reset(m)
+		return err
 	})
 }
 
@@ -214,11 +215,14 @@ func (b *Base) unifyEach(atom *Atom, rows []ns.Tuple, pos []int, all bool, bnd *
 		if err := b.countWork(); err != nil {
 			return err
 		}
-		if next, ok := unify(atom.Args, t, bnd); ok {
+		m := bnd.mark()
+		if unify(atom.Args, t, bnd) {
 			if b.witnessing() {
-				next.last = leaf(atom.Relation, t.Vals, t.Cites)
+				bnd.last = leaf(atom.Relation, t.Vals, t.Cites)
 			}
-			if err := yield(next); err != nil {
+			err := yield(bnd)
+			bnd.reset(m)
+			if err != nil {
 				return err
 			}
 		}
@@ -236,20 +240,14 @@ func (b *Base) extendIDB(atom *Atom, bnd *binding, yield func(*binding) error) e
 		if err := b.countWork(); err != nil {
 			return err
 		}
-		out := bnd.clone()
-		ok := true
-		for j, arg := range atom.Args {
-			if !bindArg(out, arg, t.vals[j]) {
-				ok = false
-				break
-			}
-		}
-		if !ok {
+		m := bnd.mark()
+		if !unify(atom.Args, ns.Tuple{Vals: t.vals, Cites: t.cites}, bnd) {
 			continue
 		}
-		out.cites = append(out.cites, t.cites...)
-		out.last, out.parts = t.wit, t.parts
-		if err := yield(out); err != nil {
+		bnd.last, bnd.parts = t.wit, t.parts
+		err := yield(bnd)
+		bnd.reset(m)
+		if err != nil {
 			return err
 		}
 	}
