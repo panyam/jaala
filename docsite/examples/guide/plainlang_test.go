@@ -1,6 +1,7 @@
 package guide_test
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -81,4 +82,62 @@ func Example_explainAnError() {
 	//     ^
 	// fix: pkg(name, license)
 	// kind arity, about pkg
+}
+
+// scriptedModel replies with its drafts in turn. A host's Model would ask a
+// real one, a local model through nlmodels or a hosted one.
+type scriptedModel struct {
+	drafts []string
+	n      int
+}
+
+func (m *scriptedModel) Name() string { return "scripted" }
+
+func (m *scriptedModel) Complete(_ context.Context, p nl.Prompt) (nl.Completion, error) {
+	if m.n > 0 {
+		fmt.Printf("told: %s\n\n", p.Turns[len(p.Turns)-1].Text)
+	}
+	m.n++
+	return nl.Completion{Text: m.drafts[m.n-1]}, nil
+}
+
+// Translate asks a model for a program, checks it, and hands each error
+// back until one checks. With a Base it runs the program too, so an empty
+// answer can go to a fallback model.
+func Example_translate() {
+	v, err := vocabulary(source())
+	if err != nil {
+		panic(err)
+	}
+	m := &scriptedModel{drafts: []string{
+		`depends_on("app", ?d) => ?d`,
+		"```\ndeps.depends_on(\"app\", ?d) => ?d\n```",
+	}}
+	b := datalog.MustBase(v, source())
+	p, tr, err := nl.Translate(context.Background(), "what does app depend on?", v, nil, m, nl.Options{Base: b})
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	for _, t := range tr.Tries {
+		fmt.Printf("try by %s: %q\n", t.Model, t.Kind)
+	}
+	fmt.Println(p.Text)
+	for _, r := range p.Rows {
+		fmt.Print(r.Bind["d"].S, " ")
+	}
+	fmt.Println()
+	// Output:
+	// told: query: unknown relation "depends_on"; did you mean "deps.depends_on"?
+	// line 1, column 1:
+	//   depends_on("app", ?d) => ?d
+	//   ^
+	// fix: did you mean "deps.depends_on"?
+	//
+	// Write the whole program again, fixed.
+	//
+	// try by scripted: "unknown"
+	// try by scripted: ""
+	// deps.depends_on("app", ?d) => ?d
+	// api log util
 }
