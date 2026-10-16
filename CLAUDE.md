@@ -116,7 +116,9 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   `pushConjunctions` runs after `plan`, in the planned SemiNaive only, and replaces each group the
   Source's `Pushes` accepts with one literal over `\x00p:{…}` whose arguments are the group's
   variables (`run.pushed` holds the group). A group starts at a pushable literal and takes each later
-  literal sharing a variable with it and none with a literal outside it before its place; one literal
+  literal sharing a variable with it and none with a literal outside it before its place, stopping at
+  a literal outside it that only filters the group's variables (`filtersGroup`, #291: otherwise the
+  store joins every row the filter would drop); one literal
   alone is a group when nothing binds it, it has no constant, and a variable repeats in it or a
   comparison the store takes goes with it (`filtersAlone`, `repeatsVar`, #263); variables
   bound before it are `Inputs` (`offered`), which the store must take (#246), and `prefetchPushed`
@@ -513,7 +515,12 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   relation's plan. A relation whose every rule is only generators runnable from its constants
   (`constantRun`, #290) is never demanded either: demand runs each generator once per caller value
   (Declaire's `sends` over `graph.reach`: 86,460 walks for 7,205 callees, against 12 in full). A
-  rule reading a base relation keeps demand, since in full it is scanned rather than probed. A rule evaluated in full also has its
+  rule reading a base relation keeps demand, since in full it is scanned rather than probed. A call
+  whose bound arguments all come from a generator called with nothing bound is not demanded
+  (`enumerates`, `fromWide`, #291): it listed every value, so the guard would be the whole relation,
+  and the planner keeps a guard first. That holds in the goal, `sideways`, and a body under a
+  zero-argument guard (Declaire's `sent/ff`, whose `loc.home` demanded all 136,181 functions). A
+  rule evaluated in full also has its
   constant calls rewritten (`fromConstants`, #57), adorned by the constants alone, so their demand
   rules are facts and add no dependency. A call its earlier literals bind is not demanded there, since
   a full rule binds it for every row (doing so cost `series-from-a-net` 170 times its baseline),

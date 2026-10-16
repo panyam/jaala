@@ -1039,3 +1039,48 @@ func TestAStoreFiltersALiteralAlone(t *testing.T) {
 		}
 	}
 }
+
+// A pushed group stops at a literal outside it that only filters what the group bound (#291), so the
+// store isn't asked to join rows the filter would drop: Declaire's http.path pushed edge, attr and an
+// argument edge over every callsite where http.sends(?c) kept 1,228 of 80,491. The store refuses http
+// and kind, so they stand outside the group as a derived literal would. control: a literal outside
+// that binds something new lets the group grow past it, as before.
+func TestAPushStopsAtAFilterOnItsVariables(t *testing.T) {
+	src := ns.NewMemSource().Declare("calls", "f", "cs").Declare("callee", "cs", "c").Declare("arg", "cs", "in").Declare("http", "c").Declare("kind", "c", "k")
+	for i := range 6 {
+		cs, c := fmt.Sprint("cs", i), fmt.Sprint("c", i)
+		src.Add("calls", ns.Tuple{Vals: []ns.Value{ns.S("f"), ns.S(cs)}})
+		src.Add("callee", ns.Tuple{Vals: []ns.Value{ns.S(cs), ns.S(c)}})
+		src.Add("arg", ns.Tuple{Vals: []ns.Value{ns.S(cs), ns.S(fmt.Sprint("/p", i))}})
+		src.Add("kind", ns.Tuple{Vals: []ns.Value{ns.S(c), ns.S("fn")}})
+	}
+	src.Add("http", ns.Tuple{Vals: []ns.Value{ns.S("c2")}})
+	for _, c := range []struct {
+		goal  string
+		atoms int // the widest conjunction pushed
+	}{
+		{`calls("f", ?cs), callee(?cs, ?c), http(?c), arg(?cs, ?in) => ?in`, 2},
+		{`calls("f", ?cs), callee(?cs, ?c), kind(?c, ?k), arg(?cs, ?in) => ?in, ?k`, 3}, // control
+	} {
+		q := mustParse(t, c.goal)
+		want, err := both(q, baseFor(std(src)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		p := pushingAt(src)
+		p.refuse = func(c ns.Conjunction) bool { // http and kind stand outside, as Declaire's derived sends does
+			return slices.ContainsFunc(c.Atoms, func(a ns.PushAtom) bool { return a.Relation == "http" || a.Relation == "kind" })
+		}
+		got, err := SemiNaive{}.Eval(bg, q, MustBase(std(src), p))
+		if err != nil || !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: pushed %v %v, want %v", c.goal, binds(got), err, binds(want))
+		}
+		widest := 0
+		for _, pc := range p.pushed {
+			widest = max(widest, len(pc.Atoms))
+		}
+		if widest != c.atoms {
+			t.Errorf("%s: widest conjunction pushed has %d atoms, want %d (pushed %d)", c.goal, widest, c.atoms, len(p.pushed))
+		}
+	}
+}

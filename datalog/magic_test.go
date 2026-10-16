@@ -776,3 +776,41 @@ func TestTwoAdornmentsReadOnlyThatRelationInFull(t *testing.T) {
 		t.Errorf("b: %+v, want it demanded", rr)
 	}
 }
+
+// A call bound only by a generator that listed every value is read in full rather than demanded
+// (#291): demand would list its whole relation, behind a guard the planner keeps first. Declaire's
+// x04 calls sent with nothing bound from called/b, so sent/ff runs under a zero-argument guard (#60),
+// and loc.home(?f, ...) there demanded http.path for all 136,181 functions. Here s plays sent and d
+// http.path. control: a constant in the generator's call still demands d.
+func TestACallBoundByAnEnumeratingGeneratorIsNotDemanded(t *testing.T) {
+	const rules = `d(?f, ?p) :- edge(?f, ?p); d(?f, ?p) :- edge(?p, ?f); `
+	const called = `c(?r) :- node(?r), s(?p), ?p != ?r; c(?r) :- node(?r), edge(?r, "v9"); `
+	for _, c := range []struct {
+		goal, how string
+	}{
+		{called + `s(?p) :- d(?f, ?p), step(?f, _); node(?r), c(?r) => ?r`, "full"},
+		{called + `s(?p) :- d(?f, ?p), step("v1", ?f); node(?r), c(?r) => ?r`, "demand"}, // control
+		// u stands in for the goal: inlined into it, or under Witnesses demanded sideways (#270).
+		{`u(?f, ?g, ?p) :- step(?f, ?g), d(?f, ?p); u(?f, ?g, ?p) => ?p`, "full"},
+		{`u(?f, ?p) :- step("v1", ?f), d(?f, ?p); u(?f, ?p) => ?p`, "demand"}, // control
+		{`u(?f, ?g) :- step(?f, ?g), d(?f, "v3"); u(?f, ?g) => ?f`, "demand"}, // control: a constant narrows the demand
+	} {
+		for _, opts := range [][]Option{nil, {Witnesses()}} {
+			v := std(line(10))
+			stepper(t, v, false)
+			q := mustParse(t, rules+c.goal)
+			want, err := both(q, baseFor(v))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var r Report
+			got, err := SemiNaive{}.Eval(bg, q, baseFor(v), append(opts, Explain(&r))...)
+			if err != nil || len(got) != len(want) {
+				t.Fatalf("%s: %d rows %v, want %d", c.goal, len(got), err, len(want))
+			}
+			if rr := relationIn(&r, "d"); rr == nil || rr.How != c.how {
+				t.Errorf("%s, %d options: d %+v, want %s", c.goal, len(opts), rr, c.how)
+			}
+		}
+	}
+}
