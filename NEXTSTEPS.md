@@ -5,24 +5,22 @@ Maintained by /checkpoint: one thread per branch, pruned when the branch merges.
 
 ## At a glance
 
-- No open branches. `main` is d5ef070: jaala v0.1.65 (2fc0af0) and nlmodels/v0.1.65 (d5ef070) ship
-  the `nl` front end and its model clients, upgrade note on #322.
-- Mission #322 (`mission_agent_frontend`) is active, 7 of 10 linked tickets closed. Next ready:
-  #336 [P1], a `Fix` for an unknown name with nothing close (the 3 of `TestEval`'s 6 check errors
-  without one). #337 [P1], moving `nl` and `nlmodels` under `frontends/`, is in flight in another
-  session, so #336's change lands in `frontends/nl` if it merges after. #337 was filed before v0.1.65 and
-  nlmodels/v0.1.65 were tagged, so the move now changes the paths those tags ship (hence its
-  "retract the old nlmodels path"): tell declaire#290 before it builds on `github.com/panyam/jaala/nl`.
-  Exercise last ran at 2fc0af0 (`go test ./nl -run TestEval -v`: 7/8 passed, 2 first try, fix 3/6);
-  the real one is declaire#290's translator-alone arm, which is Declaire's.
+- No open branches. `main` is ba12c65: jaala v0.1.66 (ab16caa) and frontends/nlmodels/v0.1.66
+  (1f28f76) ship `frontends/nl` and its clients at their new paths, noted on declaire#290. The next
+  release is `make tag-push V=v0.1.67 NOTES=notes.txt` (#339).
+- Mission #322 (`mission_agent_frontend`) is active, 9 of 10 tickets closed: every jaala ticket is
+  done, and it stays open for Declaire's translator-alone arm (declaire#290). Nothing ready in
+  jaala. Exercise last ran at ab16caa (`go test ./frontends/nl -run TestEval -v`: 7/8, 2 first
+  try, fixes 6/6); one PR (#339, tooling only) merged since.
 - Waiting: #327 (`Across` kept between Evals, and batched, pushed, walked and streamed across
   versions) until a host times `Across` over a store; #288 (sessions) after #287 and agni#1027.
-- This run: merged #332 (#325), #334 (#326, #331); tagged v0.1.65 and nlmodels/v0.1.65; filed #336;
-  picked up #337 (another session's); dropped the merged `feat/nl-*` and `feat/grammar-323` branches.
+- This run: merged #333, #335, #338 and #339 (#323, #324, #330, #336, #337); tagged v0.1.66 and
+  frontends/nlmodels/v0.1.66. Merged remote branches still hold old NEXTSTEPS copies with no threads.
 
 ## Across threads
 
 - `make setup` installs Soufflé 2.5 and `make llama` llama.cpp's `llama-server` and its 1 MB test
-  model, so `./selfcheck.sh` runs both steps locally; copy the model into a selfcheck worktree.
+  model, so `./selfcheck.sh` runs both steps locally; a selfcheck worktree needs its own copy of
+  `frontends/nlmodels/testdata/stories260K.gguf`.
 - The old parser stays as test code (`datalog/slicer_test.go`) until a grammar change should make it
   disagree; CLAUDE.md's tokenizer bullet says how to retire it.
