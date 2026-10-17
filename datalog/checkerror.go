@@ -127,6 +127,9 @@ func Locate(text string, err error) (Position, bool) {
 	if at < 0 && ce.Var != "" {
 		at = src.findVar(clauses, ce.Var)
 	}
+	if at < 0 && ce.Kind == KindDefinition && ce.Rule != "" && len(clauses) > 0 && src.headName(clauses[0]) == ce.Rule {
+		at = src.toks[clauses[0][0]].pos // a head that can't define its relation: the head itself
+	}
 	if at < 0 {
 		return Position{}, false
 	}
@@ -308,6 +311,11 @@ func (b *Base) arityErr(msg string, atom *Atom) *CheckError {
 func (b *Base) unknownErr(atom *Atom, format string, args ...any) *CheckError {
 	desc := b.reg.Unknown(atom.Relation)
 	fix := unknownFix(desc)
+	if module, leaf := splitLeaf(atom.Relation); module != "" {
+		if ok, known := b.arityAccepts(leaf, len(atom.Args)); ok && known {
+			fix = fmt.Sprintf("%s has no module; call %s", leaf, b.signatureFix(leaf))
+		}
+	}
 	if fix == "" {
 		fix = b.relatedFix(atom)
 	}
@@ -340,6 +348,66 @@ func unknownAggregateErr(f string) *CheckError {
 	return checkErr(KindUnknown, fmt.Sprintf("query: unknown aggregate %q (want count/min/max/sum/list)", f)).fix("use count, min, max, sum or list")
 }
 
+// localFix points an unknown call's Fix at the program's own rule it likely means (#341), since the
+// vocabulary's suggestion can't see the program's rules: a qualified call whose last segment is one
+// (str.mine after a qualified head was renamed mine, but not its calls), or, when the vocabulary
+// suggested no name, a misspelling of one at its arity. Any other error is returned as it is.
+func localFix(err error, rules []Rule) error {
+	var ce *CheckError
+	if !errors.As(err, &ce) || ce.Kind != KindUnknown || ce.Relation == "" {
+		return err
+	}
+	arity := map[string]int{}
+	var names []string
+	for _, r := range rules {
+		if h := r.Head.Relation; !strings.ContainsAny(h, ".\x00") {
+			if _, ok := arity[h]; !ok {
+				names = append(names, h)
+			}
+			arity[h] = len(r.Head.Args)
+		}
+	}
+	if _, leaf := splitLeaf(ce.Relation); leaf != ce.Relation {
+		if n, ok := arity[leaf]; ok && (ce.Args < 0 || n == ce.Args) {
+			ce.Fix = fmt.Sprintf("%s is the program's own rule; call it %s, without a module", leaf, leaf)
+		}
+		return err
+	}
+	if strings.Contains(ce.Fix, "did you mean") {
+		return err
+	}
+	var near []string
+	for _, n := range names {
+		if ce.Args < 0 || arity[n] == ce.Args {
+			near = append(near, n)
+		}
+	}
+	if s := ns.DidYouMeanValue(near, ce.Relation); s != "" {
+		for _, n := range near {
+			if s == fmt.Sprintf(", did you mean %q?", n) {
+				ce.Fix = fmt.Sprintf("did you mean %s, the program's own rule?", n)
+			}
+		}
+	}
+	return err
+}
+
+// plural is n and noun, with an s unless n is 1.
+func plural(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
+}
+
+// splitLeaf splits a qualified name into its module and its last segment ("" and name when bare).
+func splitLeaf(name string) (module, leaf string) {
+	if i := strings.LastIndexByte(name, '.'); i >= 0 {
+		return name[:i], name[i+1:]
+	}
+	return "", name
+}
+
 // relatedFix is the Fix for a name nothing plausibly misspells (#336): the members taking as many
 // arguments, written as calls, those sharing a word with the name first, or failing those, that
 // nothing by that name exists, so a model stops inventing names.
@@ -347,11 +415,11 @@ func (b *Base) relatedFix(atom *Atom) string {
 	rel := shownName(atom.Relation)
 	related := b.reg.Related(rel, len(atom.Args))
 	if len(related) == 0 {
-		return fmt.Sprintf("nothing is named %s, and no member takes %d arguments; use one the vocabulary lists", rel, len(atom.Args))
+		return fmt.Sprintf("nothing is named %s, and no member takes %s; use one the vocabulary lists", rel, plural(len(atom.Args), "argument"))
 	}
 	calls := make([]string, len(related))
 	for i, r := range related {
 		calls[i] = b.signatureFix(r)
 	}
-	return fmt.Sprintf("nothing is named %s; members taking %d arguments include %s", rel, len(atom.Args), strings.Join(calls, ", "))
+	return fmt.Sprintf("nothing is named %s; members taking %s include %s", rel, plural(len(atom.Args), "argument"), strings.Join(calls, ", "))
 }

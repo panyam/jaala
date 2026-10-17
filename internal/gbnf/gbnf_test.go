@@ -28,3 +28,20 @@ func TestAPrefixIsWhatSomeAcceptedTextStartsWith(t *testing.T) {
 		t.Error("control: Accepts reads a prefix as a whole text")
 	}
 }
+
+func TestABoundedRepetitionReadsMToNItems(t *testing.T) {
+	g, err := Parse("root ::= \"a\"{2,4} \"b\"\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for text, want := range map[string]bool{"ab": false, "aab": true, "aaab": true, "aaaab": true, "aaaaab": false, "b": false} {
+		if g.Accepts(text) != want {
+			t.Errorf("Accepts(%q) = %v", text, !want)
+		}
+	}
+	for _, bad := range []string{"root ::= \"a\"{2}\n", "root ::= \"a\"{3,2}\n", "root ::= \"a\"{2,\n"} {
+		if _, err := Parse(bad); err == nil {
+			t.Errorf("Parse(%q) took a repetition it doesn't read", bad)
+		}
+	}
+}

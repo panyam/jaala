@@ -207,7 +207,8 @@ func callees(v *ns.Vocabulary) ([]callee, []string, error) {
 
 // localRules make local: an ident none of the root names spells. They walk the names' characters as a
 // trie, a rule per prefix, leaving it at any other character, so the grammar keeps a program's rule
-// from taking a member's or a module's name rather than trusting a model to.
+// from taking a member's or a module's name rather than trusting a model to. Leaving after p, a tail
+// rule (lt<n>) allows the rest of nameMax, so a local is never longer than an ident.
 func localRules(names []string) []rule {
 	const start = letters
 	const rest = letters + digits + "_"
@@ -230,7 +231,7 @@ func localRules(names []string) []rule {
 	for i, p := range ps {
 		id[p] = fmt.Sprintf("l%d", i)
 	}
-	tail := star(class{"a-zA-Z0-9_", "abenrt0_"})
+	tails := map[int]bool{}
 	branches := func(p, allowed string) alt {
 		var a alt
 		var next []byte
@@ -241,7 +242,12 @@ func localRules(names []string) []rule {
 			}
 		}
 		if others := dropChars(allowed, next); others != "" {
-			a = append(a, seq{class{ranges(others), others}, tail})
+			n := nameMax - len(p) - 1
+			if n < 0 {
+				return a // past nameMax, only the trie's own names go on
+			}
+			tails[n] = true
+			a = append(a, seq{class{ranges(others), others}, ref(fmt.Sprintf("lt%d", n))})
 		}
 		return a
 	}
@@ -252,6 +258,14 @@ func localRules(names []string) []rule {
 			e = opt(e) // p itself is a name a rule may take
 		}
 		out = append(out, rule{id[p], e})
+	}
+	var ns []int
+	for n := range tails {
+		ns = append(ns, n)
+	}
+	sort.Ints(ns)
+	for _, n := range ns {
+		out = append(out, rule{fmt.Sprintf("lt%d", n), upTo(class{"a-zA-Z0-9_", "abenrt0_"}, n)})
 	}
 	return out
 }

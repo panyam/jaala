@@ -27,6 +27,10 @@ func Validate(q Query, reg *ns.Vocabulary) error {
 // value, which neither coercion nor a closed Domain refuses (#68).
 // Naming a variable the goal does not use is the error Eval gives for binding one.
 func ValidateBound(q Query, reg *ns.Vocabulary, vars ...Var) error {
+	return localFix(validateBound(q, reg, vars), q.Rules)
+}
+
+func validateBound(q Query, reg *ns.Vocabulary, vars []Var) error {
 	bind := make(map[Var][]ns.Value, len(vars))
 	for _, v := range vars {
 		bind[v] = []ns.Value{ns.Absent()}
