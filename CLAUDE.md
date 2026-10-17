@@ -800,7 +800,7 @@ turns it into a program that checks. jaala's half is `frontends/nl` and `fronten
 `go test ./frontends/nl -run TestEval -v` is its jaala-side exercise (fix line 5/5). Declaire's
 translator-alone arm (declaire#295, for declaire#290) first ran on v0.1.66 and passed 2 of 14 on
 Qwen2.5-Coder 7B against declaire#288's bar of 10; its jaala asks became #340 and #341 (PR #342,
-merged after v0.1.66, so the arm's rerun waits for the next tag). The mission's done-when points at
+released in v0.1.67, which the arm's rerun takes). The mission's done-when points at
 declaire#288's translator line rather than quoting its number, which is Declaire's to set. The two store missions closed on 2026-10-16. `mission_store_federation` (#219), a host answers a question over many stores without holding them
 in memory, measured by the `Stores` benchmark (#218: stores asked, unindexed probes, round trips,
 peak heap and a repeated question's fetches as the number of stores grows) and Declaire's `bench
