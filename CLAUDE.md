@@ -795,11 +795,13 @@ Issues are ranked by the mission they serve (labels `P0`–`P3`, `waiting`, `mis
 missions unblock a host's active mission; such a mission closes when the host's half of its exercise
 passes too, so it can stay open after jaala's tickets close. One is active:
 `mission_agent_frontend` (#322), a host's caller asks in plain language and jaala's front end
-turns it into a program that checks. jaala's half is `frontends/nl` and `frontends/nlmodels`, and all of its tickets are
-closed (#321, #323 to #326, #330, #331, #336, #337), released in v0.1.66 and
-frontends/nlmodels/v0.1.66; `go test ./frontends/nl -run TestEval -v` meets its fix line (5/5). It
-stays open, as the store missions did, until Declaire's translator-alone arm (declaire#290) runs on
-those tags; findings from that run become new tickets on it. The two store missions closed on 2026-10-16. `mission_store_federation` (#219), a host answers a question over many stores without holding them
+turns it into a program that checks. jaala's half is `frontends/nl` and `frontends/nlmodels`
+(#321, #323 to #326, #330, #331, #336, #337, released in v0.1.66 and frontends/nlmodels/v0.1.66);
+`go test ./frontends/nl -run TestEval -v` is its jaala-side exercise (fix line 5/5). Declaire's
+translator-alone arm (declaire#295, for declaire#290) first ran on v0.1.66 and passed 2 of 14 on
+Qwen2.5-Coder 7B against declaire#288's bar of 10; its jaala asks became #340 and #341 (PR #342,
+merged after v0.1.66, so the arm's rerun waits for the next tag). The mission's done-when points at
+declaire#288's translator line rather than quoting its number, which is Declaire's to set. The two store missions closed on 2026-10-16. `mission_store_federation` (#219), a host answers a question over many stores without holding them
 in memory, measured by the `Stores` benchmark (#218: stores asked, unindexed probes, round trips,
 peak heap and a repeated question's fetches as the number of stores grows) and Declaire's `bench
 -time` on a federated view. The benchmark's stores run in its process, so `peak-MB` counts their
@@ -894,6 +896,11 @@ normalizes units upstream (its C24), but agni serves board geometry in `mm` and 
 thresholds in it, so folding changed two of its answers (upgrade note on agni#1035). agni moved to
 metres (agni#1036) before #303 made the fold opt-in, so a host's own migration can outrun jaala's
 fix: check its `go.mod` and recent PRs before writing it an upgrade note.
+
+Reproduce a host's ask before building it: Declaire's run asked for "a Fix for a qualified rule
+head", which v0.1.65 already had; the real gap (#341) was the error after the model followed it,
+since the unknown-name fix never read the program's own rules. Feeding the model's likely next
+draft through `Validate` and `nl.Explain` in a scratch module shows which message it actually gets.
 
 To find why a host's question is slow, run it alone: Declaire's `bench -dir <dir> -engine stores
 -time` over a directory holding its `workspace.txtpb` and only that question (#290 did this for x04).
