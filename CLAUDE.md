@@ -68,6 +68,9 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   `empty`, `repeat` and `model` to a `CheckError`'s kinds. An unknown call's `Fix` names the program's
   own rule it likely means (`localFix`, #341, at `Validate` and `evaluate`, since the vocabulary's
   suggestion can't see the rules). Its tests script the model (`scripted`), so tries are exact.
+  A draft run over the Base keeps its `datalog.Report` (`Try.Report`), and an empty answer's error
+  is an `EmptyAnswer` carrying `Report.Empty`, whose text goes back to the model (#343);
+  `nl.Report.Costliest` ranks drafts by work, and its work column shows only when one was evaluated.
   `nl.Eval` (#326) scores a `translate` func over `Case`s, matching a row by its values as a multiset
   (the model picks the columns' names and order) and rows as a multiset unless `Ordered`. `TestEval`
   is #322's exercise until Declaire's arm runs: the guide's vocabulary, a scripted small model and
@@ -524,6 +527,14 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   25% slower where interleaved it was within noise. Rewritten names are made readable by
   `ExplainName`, and `testdata/explain.golden` (`-update`) holds the text. `enter` lists a body's
   literals in `deferComparisons` order, the order `solve` indexes them in (#89).
+  An empty answer fills `Report.Empty` (#343) from the counts alone: the first literal that passed
+  nothing, its `Missed` (the first call that passed nothing, written in `solve`'s explaining branch
+  and `passesNegationsExplained`, never in `solveAt`), and, through a derived relation whose bodies
+  derived nothing, each rule's (`explainer.reads` maps a literal to the relation it reads, kept off
+  `LiteralReport` so its JSON reads back; a demand guard that passed nothing means the body wasn't
+  asked). `LiteralReport.Stopped` is set in `check` when the budget runs out. A count over nothing
+  answers a row though its literal passed nothing, which is the control that `Empty` keys on the
+  rows: every literal passing something can't tell.
 - **`CanonicalCites()` keeps each tuple's shortest derivation** (`canonical.go`, #22): fewest rule
   steps (a witness node's `height`), then the rule's written text, then the body nodes in written
   order by relation, values and a leaf's citations. It records witnesses to compare (so `tagWritten`

@@ -725,6 +725,9 @@ func passesNegationsExplained(bnd *binding, negs []Literal, b *Base, e *explaine
 			return false, err
 		}
 		if matched {
+			if lr != nil && lr.Missed == "" {
+				lr.Missed = called(lit, bnd)
+			}
 			return false, nil
 		}
 		if lr != nil {
@@ -944,7 +947,15 @@ func solve(lits []Literal, i int, bnd *binding, b *Base, emit func(*binding) err
 	if lits[i].Compare != nil {
 		e.access("comparison")
 	}
-	return solveAt(lits, i, bnd, b, emit, lr)
+	if lr == nil {
+		return solveAt(lits, i, bnd, b, emit, nil)
+	}
+	passed := lr.Passed
+	err := solveAt(lits, i, bnd, b, emit, lr)
+	if err == nil && lr.Passed == passed && lr.Missed == "" {
+		lr.Missed = called(lits[i], bnd) // bnd is back as it was called, its extensions reset
+	}
+	return err
 }
 
 // solveAt solves literal i on, counting in lr, when an Eval explains itself, the bindings it passes.

@@ -108,13 +108,65 @@ func (rep *Report) add(res Result) {
 	}
 }
 
-// String writes the report as a model's run is read: a line per case (pass, tries and the kinds they
-// were refused for), then the totals.
+// A Draft is one try of one case, as Costliest ranks them.
+type Draft struct {
+	Case string
+	N    int // the try's place in the case's Trace, from 1
+	Try  Try
+}
+
+// Costliest is the n tries whose evaluation over Options.Base did the most work, most first, a tie in
+// case and try order (#343). Work rather than time ranks them, since it is the same on every run; a
+// Try's Report says which rule and literal spent it. Tries never evaluated (no Base, or refused
+// before) aren't ranked.
+func (rep Report) Costliest(n int) []Draft {
+	var out []Draft
+	for _, r := range rep.Cases {
+		for i, t := range r.Trace.Tries {
+			if t.Report != nil {
+				out = append(out, Draft{Case: r.Name, N: i + 1, Try: t})
+			}
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Try.Report.Work > out[j].Try.Report.Work })
+	return out[:min(n, len(out))]
+}
+
+// costliestLiteral is the literal of r's goal or rules that did the most work, the first among equals.
+func costliestLiteral(r *datalog.Report) *datalog.LiteralReport {
+	var top *datalog.LiteralReport
+	for _, br := range append([]*datalog.BodyReport{r.Goal}, r.Rules...) {
+		if br == nil {
+			continue
+		}
+		for _, l := range br.Literals {
+			if top == nil || l.Work > top.Work {
+				top = l
+			}
+		}
+	}
+	return top
+}
+
+// String writes the report as a model's run is read: a line per case (pass, tries, the work of the
+// program it answered with when Translate evaluated it, and the kinds its tries were refused for), the
+// totals, then the three costliest drafts and where their work went.
 func (rep Report) String() string {
 	var b strings.Builder
 	w := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "case\tpass\ttries\trefused")
-	for _, r := range rep.Cases {
+	works := make([]string, len(rep.Cases))
+	worked := false
+	for i, r := range rep.Cases {
+		if n := len(r.Trace.Tries); r.Err == nil && n > 0 && r.Trace.Tries[n-1].Report != nil {
+			works[i], worked = fmt.Sprint(r.Trace.Tries[n-1].Report.Work), true
+		}
+	}
+	if worked {
+		fmt.Fprintln(w, "case\tpass\ttries\twork\trefused")
+	} else {
+		fmt.Fprintln(w, "case\tpass\ttries\trefused")
+	}
+	for i, r := range rep.Cases {
 		var kinds []string
 		for _, t := range r.Trace.Tries {
 			if t.Err != nil {
@@ -125,7 +177,11 @@ func (rep Report) String() string {
 		if r.Pass {
 			pass = "yes"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%d\t%s\n", r.Name, pass, len(r.Trace.Tries), strings.Join(kinds, " "))
+		if worked {
+			fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\n", r.Name, pass, len(r.Trace.Tries), works[i], strings.Join(kinds, " "))
+		} else {
+			fmt.Fprintf(w, "%s\t%s\t%d\t%s\n", r.Name, pass, len(r.Trace.Tries), strings.Join(kinds, " "))
+		}
 	}
 	w.Flush()
 	table := b.String()
@@ -149,6 +205,20 @@ func (rep Report) String() string {
 		parts = append(parts, fmt.Sprintf("%s %d", k, rep.Refused[k]))
 	}
 	fmt.Fprintf(&b, "refused: %s; check errors with a fix %d/%d\n", strings.Join(parts, ", "), rep.Fixed, rep.Checked)
+	if top := rep.Costliest(3); len(top) > 0 {
+		b.WriteString("costliest drafts:\n")
+		for _, d := range top {
+			kind := d.Try.Kind
+			if kind == "" {
+				kind = "accepted"
+			}
+			fmt.Fprintf(&b, "  %s try %d (%s): work %d", d.Case, d.N, kind, d.Try.Report.Work)
+			if l := costliestLiteral(d.Try.Report); l != nil && l.Work > 0 {
+				fmt.Fprintf(&b, ", most in %s (%d)", l.Literal, l.Work)
+			}
+			b.WriteString("\n")
+		}
+	}
 	return b.String()
 }
 

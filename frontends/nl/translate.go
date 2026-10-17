@@ -117,6 +117,9 @@ type Try struct {
 	Kind                              string
 	TokensIn, TokensOut, TokensCached int
 	Latency                           time.Duration
+	// Report is what evaluating the draft over Options.Base did (datalog.Explain), when it was
+	// evaluated: its work per rule and literal, and for an empty answer, Report.Empty.
+	Report *datalog.Report
 }
 
 // The Try kinds that aren't a CheckError's.
@@ -208,6 +211,23 @@ func Translate(ctx context.Context, question string, v *ns.Vocabulary, g Grounde
 // errEmpty is a program that checked and answered nothing.
 var errEmpty = errors.New("the program answered no rows")
 
+// An EmptyAnswer is the error of a draft that checked and answered nothing over Options.Base, with
+// where it lost its last binding (#343), which its message carries for the model to retry from.
+// errors.As finds it in a Try's Err.
+type EmptyAnswer struct {
+	Why *datalog.EmptyReport // nil when every literal passed something on
+}
+
+func (e *EmptyAnswer) Error() string {
+	if e.Why == nil {
+		return errEmpty.Error()
+	}
+	return errEmpty.Error() + ":\n" + e.Why.String()
+}
+
+// Is makes an EmptyAnswer the empty answer Translate moves to the fallback on.
+func (e *EmptyAnswer) Is(target error) bool { return target == errEmpty }
+
 // draft asks model once, then parses, checks and, over o.Base, evaluates what it wrote, unless it is
 // a draft refused already, whose error it returns again.
 func draft(ctx context.Context, model Model, p Prompt, v *ns.Vocabulary, o Options, refused map[string]error) (Try, Program, error) {
@@ -239,12 +259,13 @@ func draft(ctx context.Context, model Model, p Prompt, v *ns.Vocabulary, o Optio
 	if o.Base == nil {
 		return try, prog, nil
 	}
-	rows, err := datalog.SemiNaive{}.Eval(ctx, q, o.Base, o.Eval...)
+	try.Report = &datalog.Report{}
+	rows, err := datalog.SemiNaive{}.Eval(ctx, q, o.Base, append(o.Eval[:len(o.Eval):len(o.Eval)], datalog.Explain(try.Report))...)
 	if err != nil {
 		return refuse(err, kindOf(err, KindEval))
 	}
 	if len(rows) == 0 {
-		return refuse(errEmpty, KindEmpty)
+		return refuse(&EmptyAnswer{Why: try.Report.Empty}, KindEmpty)
 	}
 	prog.Rows = rows
 	return try, prog, nil

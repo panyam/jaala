@@ -250,3 +250,62 @@ func literalNames(lits []*LiteralReport) []string {
 	}
 	return out
 }
+
+// An empty answer says where it lost its last binding (#343), the same from every evaluator: the
+// first literal that passed nothing on, the call that first matched nothing with what the literals
+// before it had bound, and through a derived relation that derived nothing, the rule and literal
+// that left it empty. control: a count over nothing answers a row though its literal passed nothing
+// on, and has no Empty.
+func TestExplainSaysWhereAnEmptyAnswerLostItsLastBinding(t *testing.T) {
+	cases := []struct{ query, want string }{
+		{`edge("a", ?x), edge(?x, "a") => ?x`, `edge(?x, "a") matched nothing (first called as edge("b", "a"))`},
+		{`edge("zz", ?b) => ?b`, `edge("zz", ?b) matched nothing`},
+		{`edge(?a, ?b), ?b = "q" => ?a`, `?b = "q" held for none (first called as "b" = "q")`},
+		{`node(?n), not weight(?n, _) => ?n`, `not weight(?n, _) let nothing through (first called as not weight("a", _))`},
+		{`far(?a, ?c) :- edge(?a, ?b), edge(?b, ?c), weight(?c, 99); far(?a, ?c) :- edge(?c, ?a), weight(?c, 99); far(?x, ?y) => ?x`,
+			"far(?x, ?y) matched nothing\n" +
+				`  because weight(?c, 99) matched nothing (first called as weight("c", 99)), in far(?a, ?c) :- edge(?a, ?b), edge(?b, ?c), weight(?c, 99)` + "\n" +
+				`  because weight(?c, 99) matched nothing (first called as weight("a", 99)), in far(?a, ?c) :- edge(?c, ?a), weight(?c, 99)`},
+	}
+	for _, c := range cases {
+		for _, ev := range []Evaluator{Naive{}, SemiNaive{WrittenOrder: true}} {
+			r := explained(t, ev, c.query, baseFor(std(graph())))
+			if r.Empty == nil || r.Empty.String() != c.want {
+				t.Errorf("%T: %s: empty\n%v\nwant\n%s", ev, c.query, r.Empty, c.want)
+			}
+		}
+		if r := explained(t, SemiNaive{}, c.query, baseFor(std(graph()))); r.Empty == nil || r.Empty.Literal == "" {
+			t.Errorf("planned: %s: no Empty\n%s", c.query, r)
+		}
+	}
+	r := explained(t, SemiNaive{}, `edge("zz", ?b) => count(?b)`, baseFor(std(graph())))
+	if r.Rows != 1 || r.Goal.Literals[0].Passed != 0 || r.Empty != nil {
+		t.Errorf("control: a count over nothing, Empty is %v\n%s", r.Empty, r)
+	}
+}
+
+// A literal the budget ran out in is marked, and only that one. control: without a budget none is.
+func TestExplainMarksTheLiteralTheBudgetStoppedIn(t *testing.T) {
+	stopped := func(r *Report) (out []string) {
+		for _, br := range append([]*BodyReport{r.Goal}, r.Rules...) {
+			if br == nil {
+				continue
+			}
+			for _, l := range br.Literals {
+				if l.Stopped {
+					out = append(out, l.Literal)
+				}
+			}
+		}
+		return out
+	}
+	var r Report
+	SemiNaive{}.Eval(bg, mustParse(t, closure+`reach(?a, ?b) => ?a, ?b`), baseFor(std(chainOf(60))), Budget(500), Explain(&r))
+	if got := stopped(&r); len(got) != 1 || !strings.Contains(r.String(), "stopped by the budget") {
+		t.Errorf("stopped in %v; want one literal\n%s", got, &r)
+	}
+	full := explained(t, SemiNaive{}, closure+`reach(?a, ?b) => ?a, ?b`, baseFor(std(chainOf(60))))
+	if got := stopped(full); len(got) != 0 {
+		t.Errorf("control: without a budget, stopped in %v", got)
+	}
+}

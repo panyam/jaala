@@ -62,6 +62,28 @@ type Report struct {
 	Relations []*RelationReport `json:"relations,omitempty"`
 	// Sources are the base relations the Eval read, by name.
 	Sources []*SourceReport `json:"sources,omitempty"`
+	// Empty says where an Eval that checked and answered no rows lost its last binding (#343). It is
+	// nil when the Eval answered rows or failed, and when every literal of the goal passed something on,
+	// so a limit, offset or having dropped the rows.
+	Empty *EmptyReport `json:"empty,omitempty"`
+}
+
+// An EmptyReport is the first literal of a body, in the order the body ran, that passed no binding on:
+// a call that matched nothing, a comparison that held for none, or a `not` that let nothing through.
+// The goal's is the report's root. When that literal reads a derived relation none of whose rules
+// derived anything, Because holds the same for each of those rules, so the trail ends at the literal
+// over the data that matched nothing. Saying what values the data does hold is the host's: jaala
+// names the call and what it was called with.
+type EmptyReport struct {
+	// Rule is the rule as written whose body the literal is in; "" for the goal's.
+	Rule string `json:"rule,omitempty"`
+	// Literal is the literal as it ran (see ExplainName), which a rewrite may have moved: an inlined
+	// rule's literal shows in its caller's body.
+	Literal string `json:"literal"`
+	// Called is the first call of it that passed nothing, with the variables bound by then written as
+	// their values. "" when it was never reached.
+	Called  string         `json:"called,omitempty"`
+	Because []*EmptyReport `json:"because,omitempty"`
 }
 
 // A ColdReport is an Eval's cost with nothing kept from earlier queries: no derived relation reused
@@ -114,6 +136,11 @@ type LiteralReport struct {
 	Reached int64 `json:"reached"`
 	Passed  int64 `json:"passed"`
 	Work    int64 `json:"work"`
+	// Missed is the first call of it that passed nothing on, with the variables bound by then written
+	// as their values (for a `not`, the first binding it refused), or "" when every call passed one.
+	Missed string `json:"missed,omitempty"`
+	// Stopped is set on the literal being solved when the Eval's Budget ran out.
+	Stopped bool `json:"stopped,omitempty"`
 }
 
 // A RelationReport is one derived relation the query reached.
@@ -187,6 +214,9 @@ type explainer struct {
 	pushes int64
 	// walks counts the calls to the Source's Walk (#239).
 	walks int64
+	// reads is the relation each positive literal reads, as rewritten, for Empty to follow into a
+	// derived relation's rules.
+	reads map[*LiteralReport]string
 	// quiet is set while prefetch runs a body's prefix again, whose literals were reached already: its
 	// work still counts against the body, but no literal counts it as reached or passed.
 	quiet bool
@@ -194,7 +224,7 @@ type explainer struct {
 
 func newExplainer(r *Report, b *Base) *explainer {
 	*r = Report{}
-	e := &explainer{report: r, reg: b.reg, start: time.Now(), bodies: map[string]*BodyReport{}, rounds: map[string]int{}, sources: map[string]*SourceReport{}}
+	e := &explainer{report: r, reg: b.reg, start: time.Now(), bodies: map[string]*BodyReport{}, reads: map[*LiteralReport]string{}, rounds: map[string]int{}, sources: map[string]*SourceReport{}}
 	if b.edb != nil {
 		e.cachedTuples, e.cachedIndexes = b.edb.held()
 	}
@@ -232,7 +262,11 @@ func (e *explainer) enter(r *Rule, goal Body) func() {
 			br.Ran = ExplainName(goal.String())
 		}
 		for _, l := range append(pos, negs...) {
-			br.Literals = append(br.Literals, &LiteralReport{Literal: ExplainName(l.String())})
+			lr := &LiteralReport{Literal: ExplainName(l.String())}
+			if l.Pos != nil {
+				e.reads[lr] = l.Pos.Relation
+			}
+			br.Literals = append(br.Literals, lr)
 		}
 		e.bodies[key] = br
 		if r == nil {
@@ -349,7 +383,80 @@ func (e *explainer) finish(b *Base, rows int, err error, budget int64) {
 	r.Relations = e.relations(b)
 	if err == nil {
 		r.Cold = &ColdReport{Work: r.Work, Lookups: r.Lookups, Batches: r.Batches, Fetched: cold, Pushes: r.Pushes, Walks: r.Walks}
+		if rows == 0 && r.Goal != nil {
+			r.Empty = e.empty(r.Goal, map[string]bool{})
+		}
 	}
+}
+
+// empty is where br lost its last binding: its first literal that passed nothing on, and, when that
+// reads a derived relation whose bodies derived nothing, why each of them didn't. A body whose demand
+// guard passed nothing wasn't asked, so it explains nothing; seen keeps a recursive rule from being
+// followed twice.
+func (e *explainer) empty(br *BodyReport, seen map[string]bool) *EmptyReport {
+	for _, lr := range br.Literals {
+		if lr.Passed > 0 {
+			continue
+		}
+		read := e.reads[lr]
+		if isGuard(read) {
+			return nil
+		}
+		er := &EmptyReport{Rule: br.Rule, Literal: lr.Literal, Called: lr.Missed}
+		if read == "" {
+			return er
+		}
+		rel := explainRelation(read)
+		var bodies []*BodyReport
+		for _, b := range e.order {
+			if rel == "" || b.Relation != rel || b.Rule == "" {
+				continue
+			}
+			if b.Tuples > 0 {
+				return er // the relation holds tuples, none matching the call
+			}
+			bodies = append(bodies, b)
+		}
+		for _, b := range bodies {
+			if seen[b.Rule] {
+				continue
+			}
+			seen[b.Rule] = true
+			if why := e.empty(b, seen); why != nil {
+				er.Because = append(er.Because, why)
+			}
+		}
+		return er
+	}
+	return nil
+}
+
+// called is lit as solving called it: the variables bnd binds written as their values.
+func called(lit Literal, bnd *binding) string {
+	sub := func(args []Term) []Term {
+		out := make([]Term, len(args))
+		for i, t := range args {
+			out[i] = t
+			if t.Var != "" {
+				if v, ok := bnd.get(t.Var); ok {
+					out[i] = Term{Const: &v}
+				}
+			}
+		}
+		return out
+	}
+	switch {
+	case lit.Pos != nil:
+		lit.Pos = &Atom{Relation: lit.Pos.Relation, Args: sub(lit.Pos.Args)}
+	case lit.Neg != nil:
+		lit.Neg = &Atom{Relation: lit.Neg.Relation, Args: sub(lit.Neg.Args)}
+	case lit.Compare != nil:
+		c := *lit.Compare
+		t := sub([]Term{c.Left, c.Right})
+		c.Left, c.Right = t[0], t[1]
+		lit.Compare = &c
+	}
+	return ExplainName(lit.String())
 }
 
 // warm reports whether the Eval's cost depended on what the Base kept from earlier queries in a way
@@ -538,6 +645,10 @@ func (r *Report) String() string {
 	if r.Error != "" {
 		fmt.Fprintf(&sb, "error: %s\n", r.Error)
 	}
+	if r.Empty != nil {
+		sb.WriteString("no rows: ")
+		r.Empty.write(&sb, "")
+	}
 	if r.Lookups > 0 || r.Batches > 0 || r.Fetched > 0 || r.Pushes > 0 || r.Walks > 0 {
 		fmt.Fprintf(&sb, "fetched %d tuples from the source", r.Fetched)
 		if r.Lookups > 0 || r.Batches > 0 {
@@ -664,7 +775,40 @@ func (br *BodyReport) write(sb *strings.Builder) {
 		if len(l.Access) > 0 {
 			fmt.Fprintf(sb, ", %s", strings.Join(l.Access, " | "))
 		}
+		if l.Stopped {
+			sb.WriteString(", stopped by the budget")
+		}
 		sb.WriteString("\n")
+	}
+}
+
+// String writes the trail as text, one literal a line, each rule's under the literal that called it:
+// what a model retrying the program, or a person, reads.
+func (er *EmptyReport) String() string {
+	var sb strings.Builder
+	er.write(&sb, "")
+	return strings.TrimSuffix(sb.String(), "\n")
+}
+
+func (er *EmptyReport) write(sb *strings.Builder, indent string) {
+	missed := "matched nothing"
+	switch {
+	case strings.HasPrefix(er.Literal, "not "):
+		missed = "let nothing through"
+	case !strings.Contains(er.Literal, "("):
+		missed = "held for none"
+	}
+	fmt.Fprintf(sb, "%s %s", er.Literal, missed)
+	if er.Called != "" && er.Called != er.Literal {
+		fmt.Fprintf(sb, " (first called as %s)", er.Called)
+	}
+	if er.Rule != "" {
+		fmt.Fprintf(sb, ", in %s", er.Rule)
+	}
+	sb.WriteString("\n")
+	for _, why := range er.Because {
+		sb.WriteString(indent + "  because ")
+		why.write(sb, indent+"  ")
 	}
 }
 
