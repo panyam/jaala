@@ -21,6 +21,13 @@ jobs:
         run: go vet ./...
       - name: test
         run: go test -race -count=1 ./...
+      # The generated corpus skips under -race (#143): it evaluates one program at a time, and the
+      # detector made it nine times slower. Here it runs at its default 300 seeds, so its controls hold,
+      # and the step fails unless it ran rather than skipped.
+      - name: corpus
+        run: |
+          go test -count=1 ./datalog -run '^TestGeneratedProgramsAgree$' -v | tee corpus.log
+          grep -q '^--- PASS: TestGeneratedProgramsAgree ' corpus.log
       # The engine runs in the browser for its first host, so it may import nothing that does not
       # build for WebAssembly: no os, net or cgo.
       - name: wasm build

@@ -1484,10 +1484,17 @@ func envInt(name string, def int) int {
 // Every evaluator must answer each generated program as Naive does, with the rules both enforces.
 // The control is the shape count: each shape the generator aims at has to have been compared, both
 // plain and under Witnesses, or the corpus is passing on programs that never reach the rewrites.
+//
+// It skips under -race unless JAALA_GEN_UNDER_RACE is set (#143): the corpus evaluates one program at
+// a time and the engine starts no goroutines, so the detector can find nothing there and made it
+// nine times slower. CI runs it in a step of its own without -race; the concurrent tests stay.
 func TestGeneratedProgramsAgree(t *testing.T) {
 	first, seeds := int64(1), envInt("JAALA_GEN_SEEDS", 300)
 	if s := envInt("JAALA_GEN_SEED", 0); s > 0 {
 		first, seeds = int64(s), 1
+	}
+	if raceDetector && seeds > 1 && os.Getenv("JAALA_GEN_UNDER_RACE") == "" {
+		t.Skip("the corpus runs without -race (CI's corpus step); JAALA_GEN_UNDER_RACE=1 runs it here")
 	}
 	compared, known, skipped, failed := map[string]int{}, map[int]int{}, 0, 0
 	lookedUpPrograms, federatedPrograms, batchedPrograms, pushedPrograms, partitionedPrograms, walkedPrograms, unitAnswers, mixedAnswers, foldedAnswers = 0, 0, 0, 0, 0, 0, 0, 0, 0
