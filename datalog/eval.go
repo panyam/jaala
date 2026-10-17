@@ -329,10 +329,12 @@ func evaluate(ctx context.Context, q Query, b *Base, opts []Option, rewrite func
 	nb.run = &evalRun{ctx: ctx, budget: o.budget, witness: o.witness || o.canonical, canonical: o.canonical, lookGen: b.lookups.generation(),
 		gen: gen, version: version, versioned: versioned}
 	if o.explain == nil {
-		return evaluateOn(&nb, gen, q, o, rewrite, fixpoint)
+		tab, err := evaluateOn(&nb, gen, q, o, rewrite, fixpoint)
+		return tab, localFix(err, q.Rules)
 	}
 	nb.run.explain = newExplainer(o.explain, &nb)
 	tab, err := evaluateOn(&nb, gen, q, o, rewrite, fixpoint)
+	err = localFix(err, q.Rules)
 	nb.run.explain.finish(&nb, tab.Len(), err, o.budget)
 	if err == nil && !o.cold && nb.run.explain.warm(&nb) {
 		o.explain.Cold = coldCost(ctx, q, b, opts, rewrite, fixpoint)

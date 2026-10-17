@@ -143,6 +143,55 @@ func TestTranslateSendsAnEmptyAnswerToTheFallback(t *testing.T) {
 	}
 }
 
+// With no fallback left, an empty answer goes back to the model, which keeps its tries. control: with
+// a fallback, the same answer ends the small model's turn.
+func TestTranslateSendsAnEmptyAnswerBackWithoutAFallback(t *testing.T) {
+	v := vocabulary(t)
+	b := graphBase(t, v)
+	empty := `edge("c", ?b) => ?b`
+	m := model("small", empty, `edge("b", ?b) => ?b`)
+	p, tr, err := nl.Translate(context.Background(), "where does b lead?", v, nil, m, nl.Options{Base: b})
+	if err != nil || p.Text != `edge("b", ?b) => ?b` || len(p.Rows) != 1 {
+		t.Fatalf("Translate = %+v, %v", p, err)
+	}
+	if got := kinds(tr); !slices.Equal(got, []string{nl.KindEmpty, ""}) {
+		t.Errorf("kinds %v", got)
+	}
+	turns := m.asked[1].Turns
+	if len(turns) != 3 || turns[1].Text != empty || !strings.Contains(turns[2].Text, "answered no rows") || !strings.Contains(turns[2].Text, "other members or values") {
+		t.Errorf("second prompt's turns %+v", turns)
+	}
+	small := model("small", empty, `edge("b", ?b) => ?b`)
+	nl.Translate(context.Background(), "where does b lead?", v, nil, small, nl.Options{Base: b, Fallback: model("big", `edge("b", ?b) => ?b`)})
+	if len(small.asked) != 1 {
+		t.Errorf("control: with a fallback the small model was asked %d times", len(small.asked))
+	}
+}
+
+// A draft the model already wrote, fenced or not, is refused without being checked and ends its
+// turn, so the fallback gets the remaining work. The Try's error wraps the first draft's. control: a model writing
+// a different second draft is asked a third time.
+func TestTranslateMovesOnFromARepeatedDraft(t *testing.T) {
+	v := vocabulary(t)
+	small := model("small", `nope(?a) => ?a`, "```\nnope(?a) => ?a\n```", `edge("a", ?b) => ?b`)
+	big := model("big", `edge("a", ?b) => ?b`)
+	p, tr, err := nl.Translate(context.Background(), "q", v, nil, small, nl.Options{Fallback: big})
+	if err != nil || p.Model != "big" || len(small.asked) != 2 {
+		t.Fatalf("Translate = %+v, %v, small asked %d times", p, err, len(small.asked))
+	}
+	if got := kinds(tr); !slices.Equal(got, []string{"unknown", nl.KindRepeat, ""}) {
+		t.Errorf("kinds %v", got)
+	}
+	var ce *datalog.CheckError
+	if !errors.As(tr.Tries[1].Err, &ce) || ce.Kind != datalog.KindUnknown {
+		t.Errorf("the repeat's error %v doesn't wrap the first draft's", tr.Tries[1].Err)
+	}
+	other := model("small", `nope(?a) => ?a`, `nope(?b) => ?b`, `edge("a", ?b) => ?b`)
+	if _, _, err := nl.Translate(context.Background(), "q", v, nil, other, nl.Options{}); err != nil || len(other.asked) != 3 {
+		t.Errorf("control: different drafts: %v, asked %d times", err, len(other.asked))
+	}
+}
+
 // An evaluation error over a Base is fed back as a check error is.
 func TestTranslateFeedsAnEvaluationErrorBack(t *testing.T) {
 	v := vocabulary(t)
@@ -159,7 +208,7 @@ func TestTranslateFeedsAnEvaluationErrorBack(t *testing.T) {
 // When every try fails, the error wraps the last one and the trace holds them all.
 func TestTranslateFailsWithTheLastError(t *testing.T) {
 	v := vocabulary(t)
-	_, tr, err := nl.Translate(context.Background(), "q", v, nil, model("small", `nope(?a) => ?a`, `nope(?a) => ?a`, `edge(?a) => ?a`), nl.Options{})
+	_, tr, err := nl.Translate(context.Background(), "q", v, nil, model("small", `nope(?a) => ?a`, `nope(?b) => ?b`, `edge(?a) => ?a`), nl.Options{})
 	var ce *datalog.CheckError
 	if err == nil || !errors.As(err, &ce) || ce.Kind != datalog.KindArity || !strings.Contains(err.Error(), "3 tries") {
 		t.Fatalf("err %v", err)

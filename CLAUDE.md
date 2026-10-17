@@ -61,9 +61,12 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   `TestBrokenProgramsFailTheSameWay` requires each broken literal's error to be one Locate finds.
   `nl` (the card, Explain, `Translate`) imports `ns` and `datalog`, and nothing in jaala imports it.
   `Translate` (#325) runs no model: `Model` and `Grounder` are the host's, a refused draft goes back
-  with `Explain`'s text, a `Complete` error or an empty answer (over `Options.Base`) moves straight to
-  the fallback, which starts a fresh conversation, and `Try.Kind` adds `parse`, `eval`, `empty` and
-  `model` to a `CheckError`'s kinds. Its tests script the model (`scripted`), so tries are exact.
+  with `Explain`'s text, a `Complete` error, a repeated draft (#340, refused unchecked) or an empty
+  answer (over `Options.Base`) moves straight to the fallback, which starts a fresh conversation (an
+  empty answer with no fallback left goes back to the model), and `Try.Kind` adds `parse`, `eval`,
+  `empty`, `repeat` and `model` to a `CheckError`'s kinds. An unknown call's `Fix` names the program's
+  own rule it likely means (`localFix`, #341, at `Validate` and `evaluate`, since the vocabulary's
+  suggestion can't see the rules). Its tests script the model (`scripted`), so tries are exact.
   `nl.Eval` (#326) scores a `translate` func over `Case`s, matching a row by its values as a multiset
   (the model picks the columns' names and order) and rows as a multiset unless `Ordered`. `TestEval`
   is #322's exercise until Declaire's arm runs: the guide's vocabulary, a scripted small model and
@@ -74,10 +77,13 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   in `datalog`'s tests, which can reach the corpus: they read `frontends/nl/testdata/program.gbnf` (`go
   test ./frontends/nl -update` writes it) with a small Earley recognizer and require every corpus, fuzz-seed and docs
   program, printed in jaala's spelling, to be accepted. A grammar change regenerates the file, or
-  `datalog` checks the old one. The card is memoized on the vocabulary (`Memo`).
+  `datalog` checks the old one. The card is memoized on the vocabulary (`Memo`). A name is capped at
+  `nameMax` (32) characters (#340: a model writing prose ran one to its token limit), written as
+  GBNF's `{m,n}`, which `internal/gbnf` expands into nested optionals: flat `x? x?` made Earley five
+  times slower.
 - **`nl.GrammarFor(v)` is that table with the calls replaced by v's members** (`vocabgrammar.go`,
   #324): each at the arities it takes, a closed domain's argument as a variable or one of its values,
-  and a program's own rules named by `local`, a trie keeping them off every root name. `GoalOnly()`
+  and a program's own rules named by `local`, a trie keeping them off every root name, whose tails (`lt<n>`) keep a local within `nameMax`. `GoalOnly()`
   drops rules. Its soundness test also checks each sample against `Grammar()`, so it stays a
   sublanguage. The recognizer lives in `internal/gbnf` for both packages' tests. `Translate` sends
   it as `Prompt.Grammar`.
@@ -791,7 +797,7 @@ passes too, so it can stay open after jaala's tickets close. One is active:
 `mission_agent_frontend` (#322), a host's caller asks in plain language and jaala's front end
 turns it into a program that checks. jaala's half is `frontends/nl` and `frontends/nlmodels`, and all of its tickets are
 closed (#321, #323 to #326, #330, #331, #336, #337), released in v0.1.66 and
-frontends/nlmodels/v0.1.66; `go test ./frontends/nl -run TestEval -v` meets its fix line (6/6). It
+frontends/nlmodels/v0.1.66; `go test ./frontends/nl -run TestEval -v` meets its fix line (5/5). It
 stays open, as the store missions did, until Declaire's translator-alone arm (declaire#290) runs on
 those tags; findings from that run become new tickets on it. The two store missions closed on 2026-10-16. `mission_store_federation` (#219), a host answers a question over many stores without holding them
 in memory, measured by the `Stores` benchmark (#218: stores asked, unindexed probes, round trips,

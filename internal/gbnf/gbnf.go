@@ -12,7 +12,7 @@ import (
 
 // Grammar is a GBNF grammar compiled to plain productions over single characters, recognized by Earley's
 // algorithm. It reads the subset nl renders: rules, alternatives, string literals, character classes
-// with ranges, negation and \xNN escapes, groups, and ? * +.
+// with ranges, negation and \xNN escapes, groups, and ? * + {m,n}.
 type Grammar struct {
 	prods map[string][][]gsym
 	fresh int
@@ -94,6 +94,16 @@ func (p *gparser) seq() ([]gsym, error) {
 		if p.i < len(p.s) && strings.IndexByte("?*+", p.s[p.i]) >= 0 {
 			item = p.g.repeat(item, p.s[p.i])
 			p.i++
+		} else if p.i < len(p.s) && p.s[p.i] == '{' {
+			end := strings.IndexByte(p.s[p.i:], '}')
+			lo, hi, ok := strings.Cut(p.s[p.i+1:p.i+max(end, 1)], ",")
+			m, err1 := strconv.Atoi(lo)
+			n, err2 := strconv.Atoi(hi)
+			if end < 0 || !ok || err1 != nil || err2 != nil || m < 0 || n < m {
+				return nil, fmt.Errorf("gbnf: a repetition other than {m,n} at %d in %q", p.i, p.s)
+			}
+			item = p.g.bounded(item, m, n)
+			p.i += end + 1
 		}
 		out = append(out, item...)
 	}
@@ -214,6 +224,20 @@ func (g *Grammar) repeat(item []gsym, op byte) []gsym {
 		g.prods[name] = [][]gsym{item, append(append([]gsym{}, item...), gsym{rule: name})}
 		return []gsym{{rule: name}}
 	}
+}
+
+// bounded is item m to n times: m copies, then n-m optional ones nested, (x (x)?)?, so Earley finds
+// one parse of a run rather than one per way of spreading it over flat x? x?.
+func (g *Grammar) bounded(item []gsym, m, n int) []gsym {
+	var tail []gsym
+	for i := m; i < n; i++ {
+		tail = []gsym{{rule: g.rule([][]gsym{nil, append(append([]gsym{}, item...), tail...)})}}
+	}
+	var out []gsym
+	for i := 0; i < m; i++ {
+		out = append(out, item...)
+	}
+	return append(out, tail...)
 }
 
 type eitem struct {

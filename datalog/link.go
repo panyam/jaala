@@ -29,7 +29,7 @@ func Link(q Query, reg *ns.Vocabulary) (Query, error) {
 		head := r.Head.Relation
 		switch {
 		case strings.Contains(head, "."):
-			return Query{}, checkErr(KindDefinition, fmt.Sprintf("query: rule head %q is a qualified path; a query defines only its own bare relations, and a shared one is registered with AddModule", head)).inRule(head).fix(fmt.Sprintf("name the rule %s, without a module", head[strings.LastIndexByte(head, '.')+1:]))
+			return Query{}, checkErr(KindDefinition, fmt.Sprintf("query: rule head %q is a qualified path; a query defines only its own bare relations, and a shared one is registered with AddModule", head)).inRule(head).fix(fmt.Sprintf("name the rule %[1]s, without a module, and call it %[1]s", head[strings.LastIndexByte(head, '.')+1:]))
 		case reg.IsModule(head):
 			return Query{}, checkErr(KindDefinition, fmt.Sprintf("query: rule head %q is a module, not a relation", head)).inRule(head).fix("give the rule a name no module uses")
 		}

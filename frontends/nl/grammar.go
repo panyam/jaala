@@ -48,6 +48,14 @@ func opt(e gexpr) rep  { return rep{e, 0, 1} }
 func star(e gexpr) rep { return rep{e, 0, -1} }
 func plus(e gexpr) rep { return rep{e, 1, -1} }
 
+// nameMax caps a name's length (an ident, a variable's name, a unit), so a model that wants to write
+// prose can't run one name to its token limit (#340); every program the tests and docs write uses
+// far shorter ones.
+const nameMax = 32
+
+// upTo is e at most n times.
+func upTo(e gexpr, n int) rep { return rep{e, 0, n} }
+
 // list is e, then any more of e each after sep.
 func list(e gexpr, sep string) seq { return seq{e, star(seq{lit(sep), e})} }
 
@@ -106,16 +114,16 @@ func programRules() []rule {
 		{"term", alt{ref("variable"), ref("constant")}},
 		{"variable", alt{seq{lit("?"), ref("vname")}, lit("_")}},
 		// ?_ is the wildcard _, so a name is never _ alone.
-		{"vname", alt{seq{class{"a-zA-Z0-9", "abnxyz019"}, star(class{"a-zA-Z0-9_", "abnxyz019_"})}, seq{lit("_"), plus(class{"a-zA-Z0-9_", "abxy0_"})}}},
+		{"vname", alt{seq{class{"a-zA-Z0-9", "abnxyz019"}, upTo(class{"a-zA-Z0-9_", "abnxyz019_"}, nameMax-1)}, seq{lit("_"), rep{class{"a-zA-Z0-9_", "abxy0_"}, 1, nameMax - 1}}}},
 		{"constant", alt{ref("string"), ref("unumber"), seq{lit("-"), ref("unumber")}}},
 		// A number's unit is letters straight after it, and e alone would be an exponent left unfinished.
 		{"unumber", seq{plus(class{"0-9", digits}), opt(seq{lit("."), plus(class{"0-9", digits})}),
 			opt(seq{class{"eE", "eE"}, opt(class{"-+", "-+"}), class{"0-9", digits}, opt(class{"0-9", digits})}), opt(ref("unit"))}},
-		{"unit", alt{seq{class{"a-dA-Df-zF-Z", "AVkmsx"}, star(class{"a-zA-Z", "AVhmo"})}, seq{class{"eE", "eE"}, plus(class{"a-zA-Z", "AVhmo"})}}},
+		{"unit", alt{seq{class{"a-dA-Df-zF-Z", "AVkmsx"}, upTo(class{"a-zA-Z", "AVhmo"}, nameMax-1)}, seq{class{"eE", "eE"}, rep{class{"a-zA-Z", "AVhmo"}, 1, nameMax - 1}}}},
 		// A string keeps a backslash and the character after it, a quote included.
 		{"string", seq{lit(`"`), star(alt{class{`^"\\\x00-\x1F`, "ab c:,()=#'"}, seq{lit(`\`), class{`^\x00-\x1F`, `"\n`}}}), lit(`"`)}},
 		{"relation", seq{ref("ident"), star(seq{alt{lit("."), lit("-")}, ref("ident")})}},
-		{"ident", seq{class{"a-zA-Z", "abeLnrs"}, star(class{"a-zA-Z0-9_", "abdeinorst0_"})}},
+		{"ident", seq{class{"a-zA-Z", "abeLnrs"}, upTo(class{"a-zA-Z0-9_", "abdeinorst0_"}, nameMax-1)}},
 	}
 }
 
@@ -163,14 +171,7 @@ func renderExpr(e gexpr, top bool) string {
 		case e.min == 1 && e.max < 0:
 			return inner + "+"
 		}
-		parts := []string{}
-		for i := 0; i < e.min; i++ {
-			parts = append(parts, inner)
-		}
-		for i := e.min; i < e.max; i++ {
-			parts = append(parts, inner+"?")
-		}
-		return "(" + strings.Join(parts, " ") + ")"
+		return fmt.Sprintf("%s{%d,%d}", inner, e.min, e.max)
 	}
 	panic(fmt.Sprintf("nl: no gexpr %T", e))
 }

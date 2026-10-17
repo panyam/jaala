@@ -74,11 +74,13 @@ type Candidate struct {
 type Options struct {
 	// MaxTries is how many drafts each model gets; 3 when 0.
 	MaxTries int
-	// Fallback, when set, is asked once Model runs out of tries, or writes a program that checks and
-	// answers nothing over Base. It starts a fresh conversation rather than reading Model's drafts.
+	// Fallback, when set, is asked once Model runs out of tries, repeats a draft it was told was wrong,
+	// or writes a program that checks and answers nothing over Base. It starts a fresh conversation
+	// rather than reading Model's drafts.
 	Fallback Model
 	// Base, when set, evaluates a program that checks. An evaluation error is fed back as a check
-	// error is, and an empty answer goes to Fallback. Without it, a program that checks is accepted.
+	// error is, and an empty answer goes to Fallback, or back to the model when no fallback is left.
+	// Without it, a program that checks is accepted.
 	Base *datalog.Base
 	// Eval are the options Base is evaluated with, such as a Budget.
 	Eval []datalog.Option
@@ -109,8 +111,9 @@ type Try struct {
 	Text  string
 	Err   error
 	// Kind sorts Err: a CheckError's Kind ("unknown", "arity", ...), or "parse" for a parse error,
-	// "eval" for an evaluation error that isn't a CheckError, "empty" for an answer with no rows, and
-	// "model" for a Model that failed.
+	// "eval" for an evaluation error that isn't a CheckError, "empty" for an answer with no rows,
+	// "repeat" for a draft the model already wrote in this conversation (Err wraps the first one's),
+	// and "model" for a Model that failed.
 	Kind                              string
 	TokensIn, TokensOut, TokensCached int
 	Latency                           time.Duration
@@ -118,10 +121,11 @@ type Try struct {
 
 // The Try kinds that aren't a CheckError's.
 const (
-	KindParse = "parse"
-	KindEval  = "eval"
-	KindEmpty = "empty"
-	KindModel = "model"
+	KindParse  = "parse"
+	KindEval   = "eval"
+	KindEmpty  = "empty"
+	KindRepeat = "repeat"
+	KindModel  = "model"
 )
 
 // instructions follow the card in every Prompt's Prefix.
@@ -132,9 +136,11 @@ const instructions = `
 
 // Translate asks m for a program answering question over v (#325): it drafts, parses and checks the
 // draft (datalog.Validate), and feeds an error back with Explain's text for m to fix, up to
-// o.MaxTries times, then hands the question to o.Fallback the same way. With o.Base, a program that
-// checks is evaluated too, and one answering nothing goes to the fallback. g, when not nil, grounds
-// the question's names first. The Trace holds every try, also when Translate fails, and the error
+// o.MaxTries times, then hands the question to o.Fallback the same way. A draft the model already
+// wrote is refused unchecked and ends its turn (#340: a small model resending one draft spent every
+// retry on it). With o.Base, a program that checks is evaluated too, and one answering nothing goes to
+// the fallback, or, when there is none left, back to the model to try other members or values. g,
+// when not nil, grounds the question's names first. The Trace holds every try, also when Translate fails, and the error
 // then wraps the last try's.
 func Translate(ctx context.Context, question string, v *ns.Vocabulary, g Grounder, m Model, o Options) (Program, Trace, error) {
 	var tr Trace
@@ -173,20 +179,27 @@ func Translate(ctx context.Context, question string, v *ns.Vocabulary, g Grounde
 		if k > 0 && errors.Is(last, errEmpty) {
 			turns[0].Text += "\n\nA program written for this answered nothing; the question may need other members or values."
 		}
+		lastModel := k == len(models)-1
+		refused := map[string]error{}
 		for range tries {
 			if err := ctx.Err(); err != nil {
 				return Program{}, tr, err
 			}
-			try, p, err := draft(ctx, model, Prompt{Prefix: prefix, Turns: turns, Grammar: grammar}, v, o)
+			try, p, err := draft(ctx, model, Prompt{Prefix: prefix, Turns: turns, Grammar: grammar}, v, o, refused)
 			tr.Tries = append(tr.Tries, try)
 			if err == nil {
 				return p, tr, nil
 			}
 			last = err
-			if try.Kind == KindModel || try.Kind == KindEmpty {
+			if try.Kind == KindModel || try.Kind == KindRepeat || try.Kind == KindEmpty && !lastModel {
 				break
 			}
-			turns = append(turns, Turn{RoleModel, try.Text}, Turn{RoleUser, Explain(try.Text, err) + "\n\nWrite the whole program again, fixed."})
+			refused[try.Text] = err
+			fix := "Write the whole program again, fixed."
+			if try.Kind == KindEmpty {
+				fix = "Write the whole program again, with other members or values."
+			}
+			turns = append(turns, Turn{RoleModel, try.Text}, Turn{RoleUser, Explain(try.Text, err) + "\n\n" + fix})
 		}
 	}
 	return Program{}, tr, fmt.Errorf("nl: no program checked after %d tries: %w", len(tr.Tries), last)
@@ -195,8 +208,9 @@ func Translate(ctx context.Context, question string, v *ns.Vocabulary, g Grounde
 // errEmpty is a program that checked and answered nothing.
 var errEmpty = errors.New("the program answered no rows")
 
-// draft asks model once, then parses, checks and, over o.Base, evaluates what it wrote.
-func draft(ctx context.Context, model Model, p Prompt, v *ns.Vocabulary, o Options) (Try, Program, error) {
+// draft asks model once, then parses, checks and, over o.Base, evaluates what it wrote, unless it is
+// a draft refused already, whose error it returns again.
+func draft(ctx context.Context, model Model, p Prompt, v *ns.Vocabulary, o Options, refused map[string]error) (Try, Program, error) {
 	try := Try{Model: model.Name()}
 	start := time.Now()
 	c, err := model.Complete(ctx, p)
@@ -210,6 +224,9 @@ func draft(ctx context.Context, model Model, p Prompt, v *ns.Vocabulary, o Optio
 	refuse := func(err error, kind string) (Try, Program, error) {
 		try.Err, try.Kind = err, kind
 		return try, Program{}, err
+	}
+	if err, ok := refused[try.Text]; ok {
+		return refuse(fmt.Errorf("the same draft as before: %w", err), KindRepeat)
 	}
 	q, err := datalog.Parse(try.Text)
 	if err != nil {
