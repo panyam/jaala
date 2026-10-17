@@ -5,15 +5,15 @@ Maintained by /checkpoint: one thread per branch, pruned when the branch merges.
 
 ## At a glance
 
-- No open branches. jaala v0.1.67 and frontends/nlmodels/v0.1.67 (f3f387c) ship PR #342 (#340,
-  #341); the upgrade note is on declaire#290.
-- Mission #322 (`mission_agent_frontend`) is active, 11 of 12 closed; the open one is declaire#290.
-  Declaire's translator-alone arm ran on v0.1.66 (declaire#295): 2/14 on a 7B against
-  declaire#288's 10. Nothing ready in jaala: the arm reruns from a Declaire session on v0.1.67. Exercise logged at 90e2f7d (`TestEval` 7/8, 15 tries, fixes 5/5), no PR since.
-- Off-mission and ready if picked: #143 (P3, CI's `datalog` race tests at 277s, its trigger fired).
+- No open branches. Latest tags v0.1.67 and frontends/nlmodels/v0.1.67; #345 (#143, the corpus
+  runs in its own CI step without `-race`: CI's `datalog` race step 360s to 141s) merged after
+  them, tests and CI only, so no release.
+- Mission #322 (`mission_agent_frontend`) is active. Its jaala queue gained #343 (P1, explain an
+  empty answer and profile work per rule) and #344 (P2, domain packs for `frontends/nl`), filed
+  2026-10-17. Declaire's translator arm still reruns on v0.1.67 from a Declaire session
+  (declaire#290). Exercise logged at 90e2f7d (`TestEval` 7/8); #345 since, which doesn't touch it.
 - Waiting: #327 until a host times `Across` over a store; #288 (sessions) after #287 and agni#1027.
-- This run: retriaged (filed #340, #341; closed epic #213; #143 to P3; retriggered #289; #327 under
-  #183), merged #342, tagged v0.1.67; dropped the Across threads notes, which CLAUDE.md already holds.
+- This run: merged #345 and closed #143; dropped the off-mission #143 line.
 
 ## Across threads
 
