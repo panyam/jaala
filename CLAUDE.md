@@ -34,6 +34,7 @@ separate `souffle` job installs Soufflé 2.5's release `.deb` and compares 1000 
 gofmt -l .                      # must print nothing
 go vet ./...
 go test -race -count=1 ./...
+go test -count=1 ./datalog -run '^TestGeneratedProgramsAgree$'   # the corpus skips under -race (#143)
 GOOS=js GOARCH=wasm go build ./...
 go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '^vendor/'   # must print nothing
 ```
@@ -447,7 +448,12 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   seeded random-graph corpus, and `plan_test.go` a clause-order shuffle property.
 - **The generated corpus (`generate_test.go`, #87) runs random programs through `agree`**, the
   comparison `both()` makes, without the panic. Each program runs plain and under `Witnesses()`, and a
-  disagreement is shrunk before it's reported (`JAALA_GEN_SEED=n` replays one). A replay needs the
+  disagreement is shrunk before it's reported (`JAALA_GEN_SEED=n` replays one). It skips under
+  `-race` (`raceDetector`, set by `race_test.go`/`norace_test.go`, #143) unless replaying one seed or
+  `JAALA_GEN_UNDER_RACE` is set: it evaluates one program at a time and the engine starts no
+  goroutines, so the detector found nothing and made it nine times slower (261s against 28s). CI
+  runs it in a `corpus` step without `-race`, which fails unless the test passed rather than
+  skipped; the concurrent-Base tests still run under `-race`. A replay needs the
   generator to draw in a fixed order, so it never ranges over a map while drawing (`genTypes`, #226:
   `bodyAggregate` did, and a seed's program changed between runs); `TestASeedGeneratesOneProgram`
   generates each seed four times. A disagreement that is
