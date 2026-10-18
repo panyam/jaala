@@ -6,7 +6,8 @@ A Datalog engine for graph-shaped data, extracted from agni. Three packages: `ns
 `datalog/`, the engine (parsing, linking, `Check`'s resolution and inference, evaluation). Read
 `ns/doc.go`, then `datalog/doc.go`. `frontends/` holds what turns text other than jaala's syntax into a
 program that checks, and no engine-only host imports it: `frontends/nl`, the plain-language front end
-(#321), and `frontends/nlmodels`, its clients for local models in a module of their own (#330); a
+(#321), and `frontends/nlmodels`, its clients for local models in a module of their own (#330), and `frontends/mcp`,
+an MCP server for any vocabulary in another (#347); a
 Cypher/GQL front end (#278) would go beside them. They moved there in #337, after v0.1.65 had shipped
 `nl` and `nlmodels` at the root. jaala is a Datalog engine, not a graph library: a host's fast
 path is a generator (its own Go running inside a query), not a jaala function called around the
@@ -110,6 +111,17 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   its `testdata` and `cp` it in after `git worktree add`: the directory holds nothing tracked, so
   the worktree lacks it and a bare `cp` fails), or the step reports "could not run". `llama-server` exits with "Abort
   trap: 6" when selfcheck's cleanup kills it, after its test, which is not a failure.
+- **`frontends/mcp` is a module of its own too** (#347), on mcpkit, so its dependencies reach no
+  host that doesn't serve agents; CI's `mcp` job tests it, and `SUB_MODS_TO_TAG` tags it. `mcp.New(v,
+  pack, opts)` registers `query` (rows with witnesses, paged by an offset `page_token`, errors as tool
+  errors carrying `nl.Explain`'s text), `schema` (the card, filtered by a module's or relation's
+  path, and the pack's `Card` at `data`), `explain` (`Report.String`) and, with `Options.Model`,
+  `ask` (`nl.Translate` with the pack, `mode` local/frontier/both, panyam/declaire#300). The
+  instructions are written from the pack (`mcp.Instructions`, sent with mcpkit's `WithInstructions`,
+  which mcpkit v0.8.2 put on the initialize result where clients read it: before, Claude Code saw
+  none) unless `Pack.Instructions` replaces them word for word, which declaire#308's wording runs
+  use. A host adds its own tools on the returned server and writes answers with `Pack.Format`. Its
+  tests are a toy host (`roads`) through mcpkit's `testutil` client.
 - **`Base` is shared across concurrent `Eval`s.** Anything mutable reachable from it must be
   per-query (the `idb*` fields on Eval's shallow copy), atomic (`work`), or locked (`edbCache`,
   `derivedCache`, the vocabulary's `Memo` entries). `TestConcurrentEvalsShareOneCheck` and
