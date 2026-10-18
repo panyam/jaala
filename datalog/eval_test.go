@@ -212,6 +212,49 @@ func TestDistanceFindsNearDuplicateNames(t *testing.T) {
 	}
 }
 
+// generatedCode is the shape of Declaire's generated-code linker (#284): gRPC registration
+// functions whose service is in their name, and methods qualified by their service.
+func generatedCode() *ns.MemSource {
+	src := ns.NewMemSource().Declare("fn", "name").Declare("method", "id")
+	for _, n := range []string{"add_Greeter_to_server", "add_Billing_to_server", "add_helper", "serve", "new_Ledger_to_server"} {
+		src.Add("fn", ns.Tuple{Vals: []ns.Value{ns.S(n)}})
+	}
+	for _, id := range []string{"pkg_v1.GreeterServer.sayHello", "pkg_v1.BillingServer.charge"} {
+		src.Add("method", ns.Tuple{Vals: []ns.Value{ns.S(id)}})
+	}
+	return src
+}
+
+func TestTextFunctionsBuildNamesInEveryEvaluator(t *testing.T) {
+	for _, c := range []struct{ q, col, want string }{
+		// Run backwards, concat cuts a head and a tail off, and holds for none without them.
+		{`fn(?n), str.concat("add_", ?r, ?n), str.concat(?svc, "_to_server", ?r) => ?svc`, "svc", "Billing,Greeter"},
+		// Nested in an expression, from the parts split picks counting from the end.
+		{`method(?id), str.split(?id, ".", -2, ?s), str.split(?id, ".", -1, ?m), ?rpc = str.concat(str.concat(?s, "."), str.capitalize(?m)) => ?rpc`, "rpc", "BillingServer.Charge,GreeterServer.SayHello"},
+		{`method(?id), str.split(?id, ".", 0, ?p), ?pkg = str.replace(?p, "_", ".") => ?pkg`, "pkg", "pkg.v1"},
+		{`method(?id), str.split(?id, ".", ?i, ?part), ?i >= 1 => ?part`, "part", "BillingServer,GreeterServer,charge,sayHello"},
+		// An expression written before its binder waits for it, as arithmetic does.
+		{`?u = str.upper(?n), fn(?n), str.prefix(?n, "add_G") => ?u`, "u", "ADD_GREETER_TO_SERVER"},
+		{`fn(?n), str.lower(?n) = "add_helper" => ?n`, "n", "add_helper"},
+	} {
+		if got := col(eval(t, generatedCode(), c.q), c.col); got != c.want {
+			t.Errorf("%s: %s = %q, want %q", c.q, c.col, got, c.want)
+		}
+	}
+	// Written as a call before its binder, the planner runs it once ?n is bound; Naive runs it as
+	// written and is refused rather than lower-casing nothing.
+	first := mustParse(t, `str.lower(?n, ?l), fn(?n) => ?l`)
+	if rows, err := (SemiNaive{}).Eval(bg, first, baseFor(std(generatedCode()))); err != nil || col(rows, "l") != "add_billing_to_server,add_greeter_to_server,add_helper,new_ledger_to_server,serve" {
+		t.Errorf("planned lower-first = %v, %v, want every fn lower-cased", rows, err)
+	}
+	if _, err := (Naive{}).Eval(bg, first, baseFor(std(generatedCode()))); err == nil || !strings.Contains(err.Error(), "str.lower needs every argument but its result bound") {
+		t.Errorf("Naive lower-first err = %v, want str.lower refused as written", err)
+	}
+	if err := evalErr(generatedCode(), `str.concat(?a, "x", ?b) => ?a, ?b`); err == nil || !strings.Contains(err.Error(), "nothing binds what str.concat needs first") {
+		t.Errorf("err = %v, want str.concat refused with nothing bound", err)
+	}
+}
+
 // succ is a host generator over the Source it is handed: succ(?a, ?b) enumerates edges out of ?a
 // (or out of every node when ?a is unbound). It exercises the path a host's own graph walk takes.
 func succRegistry() *ns.Vocabulary {

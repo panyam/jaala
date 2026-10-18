@@ -1,0 +1,3 @@
+fixture: deps
+query: test(?t, _), str.split(?t, "_", -1, ?kind) => ?t, ?kind
+expect: [[api_test, test], [auth_fuzz, fuzz], [auth_test, test], [db_test, test], [util_test, test]]

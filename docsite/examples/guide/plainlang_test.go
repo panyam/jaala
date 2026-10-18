@@ -43,12 +43,18 @@ func Example_card() {
 	// num.value(number: number, value: number) needs number # binds the number without its unit, so 5 V and 5 A both bind 5; the number must be bound
 	//
 	// module str
+	// str.capitalize(string: string, capitalized: string) needs string # binds the string with its first character in upper case and the rest as written
+	// str.concat(head: string, tail: string, text: string) needs head+tail or head+text or tail+text # text is head followed by tail, run from any two of the three; cutting a head or tail off holds for none when text lacks it
 	// str.contains(string: string, substring: string) filter # reports whether a string contains a substring
 	// str.distance(string: string, other: string, distance: number) needs string+other # binds the edit (Levenshtein) distance between two strings, in characters; both strings must be bound
 	// str.glob(string: string, pattern: string) filter # reports whether the whole string matches a SQLite-style glob (`*` any run, `?` one character, `[a-z]` or `[^a-z]` one of a class, `[[]` a literal `[`)
+	// str.lower(string: string, lower: string) needs string # binds the string in lower case
 	// str.match(string: string, regex: string) filter # reports whether the string matches an unanchored regular expression
 	// str.prefix(string: string, prefix: string) filter # reports whether a string starts with a prefix
+	// str.replace(string: string, old: string, new: string, result: string) needs string+old+new # binds the string with every occurrence of old replaced by new
+	// str.split(string: string, separator: string, index: number, part: string) needs string+separator # binds each part of the string between separators with its index from 0; given an index, binds that part alone, a negative index counting from the end (-1 is the last part)
 	// str.suffix(string: string, suffix: string) filter # reports whether a string ends with a suffix
+	// str.upper(string: string, upper: string) needs string # binds the string in upper case
 }
 
 // Explain turns a program's error into what a model fixes it from: the

@@ -1,0 +1,3 @@
+fixture: deps
+query: test(?t, "auth"), ?n = str.replace(?t, "_", " ") => ?n
+expect: [["auth fuzz"], ["auth test"]]

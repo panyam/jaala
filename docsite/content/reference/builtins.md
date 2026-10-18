@@ -1,13 +1,13 @@
 ---
 title: "Built-ins"
-description: "Everything the standard library adds to a vocabulary: string tests, edit distance, a number's value and unit, arithmetic, and absent, read from its registry."
+description: "Everything the standard library adds to a vocabulary: string tests, edit distance, building text, a number's value and unit, arithmetic, and absent, read from its registry."
 ---
 
 `stdlib.Register` adds these to a vocabulary. The table is built from the registry itself when the site is built, with each name's signature and the doc it was registered with.
 
 {{ builtins }}
 
-All but `str.distance`, `num.value`, `num.unit` and the arithmetic functions are tests: each holds or it doesn't, and binds nothing. So every argument needs a value from the rest of the goal, pretty much the way a comparison does. jaala's planner runs a test once its arguments are bound, wherever you wrote it in the goal, and refuses one whose arguments nothing binds:
+All but `str.distance`, the text functions, `num.value`, `num.unit` and the arithmetic functions are tests: each holds or it doesn't, and binds nothing. So every argument needs a value from the rest of the goal, pretty much the way a comparison does. jaala's planner runs a test once its arguments are bound, wherever you wrote it in the goal, and refuses one whose arguments nothing binds:
 
 {{ demo "demos/reference/builtins-unbound.yaml" }}
 
@@ -48,6 +48,38 @@ Each pair is measured once per binding, so a goal comparing every name with ever
 With neither string bound there is nothing to measure, and the goal is refused:
 
 {{ demo "demos/reference/builtins-distance-unbound.yaml" }}
+
+## Building text
+
+`str.concat`, `str.replace`, `str.lower`, `str.upper`, `str.capitalize` and `str.split` build text from text, so a name one fact spells can be matched to the name another fact spells differently. Each takes its inputs and then its result, like the arithmetic functions, so a call can sit in a body or in an expression (`?f = str.concat(?p, ".go")`). The inputs need values from the rest of the goal, and with the result given too a call tests it.
+
+`str.concat(?head, ?tail, ?text)` puts two strings together:
+
+{{ demo "demos/reference/builtins-concat.yaml" }}
+
+Like `num.add` it runs from any two of its three values, so given the text and one end it cuts that end off. Text that doesn't start or end with it gives no row, so this finds each package that has a test named after it, and leaves out `auth_fuzz`:
+
+{{ demo "demos/reference/builtins-concat-cut.yaml" }}
+
+`str.replace(?s, ?old, ?new, ?out)` replaces every occurrence:
+
+{{ demo "demos/reference/builtins-replace.yaml" }}
+
+`str.lower` and `str.upper` change the case of every character, and `str.capitalize` only the first:
+
+{{ demo "demos/reference/builtins-case.yaml" }}
+
+`str.split(?s, ?sep, ?i, ?part)` gives one row per part between separators, numbered from 0:
+
+{{ demo "demos/reference/builtins-split.yaml" }}
+
+Given an index it gives that part alone, and a negative index counts from the end: -1 is the last part, which is a qualified name's own name, and -2 the one before it. An index past either end gives no row:
+
+{{ demo "demos/reference/builtins-split-last.yaml" }}
+
+None of them makes text up from nothing, so a call with nothing to read is refused:
+
+{{ demo "demos/reference/builtins-text-unbound.yaml" }}
 
 ## Numbers and units
 

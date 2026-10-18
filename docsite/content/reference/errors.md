@@ -561,6 +561,10 @@ A generator whose required inputs nothing in the body binds, such as `str.distan
 
 The same mistake caught while running rather than before: an evaluator that runs a goal in the order it's written reached `str.distance` before its strings had values. The planned evaluator hosts use moves it after them, so it reports the error above instead.
 
+`query: … needs … bound (a variable must appear in a relation before … reads it)`
+
+The same mistake for a text function, such as `str.concat` or `str.split`: an evaluator running the goal as written reached it before what it reads had values. The planned evaluator moves it after them, and with nothing binding them refuses the goal before it runs, with the message above.
+
 `query: cannot bind …: the goal does not use it`
 
 `Bind` names a variable the goal doesn't use, usually a typo.
