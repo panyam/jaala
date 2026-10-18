@@ -1,9 +1,39 @@
 package cypher
 
-// statement is one Cypher query: its MATCH clauses and its RETURN.
+// statement is one Cypher query: its UNION parts, each a chain of stages.
 type statement struct {
-	matches []matchClause
-	ret     returnClause
+	parts []query
+}
+
+// A query is one UNION part: its stages, each closed by a WITH but the last, closed by RETURN.
+type query struct {
+	pos    Pos
+	stages []stage
+}
+
+type stage struct {
+	clauses []readClause
+	proj    returnClause
+}
+
+// A readClause is a MATCH or a CALL ... YIELD, one of them set.
+type readClause struct {
+	match *matchClause
+	call  *callClause
+}
+
+type callClause struct {
+	pos    Pos
+	name   string
+	args   []expr
+	yields []yieldItem
+	star   bool
+	where  expr
+}
+
+type yieldItem struct {
+	pos         Pos
+	name, alias string
 }
 
 type matchClause struct {
@@ -42,8 +72,11 @@ type propEntry struct {
 	val expr
 }
 
+// A returnClause is a RETURN, or with set a WITH, whose where filters what it hands on.
 type returnClause struct {
 	pos      Pos
+	with     bool
+	where    expr
 	distinct bool
 	star     bool
 	items    []returnItem
@@ -126,6 +159,13 @@ type (
 		pos   Pos
 		items []expr
 	}
+	// subquery is EXISTS { ... } or COUNT { ... }: patterns and an optional WHERE.
+	subquery struct {
+		pos      Pos
+		count    bool
+		patterns []pattern
+		where    expr
+	}
 	// unsupported is an expression parsed so it can be refused by name: a map, CASE, a literal Cypher
 	// has and jaala doesn't.
 	unsupported struct {
@@ -134,17 +174,25 @@ type (
 	}
 )
 
-func (e strLit) at() Pos      { return e.pos }
-func (e numLit) at() Pos      { return e.pos }
-func (e paramRef) at() Pos    { return e.pos }
-func (e varRef) at() Pos      { return e.pos }
-func (e propRef) at() Pos     { return e.pos }
-func (e binary) at() Pos      { return e.pos }
-func (e negate) at() Pos      { return e.pos }
-func (e minus) at() Pos       { return e.pos }
-func (e isNull) at() Pos      { return e.pos }
-func (e call) at() Pos        { return e.pos }
-func (e hasLabel) at() Pos    { return e.pos }
-func (e patExpr) at() Pos     { return e.pos }
-func (e listLit) at() Pos     { return e.pos }
+func (e strLit) at() Pos   { return e.pos }
+func (e numLit) at() Pos   { return e.pos }
+func (e paramRef) at() Pos { return e.pos }
+func (e varRef) at() Pos   { return e.pos }
+func (e propRef) at() Pos  { return e.pos }
+func (e binary) at() Pos   { return e.pos }
+func (e negate) at() Pos   { return e.pos }
+func (e minus) at() Pos    { return e.pos }
+func (e isNull) at() Pos   { return e.pos }
+func (e call) at() Pos     { return e.pos }
+func (e hasLabel) at() Pos { return e.pos }
+func (e patExpr) at() Pos  { return e.pos }
+func (e listLit) at() Pos  { return e.pos }
+func (e subquery) at() Pos { return e.pos }
+
+func (e subquery) kind() string {
+	if e.count {
+		return "COUNT"
+	}
+	return "EXISTS"
+}
 func (e unsupported) at() Pos { return e.pos }

@@ -85,6 +85,61 @@ func Example_cypherParameter() {
 	// "api"
 }
 
+// A WITH closes a stage, a rule whose head is what it hands on, so its
+// aggregate can be filtered as Cypher's HAVING. A parameter such a rule reads
+// is out of Bind's reach, so cypher.Params writes its value in.
+func Example_cypherWith() {
+	runCypher(`MATCH (a:Package)-[:IMPORTS*]->(d:Package)
+WITH a, count(DISTINCT d) AS n WHERE n > 1
+RETURN a.name AS name, n ORDER BY n DESC`, nil)
+	v, err := vocabulary(source())
+	if err != nil {
+		panic(err)
+	}
+	q := `MATCH (:Package {name: $pkg})-[:IMPORTS*]->(d) WITH d RETURN d.name`
+	_, err = cypher.Compile(v, depsGraph, q)
+	fmt.Println(err)
+	p, err := cypher.Compile(v, depsGraph, q, cypher.Params(map[string]ns.Value{"pkg": ns.S("api")}))
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(p.Text)
+	// Output:
+	// cypher_reach1(?x, ?y) :- imports(?x, ?y);
+	// cypher_reach1(?x, ?y) :- cypher_reach1(?x, ?z), imports(?z, ?y);
+	// cypher_with1(?a, count(distinct ?d)) :- pkg(?a, _), pkg(?d, _), cypher_reach1(?a, ?d);
+	// cypher_with1(?a, ?n), ?n > 1 => ?a, ?n order by ?n desc
+	// name | n
+	// "app" | "3"
+	// "api" | "2"
+	// cypher: $pkg is read inside a WITH stage, a UNION part, an OR, a pattern test or a variable-length relationship, which datalog.Bind can't reach: compile with cypher.Params
+	// cypher_reach1(?x, ?y) :- imports(?x, ?y);
+	// cypher_reach1(?x, ?y) :- cypher_reach1(?x, ?z), imports(?z, ?y);
+	// cypher_with1(?d) :- pkg("api", _), cypher_reach1("api", ?d);
+	// cypher_with1(?d) => ?d
+}
+
+// COUNT { } counts a pattern's matches from each row's nodes, a node with none
+// counting 0, and UNION joins parts returning the same columns.
+func Example_cypherCountAndUnion() {
+	runCypher(`MATCH (p:Package) RETURN p.name AS name, COUNT { (p)<-[:IMPORTS]-() } AS importers ORDER BY name`, nil)
+	runCypher(`MATCH (p:Package {license: 'MIT'}) RETURN p.name AS name
+UNION MATCH (p:Package) WHERE p.license IS NULL RETURN p.name AS name`, nil)
+	// Output:
+	// pkg(?p, _), ?_count = count(?_n) : { imports(?_n, ?p) } => ?p, ?_count order by ?p
+	// name | importers
+	// "api" | "1"
+	// "app" | "0"
+	// "log" | "1"
+	// "util" | "1"
+	// cypher_union1(?p) :- pkg(?p, "MIT");
+	// cypher_union1(?p) :- pkg(?p, ?p_license), absent(?p_license);
+	// cypher_union1(?name) => ?name
+	// name
+	// "api"
+	// "app"
+}
+
 // Cypher a program can't express yet is refused with the issue that would
 // let it, so a model or a caller knows to rewrite rather than retry.
 func Example_cypherGap() {
