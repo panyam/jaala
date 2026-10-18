@@ -352,3 +352,30 @@ func TestAModuleExportsAFunction(t *testing.T) {
 		t.Errorf("elec.power = %v, %v", got, err)
 	}
 }
+
+// A relation called as a function and the arithmetic feeding it can wait on each other: f(2 * ?x)
+// lowers to num.mul(2, ?x, ?e) and f(?e, ?r), each binding what the other would solve for. The plan
+// then runs what could run now, f, as deferComparisons does at solve time (#374), where it fell back
+// to the written order, num.mul first, and the demand rewrite stored that num.mul alone in a prefix
+// nothing bound. control: with a real binder for the operand, the hold still puts it first.
+func TestARelationCalledAsAFunctionRunsBeforeTheArithmeticWaitingOnIt(t *testing.T) {
+	v := std(graph())
+	q := mustParse(t, `f(4, 9) :- node("a"); f(2 * ?x) = 9 => ?x`)
+	rows, err := both(q, baseFor(v))
+	if err != nil || col(rows, "x") != "2" {
+		t.Fatalf("%v, %v; want ?x = 2, since f(4) is 9", col(rows, "x"), err)
+	}
+	first := func(text string) string {
+		lowered, err := lowerExpressions(mustParse(t, text), v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return planGoal(baseFor(v), lowered.Goal).Literals[0].String()
+	}
+	if got := first(`f(4, 9) :- node("a"); f(2 * ?x) = 9 => ?x`); !strings.HasPrefix(got, "f(") {
+		t.Errorf("planned first: %s, want the f call", got)
+	}
+	if got := first(`f(4, 9) :- node("a"); f(?w * 2) = 9, weight(?n, ?w) => ?n`); !strings.HasPrefix(got, "weight(") {
+		t.Errorf("control: planned first: %s, want weight, which binds the operand", got)
+	}
+}

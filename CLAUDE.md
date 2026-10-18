@@ -711,7 +711,10 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   only for what nothing else binds; once the body runs out, a call waits only on calls that could run then,
   or two waiting on each other ran in whichever order they were left, `?w = ?x * 2 + 1` erring in Naive;
   `planBody` holds such a call too (#331), since `magic` makes a demand rule from the planned prefix and
-  a demand rule has nothing left to wait for: `num.mul(?n, 0, ?p)` planned first demanded no count),
+  a demand rule has nothing left to wait for: `num.mul(?n, 0, ?p)` planned first demanded no count;
+  when every call left waits on another, `planBody` retries waiting only on what `couldRun`, as
+  `deferComparisons` does, #374: `r0(0*?0, 0)`'s `num.mul` and `r0` waited on each other, the written
+  order put `num.mul` first, and the demand rewrite stored it alone in a prefix nothing bound),
   so written order doesn't matter in Naive, and `checkComputedRecursion`
   refuses a computing rule that reaches itself (#207), on the program as linked only (`checkRules`;
   the fixpoints call `strataOf`), since the demand rewrite's cycles make a computing rule look

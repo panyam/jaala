@@ -209,57 +209,13 @@ func planBody(b *Base, body Body, entry map[Var]bool) Body {
 	}
 	var out []Literal
 	for len(pos) > 0 {
-		pick := -1
-		for i, lit := range pos {
-			if (isCheck(b, lit) || isProbe(b, lit)) && checkReady(lit, bound) {
-				pick = i
-				break
-			}
-		}
+		pick := planPick(b, pos, pos, bound)
 		if pick < 0 {
-			for i, lit := range pos {
-				if lit.Pos == nil {
-					continue
-				}
-				flags := boundFlags(lit.Pos, bound)
-				if lit.computed && awaitsOperand(lit, pos, bound, b.reg) {
-					continue
-				}
-				if bi, ok := b.reg.Predicate(lit.Pos.Relation); ok && bi.IsGenerator() && bi.Satisfied(flags) && (generatorBound(bi, lit.Pos, flags) > 0 || !slices.ContainsFunc(pos, b.readsWhole)) {
-					pick = i
-					break
-				}
-			}
-		}
-		if pick < 0 {
-			best, bestSize, bestGen := -1, -1, false
-			for i, lit := range pos {
-				if isCheck(b, lit) || lit.computed && awaitsOperand(lit, pos, bound, b.reg) {
-					continue
-				}
-				flags := boundFlags(lit.Pos, bound)
-				bi, gen := b.reg.Predicate(lit.Pos.Relation)
-				if gen && !bi.Satisfied(flags) {
-					continue
-				}
-				n := count(flags)
-				if gen {
-					n = generatorBound(bi, lit.Pos, flags)
-				}
-				if n > 0 && scansOnLookup(b, lit.Pos, flags) {
-					n = 0
-				}
-				if n < best {
-					continue
-				}
-				size := -1
-				if n > 0 {
-					size = fanOut(b, lit.Pos, flags)
-				}
-				if n > best || (size >= 0 && bestSize >= 0 && size < bestSize) || (n == best && bestGen && b.readsWhole(lit)) {
-					pick, best, bestSize, bestGen = i, n, size, gen
-				}
-			}
+			// Every call left waits on another: r0(0 * ?0, 0) lowers to num.mul(0, ?0, ?e) and
+			// r0(?e, 0, ?r), each binding what the other would solve for. As deferComparisons does, a
+			// waiting call then waits only on what could run now (#374), or the written order decides,
+			// and the demand rewrite stores a prefix that can't run.
+			pick = planPick(b, pos, couldRun(b, pos, bound), bound)
 		}
 		if pick < 0 {
 			out = append(out, pos...)
@@ -273,6 +229,80 @@ func planBody(b *Base, body Body, entry map[Var]bool) Body {
 		pos = append(pos[:pick:pick], pos[pick+1:]...)
 	}
 	return Body{Literals: append(out, negs...)}
+}
+
+// couldRun is the literals of pos that could run with bound: a relation, or a generator one of whose
+// modes is satisfied. A call that can't is no binder for another to wait on.
+func couldRun(b *Base, pos []Literal, bound map[Var]bool) []Literal {
+	var out []Literal
+	for _, lit := range pos {
+		if lit.Pos == nil {
+			continue
+		}
+		bi, ok := b.reg.Predicate(lit.Pos.Relation)
+		if !ok || bi.IsGenerator() && bi.Satisfied(boundFlags(lit.Pos, bound)) {
+			out = append(out, lit)
+		}
+	}
+	return out
+}
+
+// planPick is the literal of pos planBody takes next with bound, -1 for none, a computed call
+// waiting while any of waitOn binds what it would solve for (awaitsOperand).
+func planPick(b *Base, pos, waitOn []Literal, bound map[Var]bool) int {
+	pick := -1
+	for i, lit := range pos {
+		if (isCheck(b, lit) || isProbe(b, lit)) && checkReady(lit, bound) {
+			pick = i
+			break
+		}
+	}
+	if pick < 0 {
+		for i, lit := range pos {
+			if lit.Pos == nil {
+				continue
+			}
+			flags := boundFlags(lit.Pos, bound)
+			if lit.computed && awaitsOperand(lit, waitOn, bound, b.reg) {
+				continue
+			}
+			if bi, ok := b.reg.Predicate(lit.Pos.Relation); ok && bi.IsGenerator() && bi.Satisfied(flags) && (generatorBound(bi, lit.Pos, flags) > 0 || !slices.ContainsFunc(pos, b.readsWhole)) {
+				pick = i
+				break
+			}
+		}
+	}
+	if pick < 0 {
+		best, bestSize, bestGen := -1, -1, false
+		for i, lit := range pos {
+			if isCheck(b, lit) || lit.computed && awaitsOperand(lit, waitOn, bound, b.reg) {
+				continue
+			}
+			flags := boundFlags(lit.Pos, bound)
+			bi, gen := b.reg.Predicate(lit.Pos.Relation)
+			if gen && !bi.Satisfied(flags) {
+				continue
+			}
+			n := count(flags)
+			if gen {
+				n = generatorBound(bi, lit.Pos, flags)
+			}
+			if n > 0 && scansOnLookup(b, lit.Pos, flags) {
+				n = 0
+			}
+			if n < best {
+				continue
+			}
+			size := -1
+			if n > 0 {
+				size = fanOut(b, lit.Pos, flags)
+			}
+			if n > best || (size >= 0 && bestSize >= 0 && size < bestSize) || (n == best && bestGen && b.readsWhole(lit)) {
+				pick, best, bestSize, bestGen = i, n, size, gen
+			}
+		}
+	}
+	return pick
 }
 
 // readsWhole reports whether lit calls a relation the engine derives or holds, which a call with
