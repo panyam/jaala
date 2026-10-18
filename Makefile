@@ -28,5 +28,5 @@ tag-push: ## Tag, push and publish the release (make tag-push V=v0.1.N NOTES=not
 	@$(MAKE) tag V=$(V) NOTES=$(NOTES)
 	@V="$(V)" ./scripts/tag-push.sh
 
-bump-root: ## Point the sub-modules at a published jaala tag and drop their replace (make bump-root V=v0.1.N)
+bump-root: ## Point the sub-modules at the version about to be tagged, before make tag-push (make bump-root V=v0.1.N)
 	@V="$(V)" ./scripts/bump-root.sh

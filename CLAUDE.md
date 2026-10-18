@@ -104,12 +104,10 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   it as `Prompt.Grammar`.
 - **`frontends/nlmodels` is a module of its own** (#330): thin clients for local models already
   running, `llamacpp` (sends the grammar, `cache_prompt`) and `ollama` (no GBNF, so no grammar).
-  CI's `nlmodels` job tests it; the root's `./...` doesn't reach it. It requires published jaala and
-  `frontends/nl` tags; a change needing API no tag holds puts `replace github.com/panyam/jaala =>
-  ../../` (and `github.com/panyam/jaala/frontends/nl => ../nl`) back until `make bump-root` after
-  the next tags, and `make tag` won't tag it while a replace is there (Releasing). It replaces jaala
-  too while it replaces nl: jaala's tags up to v0.1.71 hold `frontends/nl` as a package, so a
-  published jaala beside the nl module is an ambiguous import. Its old path, `github.com/panyam/jaala/nlmodels`, shipped
+  CI's `nlmodels` job tests it; the root's `./...` doesn't reach it. Like every
+  sub-module it requires jaala and `frontends/nl` at the last release and replaces both with the
+  checkout (Releasing). A consumer must not pair the nl module with a jaala tag up to v0.1.71,
+  which holds `frontends/nl` as a package: that is an ambiguous import. Its old path, `github.com/panyam/jaala/nlmodels`, shipped
   once (nlmodels/v0.1.65) with no consumer, and nothing is tagged under that prefix again. `./selfcheck.sh` runs a real
   `llama-server` on llama.cpp's 1 MB test model when `make llama` has fetched it (Homebrew's
   llama.cpp ships no GBNF validator, so a server is the only check llama.cpp reads the grammar): every reply must
@@ -177,8 +175,7 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   `TestEval` share, `testdata/eval.golden`, `-update`), and `FuzzCompile` (in selfcheck) requires
   any text to compile to a program that validates, or to fail with an `*Error` or a type error
   the query itself makes. It is a module of its own (CI's `cypher` job, `SUB_MODS_TO_TAG`), standard
-  library and jaala only, and replaces jaala with `../../` and nl with `../nl` until tags hold
-  `internal/guide` and the nl module (Releasing); `internal/guide`
+  library and jaala only, and replaces jaala and nl with the checkout (Releasing); `internal/guide`
   imports no front end (its `Case` is converted to `nl.Case` in each test) so the root never
   requires one. Run its tests from inside it: the root's `./...` stops at the module. The docsite's
   `guide/cypher.md` includes `examples/guide/cypher_test.go`, so the docsite replaces the cypher
@@ -381,7 +378,7 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   `bindGoal`'s and `Link`'s atom copies must keep it, or `as` vanishes silently. The corpus binds an
   edge's fact now and then from a stream of its own (`generator.facts`, `bound fact`), every third
   generated edge left without an id, and Soufflé reads `edge_fact`. nl's grammar writes `as ?v`
-  (`fact`), so `frontends/nl` replaces jaala with its checkout until the next tag (`make bump-root`).
+  (`fact`).
 - **A rewrite that rebuilds a `Literal` must keep its `at`, and one that rebuilds a `Rule` its
   `text`.** They carry the written position and form a witness follows (`witness.go`); dropping
   either makes that literal vanish from explanations or shows a rule in its rewritten form, with no
@@ -920,20 +917,21 @@ mcpkit's). It tags jaala and every module in the Makefile's `SUB_MODS_TO_TAG`
 (`frontends/nl`, tagged `frontends/nl/v0.1.N`, then `nlmodels`, `mcp` and `cypher`) at the same commit, pushes jaala's tag
 alone and then the others (GitHub raises no push event for several tags in one push, mcpkit #1391),
 and publishes the release page from jaala's annotation, which is the release notes: a short list
-of what changed, from NOTES. `make tag` alone tags without pushing. It refuses a sub-module still
-replacing jaala with its checkout, since a consumer ignores `replace`: when a sub-module needs jaala
-API no tag holds, release jaala first, then `make bump-root V=<that tag>` (points the sub-modules
-at it and drops the replace), commit, and tag the sub-modules. A sub-module requiring another
-(`cypher` and `nlmodels` require `frontends/nl`, and `mcp` requires `cypher`) is bumped to that
-one's `<dir>/V` too, and `bump-root` leaves it alone (exit 1, naming what to tag) until that tag is
-pushed. So a release whose sub-modules replace jaala goes in tiers under one V: `make tag-push
-V=v0.1.N SUB_MODS_TO_TAG=` (jaala alone), then for each tier `make bump-root V=v0.1.N`, commit and
-push, and `make tag-push V=v0.1.N SUB_MODS_TO_TAG=<the modules it moved>`; with V tagged already,
-`tag-all` tags only the sub-modules, at HEAD, and `tag-push` pushes only theirs (the release page
-went with jaala's). The tiers are `frontends/nl`, then `cypher` and `nlmodels`, then `mcp`.
-`bump-root` also tidies the docsite, which replaces jaala and the front ends but lists what they
-require (#362 left it stale and the docs workflow's `go test` stopped on "updates to go.mod
-needed"). #359's release (v0.1.72 to v0.1.74) predates the tiers and took a version per step. Put the upgrade note on the issue a
+of what changed, from NOTES. `make tag` alone tags without pushing.
+
+Every sub-module keeps a `replace` of jaala, and of each tagged module it requires (`cypher` and
+`nlmodels` require `frontends/nl`, `mcp` requires `cypher` and through it nl), by the checkout, so
+its CI and tests build against `main`, and its requires name the last release. Before tagging, `make
+bump-root V=v0.1.N` (mcpkit's model: `scripts/bump-root.sh`) points those requires, and the
+docsite's, at the version about to be tagged with `go mod edit`, adds any missing replace, and
+tidies through the replaces, so V needn't exist yet; commit it to `main`, then `make tag-push` on
+that commit. A consumer ignores `replace` and reads the requires, which resolve once the tags are
+pushed. `tag-all` refuses a sub-module requiring any of jaala's modules at a version other than V
+(bump-root forgotten). With V tagged already it tags only the sub-modules, at HEAD, for a sub-module
+tag that failed, and `tag-push` then pushes only theirs. After pushing, check each resolves:
+`GOPROXY=direct go list -m github.com/panyam/jaala/<dir>@V` from a scratch module. v0.1.72 to
+v0.1.75 went out in tiers, from a `bump-root` that dropped the replaces and tidied against
+published tags; that is why they took several commits. Put the upgrade note on the issue a
 host filed or the PR's own issue.
 
 ## Issues and missions
