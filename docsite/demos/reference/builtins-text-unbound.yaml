@@ -1,0 +1,3 @@
+fixture: deps
+query: str.concat(?a, "_test", ?t) => ?a, ?t
+expect_error: "nothing binds what str.concat needs first"

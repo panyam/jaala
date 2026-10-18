@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -29,7 +30,7 @@ type queryInput struct {
 	JSON      bool   `json:"json,omitempty" jsonschema_description:"Answer with the columns, rows and witnesses as JSON instead of text."`
 }
 
-func (t *tools) query(ctx core.ToolContext, in queryInput) (core.ToolResult, error) {
+func (c *call) query(ctx core.ToolContext, in queryInput) (core.ToolResult, error) {
 	offset := 0
 	if in.PageToken != "" {
 		n, err := strconv.Atoi(in.PageToken)
@@ -40,17 +41,17 @@ func (t *tools) query(ctx core.ToolContext, in queryInput) (core.ToolResult, err
 	}
 	q, err := datalog.Parse(in.Program)
 	if err != nil {
-		return t.refuse(in.Program, err), nil
+		return c.refuse(in.Program, err), nil
 	}
-	b, err := t.o.Base(ctx)
+	b, err := c.base(ctx)
 	if err != nil {
 		return core.ErrorResult(err.Error()), nil
 	}
-	tab, err := datalog.SemiNaive{}.EvalTable(ctx, q, b, t.evalOptions(in.MaxWork, datalog.Witnesses())...)
+	tab, err := datalog.SemiNaive{}.EvalTable(ctx, q, b, c.evalOptions(in.MaxWork, datalog.Witnesses())...)
 	if err != nil {
-		return t.refuse(in.Program, err), nil
+		return c.refuse(in.Program, err), nil
 	}
-	return t.answer(page(in.Program, tab, offset, t.limit(in.Limit)), in.JSON)
+	return c.answer(page(in.Program, tab, offset, c.limit(in.Limit)), in.JSON)
 }
 
 // page is the rows of tab from offset, at most limit of them.
@@ -70,10 +71,19 @@ func (t *tools) limit(asked int) int {
 	return t.o.Limit
 }
 
-// evalOptions are the server's options with a budget of asked capped by Options.MaxWork, then extra.
-func (t *tools) evalOptions(asked int64, extra ...datalog.Option) []datalog.Option {
-	opts := append([]datalog.Option{}, t.o.Eval...)
-	budget := t.o.MaxWork
+// base is the Base the call reads: its Run's, or else the one Options.Base picks.
+func (c *call) base(ctx context.Context) (*datalog.Base, error) {
+	if c.run.Base != nil {
+		return c.run.Base, nil
+	}
+	return c.o.Base(ctx)
+}
+
+// evalOptions are the server's options, then the Run's, with a budget of asked capped by
+// Options.MaxWork, then extra.
+func (c *call) evalOptions(asked int64, extra ...datalog.Option) []datalog.Option {
+	opts := append(append([]datalog.Option{}, c.o.Eval...), c.run.Eval...)
+	budget := c.o.MaxWork
 	if asked > 0 && (budget == 0 || asked < budget) {
 		budget = asked
 	}
@@ -246,8 +256,8 @@ type schemaInput struct {
 	Path string `json:"path,omitempty" jsonschema_description:"A module or relation, \"data\" for what the data holds, or empty for everything."`
 }
 
-func (t *tools) schema(_ core.ToolContext, in schemaInput) (core.ToolResult, error) {
-	text, err := t.describe(in.Path)
+func (c *call) schema(_ core.ToolContext, in schemaInput) (core.ToolResult, error) {
+	text, err := c.describe(in.Path)
 	if err != nil {
 		return core.ErrorResult(err.Error()), nil
 	}
@@ -309,19 +319,19 @@ type explainInput struct {
 	MaxWork int64  `json:"max_work,omitempty" jsonschema_description:"Stop past this much work; the server caps it too."`
 }
 
-func (t *tools) explain(ctx core.ToolContext, in explainInput) (core.ToolResult, error) {
+func (c *call) explain(ctx core.ToolContext, in explainInput) (core.ToolResult, error) {
 	q, err := datalog.Parse(in.Program)
 	if err != nil {
-		return t.refuse(in.Program, err), nil
+		return c.refuse(in.Program, err), nil
 	}
-	b, err := t.o.Base(ctx)
+	b, err := c.base(ctx)
 	if err != nil {
 		return core.ErrorResult(err.Error()), nil
 	}
 	var r datalog.Report
-	rows, err := datalog.SemiNaive{}.Eval(ctx, q, b, t.evalOptions(in.MaxWork, datalog.Explain(&r))...)
+	rows, err := datalog.SemiNaive{}.Eval(ctx, q, b, c.evalOptions(in.MaxWork, datalog.Explain(&r))...)
 	if err != nil {
-		return t.refuse(in.Program, err), nil
+		return c.refuse(in.Program, err), nil
 	}
 	return core.TextResult(fmt.Sprintf("%d rows\n%s", len(rows), r.String())), nil
 }
@@ -336,8 +346,8 @@ type askInput struct {
 	JSON     bool   `json:"json,omitempty" jsonschema_description:"Answer with the columns, rows and witnesses as JSON instead of text."`
 }
 
-func (t *tools) ask(ctx core.ToolContext, in askInput) (core.ToolResult, error) {
-	model, fallback := t.o.Model, t.o.Fallback
+func (c *call) ask(ctx core.ToolContext, in askInput) (core.ToolResult, error) {
+	model, fallback := c.o.Model, c.o.Fallback
 	switch in.Mode {
 	case "", "both":
 	case "local":
@@ -350,21 +360,21 @@ func (t *tools) ask(ctx core.ToolContext, in askInput) (core.ToolResult, error) 
 	default:
 		return core.ErrorResult(fmt.Sprintf("mode %q: want local, frontier or both", in.Mode)), nil
 	}
-	b, err := t.o.Base(ctx)
+	b, err := c.base(ctx)
 	if err != nil {
 		return core.ErrorResult(err.Error()), nil
 	}
-	p, tr, err := nl.Translate(ctx, in.Question, t.v, nil, model, nl.Options{
-		Fallback: fallback, Base: b, Eval: t.evalOptions(in.MaxWork), Pack: &t.p.Pack,
+	p, tr, err := nl.Translate(ctx, in.Question, c.v, nil, model, nl.Options{
+		Fallback: fallback, Base: b, Eval: c.evalOptions(in.MaxWork), Pack: &c.p.Pack,
 	})
 	if err != nil {
 		return core.ErrorResult(fmt.Sprintf("no program answered it: %v\n%s", err, traceText(tr))), nil
 	}
-	tab, err := datalog.SemiNaive{}.EvalTable(ctx, p.Query, b, t.evalOptions(in.MaxWork, datalog.Witnesses())...)
+	tab, err := datalog.SemiNaive{}.EvalTable(ctx, p.Query, b, c.evalOptions(in.MaxWork, datalog.Witnesses())...)
 	if err != nil {
-		return t.refuse(p.Text, err), nil
+		return c.refuse(p.Text, err), nil
 	}
-	res, err := t.answer(page(p.Text, tab, 0, t.limit(in.Limit)), in.JSON)
+	res, err := c.answer(page(p.Text, tab, 0, c.limit(in.Limit)), in.JSON)
 	if err != nil || in.JSON {
 		return res, err
 	}

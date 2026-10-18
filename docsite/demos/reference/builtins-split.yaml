@@ -1,0 +1,3 @@
+fixture: deps
+query: test("auth_fuzz", _), str.split("auth_fuzz", "_", ?i, ?part) => ?i, ?part
+expect: [["0", auth], ["1", fuzz]]

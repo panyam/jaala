@@ -7,7 +7,7 @@ count       yes   2      22    parse
 reverse     yes   2      3     empty
 columns     yes   1      4
 missing     no    3      4     unknown repeat
-passed 7/8, 2 on the first try; 15 tries, tokens 10401 in (9945 cached), 95 out
+passed 7/8, 2 on the first try; 15 tries, tokens 14030 in (13560 cached), 95 out
 refused: arity 1, empty 1, parse 1, repeat 1, unbound 1, unknown 2; check errors with a fix 5/5
 costliest drafts:
   transitive try 2 (accepted): work 22, most in imports(?b, ?c) (6)

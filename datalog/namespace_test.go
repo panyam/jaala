@@ -97,7 +97,7 @@ func TestAMissingModuleIsNamedAsOne(t *testing.T) {
 
 func TestAModuleIsNotARelation(t *testing.T) {
 	err := evalErr(tree(), `edge(?a, ?b), str(?a)`)
-	if err == nil || !strings.Contains(err.Error(), `"str" is a module, not a relation; it holds contains, distance, glob, match, prefix, suffix`) {
+	if err == nil || !strings.Contains(err.Error(), `"str" is a module, not a relation; it holds capitalize, concat, contains, distance, glob, lower, match, prefix, replace, split, suffix, upper`) {
 		t.Errorf("err = %v, want str named as a module with its members", err)
 	}
 }

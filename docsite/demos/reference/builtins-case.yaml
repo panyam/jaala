@@ -1,0 +1,3 @@
+fixture: deps
+query: owner("auth", ?team), str.upper(?team, ?u), str.capitalize(?team, ?c), str.lower(?u, ?l) => ?team, ?u, ?c, ?l
+expect: [[security, SECURITY, Security, security]]
