@@ -102,3 +102,61 @@ func Example_cypherGap() {
 	// line 1, column 19: gap #282
 	// cypher: not supported yet: OPTIONAL MATCH and null values (jaala#282): write the match without OPTIONAL, or as a second query
 }
+
+// A store keeping every node in node(id, kind), every relationship in
+// edge(from, kind, to) and properties in attr(id, key, value) needs no graph
+// written by hand: cypher.Store reads its kinds and writes one.
+func Example_cypherStore() {
+	src := ns.NewMemSource().
+		Declare("node", "id", "kind").
+		Declare("edge", "from", "kind", "to").
+		Declare("attr", "id", "key", "value")
+	add := func(rel string, vals ...string) {
+		var t ns.Tuple
+		for _, v := range vals {
+			t.Vals = append(t.Vals, ns.S(v))
+		}
+		src.Add(rel, t)
+	}
+	add("node", "f:main", "func")
+	add("node", "f:parse", "func")
+	add("node", "t:main", "test")
+	add("edge", "f:main", "calls", "f:parse")
+	add("edge", "t:main", "covers", "f:main")
+	add("attr", "f:parse", "doc", "reads the input")
+	v := ns.MustVocabulary(src)
+	b := datalog.MustBase(v, src)
+
+	store := cypher.Store{Node: "node", Edge: "edge", Attr: "attr"}
+	nodeKinds, edgeKinds, err := store.Kinds(context.Background(), b)
+	if err != nil {
+		panic(err)
+	}
+	g := store.Graph(nodeKinds, edgeKinds)
+	var names []string
+	for _, n := range g.Nodes {
+		names = append(names, n.Label)
+	}
+	for _, e := range g.Edges {
+		names = append(names, e.Type)
+	}
+	fmt.Println(strings.Join(names, " "))
+	p, err := cypher.Compile(v, g, `MATCH (t:Test)-[:COVERS]->(:Func)-[:CALLS]->(f:Func) RETURN t, f, f.doc`)
+	if err != nil {
+		panic(err)
+	}
+	rows, err := datalog.SemiNaive{}.Eval(context.Background(), p.Query, b)
+	if err != nil {
+		panic(err)
+	}
+	for _, r := range rows {
+		var vals []string
+		for _, c := range p.Query.Columns() {
+			vals = append(vals, show(r.Bind[c]))
+		}
+		fmt.Println(strings.Join(vals, " | "))
+	}
+	// Output:
+	// Func Test CALLS COVERS
+	// "t:main" | "f:parse" | "reads the input"
+}

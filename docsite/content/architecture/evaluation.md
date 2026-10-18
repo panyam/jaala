@@ -1,6 +1,6 @@
 ---
 title: "Evaluation"
-description: "How a query becomes an answer: linking, checking the program as written, strata, and a fixpoint run component by component."
+description: "How a query becomes an answer: linking, lowering arithmetic and body aggregates, checking the program as written, inlining input rules, strata, and a fixpoint run component by component."
 prev: {url: "/jaala/architecture/layering/", title: "Layering"}
 next: {url: "/jaala/architecture/rewrites/", title: "Rewrites"}
 ---
@@ -8,12 +8,14 @@ next: {url: "/jaala/architecture/rewrites/", title: "Rewrites"}
 Every evaluator runs a query through the same steps, and they differ only in the last one.
 
 1. **Parse** the text into rules and a goal.
-2. **Bind** the host's values into the goal (`Bind`), keeping the goal as written for the checks that need it. A variable bound to one value becomes a constant. One bound to several stays a variable, and after the checks in step 5 the goal is joined with a relation holding its values, which the demand rewrite starts from.
+2. **Bind** the host's values into the goal (`Bind`), keeping the goal as written for the checks that need it. A variable bound to one value becomes a constant. One bound to several stays a variable, and after the checks in step 6 the goal is joined with a relation holding its values, which the demand rewrite starts from.
 3. **Link** the names. A name a query calls from a module pulls in that module's rules, and whatever those read, so a query only carries the rules it can reach.
-4. **Coerce** constants to their arguments' types, so `"800"` in a number argument is the number 800 (see [types]({{.Site.PathPrefix}}/guide/types-and-constants/)).
-5. **Check** the program as written: every call's arity and every goal name, generators' modes, every negation's anchor, and every rule (known relations, consistent arity, bound head variables, stratification). Everything is checked before any rewrite renames it, so an error names what you wrote.
-6. **Rewrite**, for the planned `SemiNaive` only (see [rewrites]({{.Site.PathPrefix}}/architecture/rewrites/)).
-7. **Derive** the rules to a fixpoint, then solve the goal over the result, then aggregate, order and limit.
+4. **Lower** arithmetic and body aggregates into ordinary rules, so every step after this, and every evaluator, sees plain calls ([#5](https://github.com/panyam/jaala/issues/5), [#71](https://github.com/panyam/jaala/issues/71)). `?y = ?a * (?b + 1)` becomes calls to `num.add` and `num.mul` on fresh variables, and `?n = count(?x) : { body }` becomes three relations: one of the clause's own variables the braces share, a head aggregate over the braces, and a value relation whose extra clause answers 0 or absent over nothing (see [aggregation]({{.Site.PathPrefix}}/guide/aggregation/)). A module's rules are lowered the same way when it's checked.
+5. **Coerce** constants to their arguments' types, so `"800"` in a number argument is the number 800 (see [types]({{.Site.PathPrefix}}/guide/types-and-constants/)).
+6. **Check** the program as written: every call's arity and every goal name, generators' modes, every negation's anchor, and every rule (known relations, consistent arity, bound head variables, stratification). Everything is checked before any rewrite renames it, so an error names what you wrote. A failed check is a `*datalog.CheckError`: its message, its `Kind`, what it's about, and often a `Fix`, which `datalog.Locate` places in the text (see [asking through a model]({{.Site.PathPrefix}}/guide/plain-language/#errors-a-model-can-fix-from)).
+7. **Inline** each call to a rule that takes an argument from its caller, such as `power(?v, ?i, ?p) :- ?p = ?v * ?i`, which an expression calls as `power(?v, ?i)` ([#200](https://github.com/panyam/jaala/issues/200), see [arguments from the caller]({{.Site.PathPrefix}}/guide/modules-and-vocabulary/#arguments-from-the-caller) and [arithmetic]({{.Site.PathPrefix}}/guide/arithmetic/)). The checks treat its inputs as bound, and inlining it into its caller here means the evaluators only ever see rules whose bodies bind their own heads. A call that doesn't bind an input, or negates the rule, is refused.
+8. **Rewrite**, for the planned `SemiNaive` only (see [rewrites]({{.Site.PathPrefix}}/architecture/rewrites/)).
+9. **Derive** the rules to a fixpoint, then solve the goal over the result, then aggregate, order and limit.
 
 ## The base and each evaluation
 

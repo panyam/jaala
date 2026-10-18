@@ -1,6 +1,6 @@
 ---
 title: "Serving agents"
-description: "An MCP server for any vocabulary: the query, schema, explain and ask tools, instructions written from the host's pack, a host's own arguments and tools, and how a host runs it."
+description: "An MCP server for any vocabulary: the query, schema, explain, ask and cypher tools, instructions written from the host's pack, a host's own arguments and tools, and how a host runs it."
 prev: {url: "/jaala/guide/plain-language/", title: "Asking through a model"}
 next: {url: "/jaala/guide/cypher/", title: "Asking in Cypher"}
 ---
@@ -28,15 +28,24 @@ Transport and sessions are mcpkit's, so picking one is pretty much a line in the
 ## The tools
 
 - **`query`** runs a `program` and answers a page of rows, each with the facts it was derived from. `limit` asks for fewer rows than the server's limit, and `max_work` for less work than its cap. An answer longer than a page ends with a `page_token`, which the next call passes to continue; the token is the offset of the next row, and each page runs the program again, so the server keeps nothing between calls. `json: true` answers with the columns, rows, witnesses, total and token as JSON instead of text.
-- **`schema`** answers the card with no `path`, a module's members or a relation's signature, doc and rules with one, and the pack's `Card` at `data`.
+- **`schema`** answers the card with no `path`, a module's members or a relation's signature, doc and rules with one, the pack's `Card` at `data`, and the graph the `cypher` tool reads at `cypher`.
 - **`explain`** runs a `program` under `max_work` and answers its `Report` instead of its rows: where the work went and, for an empty answer, the literal that matched nothing.
 - **`ask`**, offered only when `Options.Model` is set, translates a `question` through `nl.Translate` with the pack and answers the program, its rows and each try. Its `mode` is `local` (the model alone), `frontier` (the fallback alone) or `both`, the default. It takes `limit`, `max_work` and `json` as `query` does.
 
 A program that doesn't parse, check or finish within its budget is a tool error carrying `nl.Explain`'s text, as the third call above shows, so the agent fixes the program and calls again. Every tool's schema allows only the arguments it names, so a misspelled argument is a tool error too, never ignored.
 
+## The cypher tool
+
+Agents know Cypher far better than jaala's Datalog. A pack whose `Cypher` field maps the vocabulary as a property graph (a [`cypher.Graph`]({{.Site.PathPrefix}}/guide/cypher/#the-graph-view), which `cypher.Store` writes for a node, edge and attr store) gets the `cypher` tool too, so an agent can ask in the language it knows ([#366](https://github.com/panyam/jaala/issues/366)). It's a tool of its own rather than a language argument on `query`, so its name tells an agent Cypher works before it reads anything else, and its description names the graph's labels and relationship types. `New` refuses a graph that doesn't fit the vocabulary.
+
+- It takes a Cypher `query`, `params` for its `$parameters` (a string or a number each), and `limit`, `page_token`, `max_work` and `json` as `query` does, plus the host's own arguments.
+- It compiles the query over the call's pack, so a `Run`'s pack can bring a graph of its own for the call, and a pack without one refuses the call. The program it compiled to then runs exactly as `query` runs a program, with the same base, budget, witnesses and paging.
+- The answer opens with `ran:` and the program, as the last call in the example above shows, so an agent sees what ran and can hand it to `explain`. Its columns are named as the query named them, an alias or `p.name`, and `Pack.Format` gets the Cypher text and those names in `Answer.Cypher` and `Answer.Columns`. With `json` the answer carries `cypher` and `program` too.
+- A query the compiler refuses is a tool error with the line, a caret under the place, and, for Cypher a program can't express yet, the issue that would let it and a nudge to write it another way, so the agent rewrites rather than retries.
+
 ## Instructions
 
-The instructions an agent reads when it connects open with the pack's `About`, say how to write a program and to call `schema` first, and show the pack's first two examples, as the first example above prints; `mcp.Instructions` returns them. `Pack.Instructions` replaces them word for word, for a host trying wordings against its own agent ([declaire#308](https://github.com/panyam/declaire/issues/308)). `mcp.AgentLine` is a sentence for the host's agent instructions, such as a CLAUDE.md, saying when to use the server.
+The instructions an agent reads when it connects open with the pack's `About`, say how to write a program and to call `schema` first, show the pack's first two examples, and, with a graph, say Cypher works and name its labels and types, as the first example above prints; `mcp.Instructions` returns them. `Pack.Instructions` replaces them word for word, for a host trying wordings against its own agent ([declaire#308](https://github.com/panyam/declaire/issues/308)). `mcp.AgentLine` is a sentence for the host's agent instructions, such as a CLAUDE.md, saying when to use the server.
 
 ## A host's own tools and arguments
 

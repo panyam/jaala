@@ -31,13 +31,9 @@ type queryInput struct {
 }
 
 func (c *call) query(ctx core.ToolContext, in queryInput) (core.ToolResult, error) {
-	offset := 0
-	if in.PageToken != "" {
-		n, err := strconv.Atoi(in.PageToken)
-		if err != nil || n < 0 {
-			return core.ErrorResult(fmt.Sprintf("page_token %q isn't one this server gave", in.PageToken)), nil
-		}
-		offset = n
+	offset, err := pageOffset(in.PageToken)
+	if err != nil {
+		return core.ErrorResult(err.Error()), nil
 	}
 	q, err := datalog.Parse(in.Program)
 	if err != nil {
@@ -57,6 +53,9 @@ func (c *call) query(ctx core.ToolContext, in queryInput) (core.ToolResult, erro
 // page is the rows of tab from offset, at most limit of them.
 func page(program string, tab *datalog.Table, offset, limit int) Answer {
 	a := Answer{Program: program, Table: tab, Offset: min(offset, tab.Len())}
+	for _, c := range tab.Columns {
+		a.Columns = append(a.Columns, string(c))
+	}
 	a.Len = min(limit, tab.Len()-a.Offset)
 	if end := a.Offset + a.Len; end < tab.Len() {
 		a.Next = strconv.Itoa(end)
@@ -133,11 +132,10 @@ const maxWitness = 8
 // derived from, and how many rows there are and how to continue.
 func formatAnswer(a Answer) string {
 	var b strings.Builder
-	cols := make([]string, len(a.Table.Columns))
-	for i, c := range a.Table.Columns {
-		cols[i] = string(c)
+	if a.Cypher != "" {
+		fmt.Fprintf(&b, "ran: %s\n", strings.Join(strings.Fields(a.Program), " "))
 	}
-	fmt.Fprintf(&b, "columns: %s\n", strings.Join(cols, ", "))
+	fmt.Fprintf(&b, "columns: %s\n", strings.Join(a.Columns, ", "))
 	for i := a.Offset; i < a.Offset+a.Len; i++ {
 		fmt.Fprintf(&b, "%d. %s\n", i+1, strings.Join(valuesText(a.Table.Rows[i]), ", "))
 		if a.Table.Witness != nil {
@@ -156,7 +154,7 @@ func formatAnswer(a Answer) string {
 	case a.Next != "":
 		fmt.Fprintf(&b, "rows %d to %d of %d; continue with page_token %q\n", a.Offset+1, a.Offset+a.Len, a.Table.Len(), a.Next)
 	default:
-		fmt.Fprintf(&b, "%d rows\n", a.Table.Len())
+		b.WriteString(rowCount(a.Table.Len()) + "\n")
 	}
 	return b.String()
 }
@@ -190,6 +188,8 @@ type witnessJSON struct {
 }
 
 type pageJSON struct {
+	Cypher    string          `json:"cypher,omitempty"`
+	Program   string          `json:"program,omitempty"`
 	Columns   []string        `json:"columns"`
 	Rows      [][]string      `json:"rows"`
 	Witness   [][]witnessJSON `json:"witness,omitempty"`
@@ -198,9 +198,9 @@ type pageJSON struct {
 }
 
 func answerJSON(a Answer) pageJSON {
-	out := pageJSON{Rows: [][]string{}, Total: a.Table.Len(), PageToken: a.Next}
-	for _, c := range a.Table.Columns {
-		out.Columns = append(out.Columns, string(c))
+	out := pageJSON{Rows: [][]string{}, Columns: a.Columns, Total: a.Table.Len(), PageToken: a.Next}
+	if a.Cypher != "" {
+		out.Cypher, out.Program = a.Cypher, a.Program
 	}
 	for i := a.Offset; i < a.Offset+a.Len; i++ {
 		out.Rows = append(out.Rows, valuesText(a.Table.Rows[i]))
@@ -250,10 +250,10 @@ func quoted(vals []ns.Value) []string {
 	return out
 }
 
-const schemaDesc = `What a program over %s can call. With no path, every relation, predicate and module, one line each with its signature and what it holds; with a module's path, its members; with a relation's, its signature, doc and rules; with "data", what the data holds.`
+const schemaDesc = `What a program over %s can call. With no path, every relation, predicate and module, one line each with its signature and what it holds; with a module's path, its members; with a relation's, its signature, doc and rules; with "data", what the data holds; with "cypher", the graph the cypher tool reads, when it is offered.`
 
 type schemaInput struct {
-	Path string `json:"path,omitempty" jsonschema_description:"A module or relation, \"data\" for what the data holds, or empty for everything."`
+	Path string `json:"path,omitempty" jsonschema_description:"A module or relation, \"data\" for what the data holds, \"cypher\" for the graph Cypher reads, or empty for everything."`
 }
 
 func (c *call) schema(_ core.ToolContext, in schemaInput) (core.ToolResult, error) {
@@ -279,6 +279,11 @@ func (t *tools) describe(path string) (string, error) {
 			return "", errors.New("this server says nothing about its data beyond the schema")
 		}
 		return t.p.Card, nil
+	case path == "cypher":
+		if t.p.Cypher == nil {
+			return "", errors.New("this server reads no Cypher")
+		}
+		return graphText(*t.p.Cypher) + "\n", nil
 	}
 	e, err := t.v.Lookup(path)
 	if err != nil {
@@ -333,7 +338,7 @@ func (c *call) explain(ctx core.ToolContext, in explainInput) (core.ToolResult, 
 	if err != nil {
 		return c.refuse(in.Program, err), nil
 	}
-	return core.TextResult(fmt.Sprintf("%d rows\n%s", len(rows), r.String())), nil
+	return core.TextResult(rowCount(len(rows)) + "\n" + r.String()), nil
 }
 
 const askDesc = `Ask a question about %s in plain language: the server writes a Datalog program, checks and runs it, and answers with the program, its rows and each try it took. mode picks the models: local (the small one alone), frontier (the large one alone) or both (the small one, then the large one when it fails). Prefer query when you can write the program.`
@@ -393,4 +398,12 @@ func traceText(tr nl.Trace) string {
 		fmt.Fprintf(&b, "  %d. %s: %s, %d tokens in, %d out\n", i+1, try.Model, kind, try.TokensIn, try.TokensOut)
 	}
 	return b.String()
+}
+
+// rowCount is n rows in words: "1 row", "3 rows".
+func rowCount(n int) string {
+	if n == 1 {
+		return "1 row"
+	}
+	return fmt.Sprintf("%d rows", n)
 }
