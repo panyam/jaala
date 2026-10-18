@@ -1,0 +1,2 @@
+go test fuzz v1
+string("MATCH(a)-[:IMPORTS]->(b)WHERE id(a)=''RETURN-(a)")

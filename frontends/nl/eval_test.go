@@ -11,46 +11,19 @@ import (
 
 	"github.com/panyam/jaala/datalog"
 	"github.com/panyam/jaala/frontends/nl"
+	"github.com/panyam/jaala/internal/guide"
 	"github.com/panyam/jaala/ns"
-	"github.com/panyam/jaala/stdlib"
 )
 
-// depsBase is the guide's example in miniature: app imports api, api imports log, log imports util,
-// four packages' licenses (api's absent, log's empty), and the deps module reaching through imports.
-func depsBase(t *testing.T) (*ns.Vocabulary, *datalog.Base) {
-	t.Helper()
-	src := ns.NewMemSource().
-		DeclareSchema("imports", ns.Schema{Arity: 2, Labels: []string{"from", "to"}, Doc: "A package importing another."}).
-		DeclareSchema("pkg", ns.Schema{Arity: 2, Labels: []string{"name", "license"}, Doc: "Every package and its license."})
-	for _, e := range [][2]string{{"app", "api"}, {"api", "log"}, {"log", "util"}} {
-		src.Add("imports", ns.Tuple{Vals: []ns.Value{ns.S(e[0]), ns.S(e[1])}})
+// depsBase is the guide's example in miniature (internal/guide).
+func depsBase(t *testing.T) (*ns.Vocabulary, *datalog.Base) { return guide.Deps(t) }
+
+func nlCases(cs []guide.Case) []nl.Case {
+	out := make([]nl.Case, len(cs))
+	for i, c := range cs {
+		out[i] = nl.Case{Name: c.Name, Question: c.Question, Want: c.Want}
 	}
-	src.Add("pkg", ns.Tuple{Vals: []ns.Value{ns.S("app"), ns.S("MIT")}})
-	src.Add("pkg", ns.Tuple{Vals: []ns.Value{ns.S("api"), ns.Absent()}})
-	src.Add("pkg", ns.Tuple{Vals: []ns.Value{ns.S("log"), ns.S("")}})
-	src.Add("pkg", ns.Tuple{Vals: []ns.Value{ns.S("util"), ns.S("Apache-2.0")}})
-	v, err := ns.NewVocabulary(src)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := v.AddLanguage(datalog.Language); err != nil {
-		t.Fatal(err)
-	}
-	if err := stdlib.Register(v); err != nil {
-		t.Fatal(err)
-	}
-	if err := v.AddModule("deps", datalog.LanguageName, `# Everything a package depends on, directly or through others.
-depends_on(?a, ?b) :- _step(?a, ?b);
-depends_on(?a, ?c) :- depends_on(?a, ?b), _step(?b, ?c);
-_step(?a, ?b) :- imports(?a, ?b);
-`, ""); err != nil {
-		t.Fatal(err)
-	}
-	b, err := datalog.NewBase(v, src)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return v, b
+	return out
 }
 
 // byQuestion is a Model answering each question with its own drafts in turn, as a model that makes
@@ -82,17 +55,8 @@ func drafter(name string, drafts map[string][]string) *byQuestion {
 	return &byQuestion{name: name, drafts: drafts, asked: map[string]int{}}
 }
 
-// evalCases are questions as the guide asks them, with the rows a right program answers.
-var evalCases = []nl.Case{
-	{Name: "direct", Question: "what does app import directly?", Want: [][]string{{"api"}}},
-	{Name: "transitive", Question: "what does app depend on, directly or not?", Want: [][]string{{"api"}, {"log"}, {"util"}}},
-	{Name: "license", Question: "what license does util have?", Want: [][]string{{"Apache-2.0"}}},
-	{Name: "unstated", Question: "which packages have no license stated?", Want: [][]string{{"api"}}},
-	{Name: "count", Question: "how many packages does app depend on?", Want: [][]string{{"3"}}},
-	{Name: "reverse", Question: "what imports util?", Want: [][]string{{"log"}}},
-	{Name: "columns", Question: "list every package with its license", Want: [][]string{{"app", "MIT"}, {"api", "absent"}, {"log", ""}, {"util", "Apache-2.0"}}},
-	{Name: "missing", Question: "who maintains api?", Want: [][]string{{"someone"}}},
-}
+// evalCases are the guide's questions, which the Cypher front end's TestEval asks too.
+var evalCases = nlCases(guide.Cases)
 
 // The small model's drafts: right first, a missing module, a wrong arity, an unbound variable, an
 // uppercase constant, a program answering nothing, columns in another order, and a relation the

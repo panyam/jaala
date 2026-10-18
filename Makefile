@@ -16,8 +16,9 @@ llama: ## Install llama-server and fetch its 1 MB test model, for selfcheck's gr
 # Release (after mcpkit's): CLAUDE.md, Releasing, says when
 # =============================================================================
 
-# The sub-modules published with jaala, each tagged <dir>/vX at the same commit as jaala's vX.
-SUB_MODS_TO_TAG := frontends/nlmodels frontends/mcp
+# The sub-modules published with jaala, each tagged <dir>/vX at the same commit as jaala's vX. A
+# release of some of them names them: make tag-push V=... SUB_MODS_TO_TAG=frontends/nl (none: jaala alone).
+SUB_MODS_TO_TAG := frontends/nl frontends/nlmodels frontends/mcp frontends/cypher
 export SUB_MODS_TO_TAG
 
 tag: ## Tag jaala and its sub-modules at HEAD, the notes from NOTES (make tag V=v0.1.N NOTES=notes.txt)
