@@ -18,6 +18,14 @@ import (
 // depsBase is the guide's example in miniature (internal/guide).
 func depsBase(t *testing.T) (*ns.Vocabulary, *datalog.Base) { return guide.Deps(t) }
 
+func nlCases(cs []guide.Case) []nl.Case {
+	out := make([]nl.Case, len(cs))
+	for i, c := range cs {
+		out[i] = nl.Case{Name: c.Name, Question: c.Question, Want: c.Want}
+	}
+	return out
+}
+
 // byQuestion is a Model answering each question with its own drafts in turn, as a model that makes
 // the same mistakes every run would. Its tokens are the prompt's and the reply's length over four.
 type byQuestion struct {
@@ -48,7 +56,7 @@ func drafter(name string, drafts map[string][]string) *byQuestion {
 }
 
 // evalCases are the guide's questions, which the Cypher front end's TestEval asks too.
-var evalCases = guide.Cases
+var evalCases = nlCases(guide.Cases)
 
 // The small model's drafts: right first, a missing module, a wrong arity, an unbound variable, an
 // uppercase constant, a program answering nothing, columns in another order, and a relation the

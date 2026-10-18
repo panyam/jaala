@@ -8,7 +8,9 @@ A Datalog engine for graph-shaped data, extracted from agni. Three packages: `ns
 program that checks, and no engine-only host imports it: `frontends/nl`, the plain-language front end
 (#321), and `frontends/nlmodels`, its clients for local models in a module of their own (#330), and `frontends/mcp`,
 an MCP server for any vocabulary in another (#347); and `frontends/cypher`, which compiles Cypher
-into a program (#352). They moved there in #337, after v0.1.65 had shipped
+into a program (#352), in a third. A front end is a module of its own so no core package can import
+one and what it depends on reaches only its importers; `frontends/nl` is the exception until it moves
+too, which is a host-facing release (Declaire imports it from the root). They moved there in #337, after v0.1.65 had shipped
 `nl` and `nlmodels` at the root. jaala is a Datalog engine, not a graph library: a host's fast
 path is a generator (its own Go running inside a query), not a jaala function called around the
 engine (#41).
@@ -139,7 +141,10 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   guide's questions in Cypher with `nl.Eval` (`internal/guide` is the fixture both front ends'
   `TestEval` share, `testdata/eval.golden`, `-update`), and `FuzzCompile` (in selfcheck) requires
   any text to compile to a program that validates, or to fail with an `*Error` or a type error
-  the query itself makes.
+  the query itself makes. It is a module of its own (CI's `cypher` job, `SUB_MODS_TO_TAG`), standard
+  library and jaala only, and replaces jaala with `../../` until a tag holds `internal/guide`, which
+  imports no front end (its `Case` is converted to `nl.Case` in each test) so the root never
+  requires one. Run its tests from inside it: the root's `./...` stops at the module.
 - **`Base` is shared across concurrent `Eval`s.** Anything mutable reachable from it must be
   per-query (the `idb*` fields on Eval's shallow copy), atomic (`work`), or locked (`edbCache`,
   `derivedCache`, the vocabulary's `Memo` entries). `TestConcurrentEvalsShareOneCheck` and

@@ -65,6 +65,33 @@ jobs:
           extra=$(go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./... | grep -v '^github.com/panyam/jaala' || true)
           if [ -n "$extra" ]; then echo "dependencies outside jaala:"; echo "$extra"; exit 1; fi
 
+  # The Cypher front end is a module of its own (#352), so no core package can import it and what it
+  # comes to depend on reaches only its importers. It stays standard library and jaala only.
+  cypher:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontends/cypher
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: frontends/cypher/go.mod
+      - name: gofmt
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then echo "gofmt needed:"; echo "$out"; exit 1; fi
+      - name: vet
+        run: go vet ./...
+      - name: test
+        run: go test -race -count=1 ./...
+      - name: wasm build
+        run: GOOS=js GOARCH=wasm go build ./...
+      - name: standard library and jaala only
+        run: |
+          extra=$(go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./... | grep -v '^github.com/panyam/jaala' || true)
+          if [ -n "$extra" ]; then echo "dependencies outside jaala:"; echo "$extra"; exit 1; fi
+
   # The MCP server is a module of its own (#347), so mcpkit and its dependencies reach no host that
   # doesn't import it, and the root's ./... doesn't reach it.
   mcp:

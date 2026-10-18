@@ -1,13 +1,13 @@
 // Package guide is the guide's example in miniature, for the front ends' tests: a vocabulary of
 // packages and their imports, and the questions both front ends' TestEval ask of it, so the two
-// languages are scored on the same cases. Only tests import it.
+// languages are scored on the same cases. Only tests import it, and it imports no front end, so the
+// front ends can be modules of their own without the root depending on one.
 package guide
 
 import (
 	"testing"
 
 	"github.com/panyam/jaala/datalog"
-	"github.com/panyam/jaala/frontends/nl"
 	"github.com/panyam/jaala/ns"
 	"github.com/panyam/jaala/stdlib"
 )
@@ -50,8 +50,14 @@ _step(?a, ?b) :- imports(?a, ?b);
 	return v, b
 }
 
+// A Case is a question and the rows a right program answers, as nl.Case holds them.
+type Case struct {
+	Name, Question string
+	Want           [][]string
+}
+
 // Cases are questions as the guide asks them, with the rows a right program answers.
-var Cases = []nl.Case{
+var Cases = []Case{
 	{Name: "direct", Question: "what does app import directly?", Want: [][]string{{"api"}}},
 	{Name: "transitive", Question: "what does app depend on, directly or not?", Want: [][]string{{"api"}, {"log"}, {"util"}}},
 	{Name: "license", Question: "what license does util have?", Want: [][]string{{"Apache-2.0"}}},

@@ -61,7 +61,11 @@ func translate(v *ns.Vocabulary, b *datalog.Base) func(context.Context, string) 
 // pinned in testdata/eval.golden (-update rewrites it). -v prints the report and each program.
 func TestEval(t *testing.T) {
 	v, b := guide.Deps(t)
-	rep := nl.Eval(context.Background(), guide.Cases, b, translate(v, b))
+	cases := make([]nl.Case, len(guide.Cases))
+	for i, c := range guide.Cases {
+		cases[i] = nl.Case{Name: c.Name, Question: c.Question, Want: c.Want}
+	}
+	rep := nl.Eval(context.Background(), cases, b, translate(v, b))
 	got := rep.String()
 	for _, r := range rep.Cases {
 		t.Logf("%s: %s\n  %s", r.Name, drafts[r.Question], r.Program.Text)
