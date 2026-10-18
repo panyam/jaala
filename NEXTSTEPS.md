@@ -11,7 +11,7 @@ Maintained by /checkpoint: one thread per branch, pruned when the branch merges.
 - Mission #322 (`mission_agent_frontend`) is active, 15/16 jaala-side; nothing ready in jaala. What's
   left is Declaire's: declaire#302 (its translator and server as a pack on these), declaire#308
   (wording, which replaces `mcp.Instructions`' default), then declaire#290's arm. Exercise logged at
-  7b4bd3b (`TestEval` 7/8); run it again after #351 merges on main.
+  e77029a (`TestEval` 7/8, `frontends/mcp`'s tests pass).
 - Waiting: #327 until a host times `Across` over a store; #288 (sessions) after #287 and agni#1027.
 - This run: merged #350 and #351, closed #344 and #347; dropped nl/domain-pack and mcp/frontend.
 
