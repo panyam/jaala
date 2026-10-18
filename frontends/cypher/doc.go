@@ -30,7 +30,7 @@
 //   - The rows are distinct, as a program's answer is: RETURN without DISTINCT answers each row
 //     once, and count(x) counts distinct bindings of the match, not paths. Cypher's duplicate rows
 //     need a relationship as a value (#279).
-//   - A property read through the graph's Props relation is a match: a node without it has no row,
+//   - A property read through the graph's Props relation, or a Derived one, is a match: a node without it has no row,
 //     where Cypher would answer null (#282).
 //   - A variable-length match is reachability: it doesn't keep Cypher's rule that a path uses a
 //     relationship once, which can differ for a bounded range over a cycle (#280).

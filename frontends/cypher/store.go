@@ -20,11 +20,13 @@ type Store struct {
 	// Label names a node kind's label and Type an edge kind's type. Nil is DefaultLabel and
 	// DefaultType, so a host overrides one without restating the other.
 	Label, Type func(kind string) string
+	// Derived is the graph's Derived: properties the host computes for any node.
+	Derived map[string]PropSource
 }
 
 // Graph is the store's graph over the given kinds: a Node for each node kind, keyed by its id with the
-// kind fixed, an Edge for each edge kind from its first argument to its third with the kind fixed, and
-// Attr as the property relation. Two kinds naming one label or type make a Graph that Validate
+// kind fixed, an Edge for each edge kind from its first argument to its third with the kind fixed,
+// Attr as the property relation, and the store's Derived properties. Two kinds naming one label or type make a Graph that Validate
 // refuses.
 func (s Store) Graph(nodeKinds, edgeKinds []string) Graph {
 	label, typ := s.Label, s.Type
@@ -34,7 +36,7 @@ func (s Store) Graph(nodeKinds, edgeKinds []string) Graph {
 	if typ == nil {
 		typ = DefaultType
 	}
-	var g Graph
+	g := Graph{Derived: s.Derived}
 	for _, k := range nodeKinds {
 		g.Nodes = append(g.Nodes, Node{Label: label(k), Relation: s.Node, Key: 0, Fixed: map[int]string{1: k}})
 	}

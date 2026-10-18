@@ -149,8 +149,10 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   hand, since mcp requires a tagged `frontends/cypher`.
 - **`frontends/cypher` compiles Cypher to jaala text over a host's `Graph`** (#352, mission #356):
   `Node` and `Edge` name the relation holding a label or a type, its key or endpoints, `Fixed`
-  constants (Declaire's `node(id, "Function")`) and property columns, and `Props` a key-value
-  relation (`attr(id, key, value)`). The text goes through `datalog.Parse`, so `Validate`, `Locate`
+  constants (Declaire's `node(id, "Function")`) and property columns, `Props` a key-value
+  relation (`attr(id, key, value)`), and `Derived` a relation or predicate per property for any
+  node, one the host computes (#378: Declaire's `name.of(id, name)`), read as `kvAtom` reads `Props`,
+  after a label's column and before `Props`; `Store.Derived` carries it. The text goes through `datalog.Parse`, so `Validate`, `Locate`
   and `Explain` read it unchanged. A node is its key; an equality every row holds is written into
   the atom (`pkg("app", _)`) unless something else reads the value, which keeps a variable and a
   comparison (`settle`), so a planner sees constants. A frag's node keys are rendered last for

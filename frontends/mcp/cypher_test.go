@@ -119,6 +119,17 @@ func TestCypherIsOfferedWhenThePackMapsAGraph(t *testing.T) {
 	}
 }
 
+// A property the host computes for every node is named beside the labels, so an agent asks for it.
+func TestTheCypherToolNamesTheComputedProperties(t *testing.T) {
+	g := codeGraph("Func")
+	g.Derived = map[string]cypher.PropSource{"name": {Relation: "str.lower", Node: 0, Value: 1}}
+	c := dialCode(t, codePack(g), mcp.Options{})
+	want := "CONTAINS. Any node may have {name}, which the host computes. A node's other properties"
+	if res := call(t, c, "schema", map[string]any{"path": "cypher"}); res.IsError || !strings.Contains(res.Content[0].Text, want) {
+		t.Errorf("schema at cypher = %q, want it to contain %q", res.Content[0].Text, want)
+	}
+}
+
 // The issue's acceptance case: a match over node, edge and attr answers each row with the facts it
 // came from, the query's own column names and the program it ran, a page at a time.
 func TestCypherAnswersWithWitnessesAndItsColumns(t *testing.T) {

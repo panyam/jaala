@@ -22,6 +22,10 @@ type Graph struct {
 	// Props is the relation holding a node's properties as key-value facts, attr(node, key, value),
 	// read for a property no Node lists. Nil when every property is a column.
 	Props *PropRelation
+	// Derived maps a property to the relation, or predicate, that holds it for any node, one the host
+	// computes rather than stores (Declaire's name.of answers a function's short name from its id).
+	// A label's own column wins over it, and it wins over Props.
+	Derived map[string]PropSource
 }
 
 // A Node is the relation holding the nodes of one label.
@@ -49,6 +53,16 @@ type Edge struct {
 type PropRelation struct {
 	Relation         string
 	Node, Key, Value int
+}
+
+// A PropSource holds one property: the node's key at Node and the property's value at Value, with
+// any other argument pinned by Fixed or left unread. Every read is an atom over it, so its modes say
+// which the host answers: `{name: 'Foo'}` binds the value, `RETURN f.name` the node. A node it holds
+// no fact for has no row, as with a Props read.
+type PropSource struct {
+	Relation    string
+	Node, Value int
+	Fixed       map[int]string
 }
 
 // Validate checks g against v: every relation is a member of v at an arity holding every argument g
@@ -81,6 +95,17 @@ func (g Graph) Validate(v *ns.Vocabulary) error {
 			return fmt.Errorf("cypher: graph: the property relation %s names one argument twice", p.Relation)
 		}
 		if err := checkArgs(v, "properties", p.Relation, nil, nil, p.Node, p.Key, p.Value); err != nil {
+			return err
+		}
+	}
+	for _, k := range sortedKeys(g.Derived) {
+		p := g.Derived[k]
+		_, fixesNode := p.Fixed[p.Node]
+		_, fixesValue := p.Fixed[p.Value]
+		if p.Node == p.Value || fixesNode || fixesValue {
+			return fmt.Errorf("cypher: graph: property %s's relation %s names one argument twice", k, p.Relation)
+		}
+		if err := checkArgs(v, "property "+k, p.Relation, p.Fixed, nil, p.Node, p.Value); err != nil {
 			return err
 		}
 	}
@@ -124,6 +149,17 @@ func arity(v *ns.Vocabulary, rel string) (int, bool) {
 		return b.Arity, true
 	}
 	return 0, false
+}
+
+// argTypes is what rel's arguments denote in v, from a base relation's schema or a predicate's Types.
+func argTypes(v *ns.Vocabulary, rel string) []ns.ArgType {
+	if s, ok := v.Schema(rel); ok {
+		return s.Types
+	}
+	if b, ok := v.Predicate(rel); ok {
+		return b.Types
+	}
+	return nil
 }
 
 func (g Graph) node(label string) (Node, bool) {

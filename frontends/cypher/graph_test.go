@@ -86,6 +86,10 @@ func TestAGraphIsCheckedAgainstItsVocabulary(t *testing.T) {
 		"past arity":       {Nodes: []cypher.Node{{Label: "P", Relation: "pkg", Props: map[string]int{"x": 2}}}},
 		"label twice":      {Nodes: []cypher.Node{{Label: "P", Relation: "pkg"}, {Label: "P", Relation: "imports"}}},
 		"one endpoint":     {Edges: []cypher.Edge{{Type: "T", Relation: "imports", From: 1, To: 1}}},
+		"derived unknown":  {Derived: map[string]cypher.PropSource{"loud": {Relation: "str.shout", Value: 1}}},
+		"derived arity":    {Derived: map[string]cypher.PropSource{"loud": {Relation: "str.upper", Value: 2}}},
+		"derived one arg":  {Derived: map[string]cypher.PropSource{"loud": {Relation: "str.upper"}}},
+		"derived fixed":    {Derived: map[string]cypher.PropSource{"loud": {Relation: "str.upper", Value: 1, Fixed: map[int]string{1: "X"}}}},
 	} {
 		if err := g.Validate(v); err == nil {
 			t.Errorf("%s: accepted", name)
