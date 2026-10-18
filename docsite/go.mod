@@ -38,7 +38,7 @@ require (
 )
 
 require (
-	github.com/panyam/jaala v0.1.73
+	github.com/panyam/jaala v0.1.75
 	github.com/panyam/jaala/frontends/cypher v0.1.74
 	github.com/panyam/jaala/frontends/mcp v0.0.0-00010101000000-000000000000
 	github.com/panyam/jaala/frontends/nl v0.1.73
