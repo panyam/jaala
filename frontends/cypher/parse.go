@@ -342,11 +342,18 @@ func (p *parser) returnClause(pos Pos) (returnClause, *Error) {
 		r.skip = &n
 	}
 	if p.accept("LIMIT") {
+		t := p.peek()
 		n, err := p.count("LIMIT")
 		if err != nil {
 			return r, err
 		}
+		if n == 0 {
+			return r, errAt(t.pos, "LIMIT 0 answers nothing: leave the query out")
+		}
 		r.limit = &n
+	}
+	if r.skip != nil && *r.skip == 0 {
+		r.skip = nil // skips nothing, and jaala's offset is positive
 	}
 	return r, nil
 }
