@@ -130,6 +130,9 @@ func (b *Base) keepLookup(key string, rows []ns.Tuple) {
 
 // lookupErr is a failed lookup's error, wrapped with the relation's name.
 func lookupErr(ctx context.Context, rel string, err error) error {
+	if be, ok := spentAll(err); ok {
+		return be
+	}
 	if ctx.Err() != nil {
 		return fmt.Errorf("query: evaluation stopped looking up %s: %w", rel, ctx.Err())
 	}

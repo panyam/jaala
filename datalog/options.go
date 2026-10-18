@@ -2,6 +2,7 @@ package datalog
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -100,6 +101,9 @@ type evalRun struct {
 	ctx    context.Context
 	budget int64
 	used   int64
+	// spent is what the Eval's Sources and generators charged for their own work through its
+	// ns.Allowance (#361), which the budget charges beside used and read
+	spent int64
 	// read counts the tuples a StreamSource has yielded, which the budget charges beside used (#233)
 	// but which aren't work: Work and Explain count what evaluation does with the tuples.
 	read    int64
@@ -175,7 +179,7 @@ func (r *evalRun) readOne() error {
 // check stops the Eval once the work and reads together pass the budget, and every ctxCheckEvery
 // units of n when its context is done.
 func (r *evalRun) check(n int64) error {
-	if spent := r.used + r.read; r.budget > 0 && spent > r.budget {
+	if spent := r.used + r.read + r.spent; r.budget > 0 && spent > r.budget {
 		if r.explain != nil && r.explain.cur != nil {
 			r.explain.cur.Stopped = true
 		}
@@ -185,6 +189,39 @@ func (r *evalRun) check(n int64) error {
 		return r.done()
 	}
 	return nil
+}
+
+// spentAll is the BudgetExceeded a host returned from its Allowance's Spend (#361), which stops the
+// Eval as it is rather than wrapped in the call that spent it.
+func spentAll(err error) (*BudgetExceeded, bool) {
+	var be *BudgetExceeded
+	return be, errors.As(err, &be)
+}
+
+// Spend charges n units of a Source's or generator's own work (ns.Allowance, #361) against the
+// budget, beside the Eval's own work and reads, and stops the Eval as step does once they pass it or
+// its context ends.
+func (r *evalRun) Spend(n int64) error {
+	if n <= 0 {
+		return nil
+	}
+	r.spent += n
+	if r.explain != nil {
+		r.explain.spend(n)
+	}
+	if err := r.check(1); err != nil {
+		return err
+	}
+	return r.done()
+}
+
+// Left is what the budget has left after the Eval's work, reads and its hosts' spending, and false
+// when it has none.
+func (r *evalRun) Left() (int64, bool) {
+	if r.budget <= 0 {
+		return 0, false
+	}
+	return max(r.budget-r.used-r.read-r.spent, 0), true
 }
 
 // done reports whether the Eval's context has ended, as the error the Eval returns.

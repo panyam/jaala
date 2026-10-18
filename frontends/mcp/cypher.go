@@ -51,7 +51,7 @@ func (c *call) cypher(ctx core.ToolContext, in cypherInput) (core.ToolResult, er
 	}
 	b, err := c.base(ctx)
 	if err != nil {
-		return core.ErrorResult(err.Error()), nil
+		return core.ErrorResult(err.Error() + c.budgetHint(err)), nil
 	}
 	tab, err := datalog.SemiNaive{}.EvalTable(ctx, p.Query, b, c.evalOptions(in.MaxWork, extra...)...)
 	if err != nil {

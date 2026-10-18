@@ -545,6 +545,9 @@ func (b *Base) pushAs(g *pushGroup, c ns.Conjunction) ([]ns.Tuple, error) {
 
 // pushErr is a failed push's error, wrapped with the group's text.
 func pushErr(ctx context.Context, text string, err error) error {
+	if be, ok := spentAll(err); ok {
+		return be
+	}
 	if ctx.Err() != nil {
 		return fmt.Errorf("query: evaluation stopped pushing %s: %w", text, ctx.Err())
 	}
