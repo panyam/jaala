@@ -22,7 +22,7 @@ require (
 )
 
 require (
-	github.com/panyam/jaala v0.1.70
+	github.com/panyam/jaala v0.1.73
 	github.com/panyam/jaala/frontends/nl v0.0.0
 	gopkg.in/yaml.v3 v3.0.1
 )
