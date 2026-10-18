@@ -205,7 +205,7 @@ func TestExplainSaysWhyAnAnswerIsEmpty(t *testing.T) {
 	if !strings.HasPrefix(text, "0 rows\n") || !strings.Contains(text, `road(?x, "a") matched nothing`) || !strings.Contains(text, `road("b", "a")`) {
 		t.Errorf("explain:\n%s", text)
 	}
-	if text := c.ToolCall("explain", map[string]any{"program": `road("a", ?x) => ?x`}); !strings.HasPrefix(text, "1 rows\n") || strings.Contains(text, "matched nothing") {
+	if text := c.ToolCall("explain", map[string]any{"program": `road("a", ?x) => ?x`}); !strings.HasPrefix(text, "1 row\n") || strings.Contains(text, "matched nothing") {
 		t.Errorf("control: an answer with rows:\n%s", text)
 	}
 }

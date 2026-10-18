@@ -131,7 +131,14 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   Go can't embed a type parameter), a clash with a tool's own name is refused at startup, and every
   schema says `additionalProperties: false`, so mcpkit's argument validation fails a misspelled
   call, plain `New`'s too. `Prepare` returns a `Run` per call (Base, Eval, and a whole Pack). Its
-  tests are a toy host (`roads`) through mcpkit's `testutil` client.
+  tests are a toy host (`roads`) through mcpkit's `testutil` client. A pack with a `Cypher` graph
+  (#366) adds a `cypher` tool: it compiles over the call's pack (so `Run.Pack` brings its own graph,
+  and one without refuses), answers as `query` does with `ran:` and the program first, and names
+  its columns as Cypher did (`Answer.Columns`, `Answer.Cypher`; `query` fills `Columns` too). A
+  compile refusal carries a caret and, for a gap, its issue. `cypher.Store` writes the graph of a
+  `node(id, kind)`, `edge(from, kind, to)`, `attr(id, key, value)` store, one label per kind
+  (`DefaultLabel`, `DefaultType`), reading the kinds with `Kinds`; mcp's tests build their graph by
+  hand, since mcp requires a tagged `frontends/cypher`.
 - **`frontends/cypher` compiles Cypher to jaala text over a host's `Graph`** (#352, mission #356):
   `Node` and `Edge` name the relation holding a label or a type, its key or endpoints, `Fixed`
   constants (Declaire's `node(id, "Function")`) and property columns, and `Props` a key-value
