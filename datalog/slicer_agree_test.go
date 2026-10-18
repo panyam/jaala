@@ -19,6 +19,8 @@ func slicerDiffs(text string) (diff, msg string) {
 	q, err := Parse(text)
 	sq, serr := slParse(text)
 	switch {
+	case serr != nil && namesFacts.MatchString(text):
+		return "", "" // the slicer never read `atom as ?r` (#279), so it refuses it in its own words
 	case err == nil && serr != nil && (readsAsWritten(q) || agreesWithoutExponents(text)):
 		return "", "" // the slicer refused a spelling of a query it reads, as #276 allows
 	case err == nil && serr == nil && unknownAggregate(sq) && readsAsWritten(q):
@@ -62,6 +64,9 @@ func agreesWithoutExponents(text string) bool {
 	diff, _ := slicerDiffs(plain)
 	return diff == ""
 }
+
+// namesFacts matches an `as` after a closing parenthesis, where the parser reads `atom as ?r` (#279).
+var namesFacts = regexp.MustCompile(`\)\s*as\b`)
 
 var exponent = regexp.MustCompile(`\b[0-9]+(\.[0-9]+)?[eE][+-]?[0-9]+`)
 

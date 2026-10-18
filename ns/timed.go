@@ -12,6 +12,8 @@ type TimedTuple struct {
 	// Cites are the fact's citations per version. A version the fact holds in that no entry names has
 	// no citations, and an entry's versions outside Versions are ignored.
 	Cites []TimedCites
+	// ID is the fact's Tuple.ID, the same in every version it holds in.
+	ID string
 }
 
 // TimedCites are a fact's citations in some of its versions.
@@ -113,7 +115,7 @@ func (s versionView) TuplesContext(ctx context.Context, rel string) ([]Tuple, er
 	var out []Tuple
 	for _, t := range timed {
 		if t.Versions != nil && t.Versions.Contains(s.v) {
-			out = append(out, Tuple{Vals: t.Vals, Cites: t.CitesAt(s.v)})
+			out = append(out, Tuple{Vals: t.Vals, Cites: t.CitesAt(s.v), ID: t.ID})
 		}
 	}
 	return out, nil
@@ -180,7 +182,7 @@ func (m *TimedMemSource) Tuples(rel string) []Tuple {
 	var out []Tuple
 	for _, t := range m.timed[rel] {
 		if t.Versions.Contains(last) {
-			out = append(out, Tuple{Vals: t.Vals, Cites: t.CitesAt(last)})
+			out = append(out, Tuple{Vals: t.Vals, Cites: t.CitesAt(last), ID: t.ID})
 		}
 	}
 	return out

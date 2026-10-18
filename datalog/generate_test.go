@@ -68,6 +68,7 @@ type genLit struct {
 	args []string
 	op   string
 	agg  *genAgg
+	fact string // the variable `as` binds the atom's fact to (#279), "" for none
 }
 
 // genAgg is `result = fn : { body }` (#71).
@@ -86,6 +87,9 @@ func (l genLit) String() string {
 	s := l.rel + "(" + strings.Join(l.args, ", ") + ")"
 	if l.neg {
 		s = "not " + s
+	}
+	if l.fact != "" {
+		s += " as " + l.fact
 	}
 	return s
 }
@@ -248,10 +252,18 @@ func (f genFacts) source() *ns.MemSource {
 		}
 		src.Add("weight", ns.Tuple{Vals: []ns.Value{name(i), ns.NU(w, unit)}})
 	}
-	for _, e := range f.edges {
-		src.Add("edge", ns.Tuple{Vals: []ns.Value{name(e[0]), name(e[1])}, Cites: []string{fmt.Sprintf("edge:%d-%d", e[0], e[1])}})
+	for k, e := range f.edges {
+		src.Add("edge", ns.Tuple{Vals: []ns.Value{name(e[0]), name(e[1])}, Cites: []string{fmt.Sprintf("edge:%d-%d", e[0], e[1])}, ID: edgeID(k)})
 	}
 	return src
+}
+
+// edgeID is the k-th edge's id: e<k>, but every third has none, so the engine names it (#279).
+func edgeID(k int) string {
+	if k%3 == 0 {
+		return ""
+	}
+	return fmt.Sprintf("e%d", k)
 }
 
 func (f genFacts) String() string {
@@ -280,12 +292,19 @@ type generator struct {
 	// recursive is set while a recursive rule's body is drawn, which writes no expression: a computing
 	// rule that reaches itself is refused (#207).
 	recursive bool
+	// facts draws where an edge binds its fact and where a program reads one (#279), from a stream of
+	// its own, as arith does, so a seed binding none is the program it was; nfacts numbers them.
+	facts  *rand.Rand
+	nfacts int
 }
 
 // newGenerator draws a program for facts from rnd. Arithmetic depends on the graph's units as drawn,
 // before corpusCase drops mixed ones, so the corpus and the Soufflé step generate one program.
 func newGenerator(rnd *rand.Rand, facts genFacts) *generator {
 	g := &generator{rnd: rnd, nodes: facts.n}
+	h := fnv.New64a()
+	fmt.Fprint(h, "facts", facts.n, facts.edges, facts.weights)
+	g.facts = rand.New(rand.NewSource(int64(h.Sum64())))
 	if facts.units == nil {
 		h := fnv.New64a()
 		fmt.Fprint(h, "arith", facts.n, facts.edges, facts.weights)
@@ -315,6 +334,7 @@ func (g *generator) fresh() string {
 // variables already bound.
 type genBody struct {
 	lits     []genLit
+	facts    []string // the facts its edges bind (#279)
 	bound    map[genType][]string
 	results  map[string]bool // what a body aggregate binds
 	computed []string        // what ?y = expr binds (#209), which a head or the goal reads now and then
@@ -362,7 +382,14 @@ func (g *generator) atom(b *genBody, r genRel, neg bool) {
 			fresh = append(fresh, binding{t, args[i]})
 		}
 	}
-	b.lits = append(b.lits, genLit{neg: neg, rel: r.name, args: args})
+	lit := genLit{neg: neg, rel: r.name, args: args}
+	if !neg && r.name == "edge" && g.facts != nil && g.facts.Float64() < 0.2 {
+		g.nfacts++
+		lit.fact = fmt.Sprintf("?f%d", g.nfacts)
+		b.facts = append(b.facts, lit.fact)
+		g.shapes["bound fact"] = true
+	}
+	b.lits = append(b.lits, lit)
 	for _, f := range fresh {
 		b.bound[f.t] = append(b.bound[f.t], f.v)
 	}
@@ -531,8 +558,24 @@ func (g *generator) body(layer int, recursive bool) *genBody {
 	if g.chance(0.3) {
 		g.compare(b)
 	}
+	g.compareFacts(b)
 	g.compute(b)
 	return b
+}
+
+// compareFacts now and then requires two of the facts b binds to differ, or to be one, as a Cypher
+// match keeps its relationships apart (#279).
+func (g *generator) compareFacts(b *genBody) {
+	if len(b.facts) < 2 || g.facts.Float64() >= 0.6 {
+		return
+	}
+	i := g.facts.Intn(len(b.facts))
+	j := (i + 1 + g.facts.Intn(len(b.facts)-1)) % len(b.facts)
+	op := "!="
+	if g.facts.Float64() < 0.3 {
+		op = "="
+	}
+	b.lits = append(b.lits, genLit{args: []string{b.facts[i], b.facts[j]}, op: op})
 }
 
 // bodyAggregate adds `?v = fn : { ... }` (#71) over relations below layer, sharing up to two of the
@@ -708,6 +751,7 @@ func (g *generator) goal() genGoal {
 	if g.chance(0.2) {
 		g.compare(b)
 	}
+	g.compareFacts(b)
 	g.compute(b)
 	goal := genGoal{}
 	if g.chance(0.35) {
@@ -733,6 +777,9 @@ func (g *generator) goal() genGoal {
 		}
 		if y := g.computed(b, ""); y != "" && !slices.Contains(goal.sel, y) {
 			goal.sel = append(goal.sel, y)
+		}
+		if len(b.facts) > 0 && g.facts.Float64() < 0.7 {
+			goal.sel = append(goal.sel, b.facts[g.facts.Intn(len(b.facts))])
 		}
 	}
 	goal.body = b.lits
@@ -1538,7 +1585,7 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 			}
 		}
 	}
-	shapes := []string{"program", "recursion", "negation", "head aggregate", "goal aggregate", "body aggregate", "bound goal", "set-bound goal", "arithmetic"}
+	shapes := []string{"program", "recursion", "negation", "head aggregate", "goal aggregate", "body aggregate", "bound goal", "set-bound goal", "arithmetic", "bound fact"}
 	var counts, issues []string
 	for _, sh := range shapes {
 		counts = append(counts, fmt.Sprintf("%s %d/%d", sh, compared[sh+"/plain"], compared[sh+"/witnessed"]))
@@ -1555,6 +1602,9 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 	}
 	if compared["arithmetic/plain"] == 0 || compared["arithmetic/witnessed"] == 0 {
 		t.Errorf("control: no program computed with arithmetic (#209)")
+	}
+	if compared["bound fact/plain"] == 0 || compared["bound fact/witnessed"] == 0 {
+		t.Errorf("control: no program bound an edge's fact (#279)")
 	}
 	if lookedUpPrograms == 0 {
 		t.Errorf("control: no program made a lookup through a Source answering them")

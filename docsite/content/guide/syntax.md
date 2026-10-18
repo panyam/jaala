@@ -35,6 +35,16 @@ A comparison only compares, which is a bit different from `=` in most programmin
 
 {{ demo "demos/guide/syntax-equals-compares.yaml" }}
 
+An atom can also name the fact it matched: `imports(?a, ?b) as ?r` binds `?r` to that fact, so a query can return it, compare two with `!=`, or join on it ([#279](https://github.com/panyam/jaala/issues/279)). This is what Cypher's `-[r:IMPORTS]->` binds. A fact's name is the id its store gave it, or, when the store gave none, as here, the relation and its values written the way a query writes them:
+
+{{ demo "demos/guide/syntax-fact.yaml" }}
+
+Two facts are equal only when they're the same fact, so `?r != ?s` keeps a path from using one fact twice, which is the rule a Cypher match follows on its own. Here it's what tells the import cycle between `cache` and `config` apart from a package importing itself, which the data doesn't have:
+
+{{ demo "demos/guide/syntax-fact-differs.yaml" }}
+
+Only a positive atom over a base relation can name its fact. A derived relation's tuples, a predicate's matches and a negated atom's absence aren't facts any store holds, so `as` there is refused. A store keeping more about a fact (where an edge came from, what it costs) keys it by the fact's id, and a query reads that through an ordinary relation of the host's: `imports(?a, ?b) as ?r, imports_attr(?r, "kind", ?k)`. The [stores]({{.Site.PathPrefix}}/guide/stores/) page says how a host gives its facts ids.
+
 ## The goal and its projection
 
 After the goal, `=>` and a list of columns say what the answer holds. The columns are variables, [aggregates]({{.Site.PathPrefix}}/guide/aggregation/) or [arithmetic]({{.Site.PathPrefix}}/guide/arithmetic/#in-the-answer-and-in-a-rules-head), and after them can come `having`, `order by`, `limit` and `offset`, in that order. Leave out `=>` and its columns, and the answer has one column per variable of the goal, in the order they first appear:

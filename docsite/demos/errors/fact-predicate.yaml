@@ -1,0 +1,3 @@
+fixture: "deps"
+query: "package(?p), str.prefix(?p, \"a\") as ?f => ?f"
+expect_error: "is a predicate, whose matches are no stored facts"

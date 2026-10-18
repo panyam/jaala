@@ -658,7 +658,7 @@ func explainRelation(rel string) string {
 		}
 		return displayName(rel)
 	}
-	if strings.HasPrefix(rel, "\x00") {
+	if strings.HasPrefix(rel, "\x00") && !isFact(rel) {
 		return ""
 	}
 	return shownName(rel)
@@ -668,14 +668,15 @@ func explainRelation(rel string) string {
 // readable: reach/bf is reach called with its first argument bound, demand:reach/bf the values demanded
 // of it, reach/bf+ what a semi-naive round added to it, prefix:0 a stored body prefix, reach:from1 and
 // reach:answer1 a factored walk, pushed{edge(?a, ?b), edge(?b, ?c)} a conjunction the Source evaluated
-// (#237), values:x a set-bound variable's values, and ?1.x a variable inlining
-// renamed. Report uses it for every rule and literal it shows.
+// (#237), values:x a set-bound variable's values, facts:edge(?a, ?b, ?r) a call binding its fact to ?r
+// (#279), and ?1.x a variable inlining renamed. Report uses it for every rule and literal it shows.
 func ExplainName(s string) string {
 	r := strings.NewReplacer(
 		magicPrefix, "demand:",
 		supPrefix, "prefix:",
 		pushPrefix, "pushed",
 		bindPrefix, "values:",
+		factPrefix, "facts:",
 		aggSep, ":",
 		deltaSep, "+",
 		fromSep, ":from",

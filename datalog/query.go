@@ -127,6 +127,11 @@ type BodyAggregate struct {
 type Atom struct {
 	Relation string
 	Args     []Term
+	// Fact is the variable `edge(?a, ?b) as ?r` binds to the fact the atom matched (#279): the
+	// Source's Tuple.ID, or the relation and values when it gives none. Only a positive atom over a
+	// base relation binds one, and lowerFacts rewrites it into a call to the relation's fact relation
+	// before any check reads the program, so nothing after it sees the field set.
+	Fact Var
 }
 
 // A Compare is a built-in predicate over two terms, evaluated once both are bound: Left Op Right,

@@ -1,0 +1,3 @@
+fixture: deps
+query: imports(?a, ?b) as ?r, imports(?b, ?c) as ?s, ?r != ?s, ?c = ?a => ?a, ?b
+expect: [[cache, config], [config, cache]]

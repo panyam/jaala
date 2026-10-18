@@ -106,7 +106,7 @@ func (b *Base) extendAtom(atom *Atom, bnd *binding, yield func(*binding) error) 
 }
 
 // schemaOf is the schema of the base relation registered at rel.
-func (b *Base) schemaOf(rel string) (ns.Schema, bool) { return b.reg.Schema(rel) }
+func (b *Base) schemaOf(rel string) (ns.Schema, bool) { return schemaIn(b.reg, rel) }
 
 // checkArgValues rejects a CONSTANT naming a value its argument cannot hold, for the arguments whose
 // values are a vocabulary the Source defines. A variable is unaffected, and a relation declaring no
@@ -203,7 +203,7 @@ func (b *Base) extendEDB(atom *Atom, bnd *binding, yield func(*binding) error) e
 	pos, all := b.edbCandidates(atom, rows, bnd)
 	var sets []ns.VersionSet
 	if b.across != nil {
-		sets = b.across.setsOf(atom.Relation)
+		sets = b.across.setsOf(lookedUpAtom(atom).Relation) // a fact relation's rows are its relation's, in order
 	}
 	return b.unifyEach(atom, rows, sets, pos, all, bnd, yield)
 }

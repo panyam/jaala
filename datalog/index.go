@@ -122,6 +122,14 @@ func newEDBCache() *edbCache {
 // tuples returns rel's tuples, asking the Source the first time and normalizing what it read to types
 // (see normalizeTuples).
 func (c *edbCache) tuples(run *evalRun, rel string, src ns.Source, units *ns.Units, types []ns.ArgType) ([]ns.Tuple, error) {
+	return c.read(run, rel, func() ([]ns.Tuple, error) {
+		t, err := readTuples(run, src, rel)
+		return normalizeTuples(units, t, types), err
+	})
+}
+
+// read returns rel's tuples, from read the first time.
+func (c *edbCache) read(run *evalRun, rel string, read func() ([]ns.Tuple, error)) ([]ns.Tuple, error) {
 	c.mu.Lock()
 	r, ok := c.tup[rel]
 	if !ok {
@@ -137,11 +145,10 @@ func (c *edbCache) tuples(run *evalRun, rel string, src ns.Source, units *ns.Uni
 	if err := run.context().Err(); err != nil {
 		return nil, fmt.Errorf("query: evaluation stopped: %w", err)
 	}
-	t, err := readTuples(run, src, rel)
+	t, err := read()
 	if err != nil {
 		return nil, err
 	}
-	t = normalizeTuples(units, t, types)
 	r.tuples, r.done = t, true
 	return t, nil
 }

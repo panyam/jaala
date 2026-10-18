@@ -32,7 +32,10 @@ var fuzzSeeds = []string{
 	`imports(?a,,?b) => ?a`,                         // #129: an empty piece between commas
 	"r(?a) :- edge(?a, _), !edge(_, ?a).\n=> r(?a)", // #276: the endings agents write
 	`?- edge(?a, ?b), ?b > 1.5.`,
-	`weight(?n, ?w), ?w > 3.3V, ?w != 1eV, ?w < 2e-3kohm => ?n`, // #167: units and exponents, which the lexer reads
+	`weight(?n, ?w), ?w > 3.3V, ?w != 1eV, ?w < 2e-3kohm => ?n`,  // #167: units and exponents, which the lexer reads
+	`edge(?a, ?b) as ?r, edge(?b, ?c) as ?s, ?r != ?s => ?r, ?s`, // #279: facts as terms
+	`f(?r) :- edge(?a, _) as ?r, not edge(?a, ?a); f(?r), edge(_, ?b) as ?r => ?b`,
+	`edge(?a, ?b) as => ?a`,
 }
 
 // fuzzVocabulary is the corpus's schema over one fixed small graph, with the path module.

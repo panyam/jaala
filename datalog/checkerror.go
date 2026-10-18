@@ -49,6 +49,7 @@ const (
 	KindDefinition ErrorKind = "definition" // a rule head that can't define its relation
 	KindAggregate  ErrorKind = "aggregate"  // an aggregate written where or how it can't reduce
 	KindAnswer     ErrorKind = "answer"     // order by, having, limit, offset or after
+	KindFact       ErrorKind = "fact"       // an `as ?r` on an atom that matches no stored fact (#279)
 )
 
 // checkErr builds a CheckError with no call or variable to point at.

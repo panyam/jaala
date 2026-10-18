@@ -20,7 +20,7 @@ import (
 //	              [ "limit" count ] [ "offset" count ] ]
 //	            | ( "?-" | "=>" ) literals ;          (* asks literals with no projection, #276 *)
 //	literals    = literal { "," literal } ;
-//	literal     = atom | ( "not" | "!" ) atom | comparison | bodyagg ; (* "not atom" = stratified negation *)
+//	literal     = atom [ "as" variable ] | ( "not" | "!" ) atom | comparison | bodyagg ; (* "not atom" = stratified negation; "as ?r" binds the fact, #279 *)
 //	bodyagg     = variable "=" aggregate ":" "{" literals "}" ; (* per shared variable's value, #71 *)
 //	atom        = relation "(" [ term { "," term } ] ")" ;
 //	comparison  = operand op operand ;
@@ -489,11 +489,50 @@ func parseLiterals(body span) ([]Literal, error) {
 
 // parseLiteral parses one literal: a "not R(...)" or "!R(...)" is a negated atom, `?v = func(?x) : {
 // body }` an aggregate over a body of its own, another parenthesised piece a positive atom, anything
-// else a comparison.
+// else a comparison. An atom followed by `as ?r` binds ?r to the fact it matched (#279).
 func parseLiteral(s span) (Literal, error) {
 	if parts := s.split(":"); len(parts) == 2 && parts[1].is(0, "{") {
 		return parseBodyAggregate(parts[0], parts[1])
 	}
+	s, fact, err := cutFact(s)
+	if err != nil {
+		return Literal{}, err
+	}
+	lit, err := parseUnnamed(s)
+	switch {
+	case err != nil || fact == "":
+	case lit.Pos != nil:
+		lit.Pos.Fact = fact
+	case lit.Neg != nil:
+		lit.Neg.Fact = fact
+	}
+	return lit, err
+}
+
+// cutFact cuts a trailing `as ?r` off a literal (#279), naming ?r; "" when it has none. An `as` after
+// a closing parenthesis must be followed by one ?variable.
+func cutFact(s span) (span, Var, error) {
+	s = s.trim()
+	n := s.hi - s.lo
+	if n < 2 {
+		return s, "", nil
+	}
+	toks := s.toks()
+	i := n - 1
+	for i > 0 && !(toks[i].kind == tokWord && toks[i].text == "as" && toks[i-1].text == ")") {
+		i--
+	}
+	if i == 0 {
+		return s, "", nil
+	}
+	v := s.after(i)
+	if t, err := parseTerm(v); err != nil || t.Var == "" || t.Var == "_" || i != n-2 {
+		return s, "", s.after(i - 1).errorf("query: \"as\" names the fact an atom matched with one ?variable, as edge(?a, ?b) as ?r")
+	}
+	return s.before(i), Var(v.first().text[1:]), nil
+}
+
+func parseUnnamed(s span) (Literal, error) {
 	var rest span
 	isNeg := false
 	switch t := s.first(); {

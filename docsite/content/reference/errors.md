@@ -61,6 +61,12 @@ An atom is a relation name and its arguments in parentheses. An unclosed string 
 
 {{ demo "demos/errors/malformed-atom.yaml" }}
 
+`query: "as" names the fact an atom matched with one ?variable, as edge(?a, ?b) as ?r`
+
+What follows `as` after an atom has to be one variable, which takes the fact the atom matched ([#279](https://github.com/panyam/jaala/issues/279)).
+
+{{ demo "demos/errors/fact-as-names-one-variable.yaml" }}
+
 `query: bad relation name …`
 
 A relation name is identifiers joined by `.` or `-`, with no spaces.
@@ -338,6 +344,24 @@ A module's path used as a relation. The message lists what the module holds.
 The first part of a path names no module, which is a different typo from a wrong last part.
 
 {{ demo "demos/errors/unknown-module-q-in-q.yaml" }}
+
+`query: not … as ?… names no fact: a negated atom matched none`
+
+A negated atom holds when nothing matches it, so there's no fact for `as` to name.
+
+{{ demo "demos/errors/fact-negated.yaml" }}
+
+`query: … is a predicate, whose matches are no stored facts, so "as ?…" names none`
+
+A predicate's matches are computed, not stored, so they have no ids.
+
+{{ demo "demos/errors/fact-predicate.yaml" }}
+
+`query: … is derived, and only a base relation's facts have ids, so "as ?…" names none`
+
+A derived relation's tuples come from rules, not a store. Name the facts of the base relations its rules read instead.
+
+{{ demo "demos/errors/fact-derived.yaml" }}
 
 `query: relation … takes … args, got …`
 

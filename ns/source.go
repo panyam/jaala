@@ -12,6 +12,13 @@ import (
 type Tuple struct {
 	Vals  []Value
 	Cites []string
+	// ID is the host's name for this fact, which a query binds with `edge(?a, ?b) as ?r` (#279) and
+	// can then return, compare and join on, as Cypher reads a relationship's identity. A store whose
+	// facts carry attributes keys them by it, so a query reads them through an ordinary relation of
+	// the host's. Two facts with one ID are one fact as far as a query comparing them can tell, so an
+	// ID names one fact across every member of a Federation. Empty, the engine names the fact by its
+	// relation and values, `edge("a", "b")`, so two facts with the same values share a name.
+	ID string
 }
 
 // A Schema describes one relation a Source serves.

@@ -277,7 +277,8 @@ func substBody(body Body, sub func(Term) Term) Body {
 }
 
 func substAtom(a Atom, sub func(Term) Term) Atom {
-	out := Atom{Relation: a.Relation, Args: make([]Term, len(a.Args))}
+	out := a
+	out.Args = make([]Term, len(a.Args))
 	for i, t := range a.Args {
 		out.Args[i] = sub(t)
 	}

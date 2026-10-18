@@ -26,6 +26,7 @@ import (
 // (souffleUnsupported), so a skipped program is counted by reason rather than dropped:
 //
 //	edge/node/weight            .decl and .input; a node is a symbol, a weight a number
+//	edge(..) as ?f              edge_fact(.., f), each edge with its id after it (#279), as factTuples
 //	rules, not, _, constants    h(..) :- .., !r(..).
 //	comparisons                 as written: Soufflé orders symbols by their bytes, as jaala orders text
 //	count, sum, min, max        an aggregate over a helper relation of the body's bindings (every _
@@ -66,9 +67,10 @@ func (k sKind) String() string {
 
 // souffleBase is the generator's graph, as Soufflé declares it.
 var souffleBase = map[string][]sKind{
-	"edge":   {sSymbol, sSymbol},
-	"node":   {sSymbol},
-	"weight": {sSymbol, sNumber},
+	"edge":      {sSymbol, sSymbol},
+	"edge_fact": {sSymbol, sSymbol, sSymbol},
+	"node":      {sSymbol},
+	"weight":    {sSymbol, sNumber},
 }
 
 // souffleTranslation is one program in Soufflé's language, its relations prefixed so several can share
@@ -93,6 +95,7 @@ func translateSouffle(q Query, bind map[Var][]ns.Value, prefix string) (souffleT
 	if q.After != nil {
 		return souffleTranslation{}, unsupported("after")
 	}
+	q = souffleFacts(q)
 	tr := &souffler{prefix: prefix}
 	body, one := bindGoalBody(q.Goal, bind)
 	tr.one = one
@@ -130,6 +133,37 @@ func translateSouffle(q Query, bind map[Var][]ns.Value, prefix string) (souffleT
 	}
 	out.prefix, out.text, out.q = prefix, tr.b.String(), q
 	return out, nil
+}
+
+// souffleFacts is q with each atom binding its fact (#279) a call to that relation's fact relation,
+// <rel>_fact, whose facts writeSouffleFacts writes.
+func souffleFacts(q Query) Query {
+	var body func(b Body) Body
+	body = func(b Body) Body {
+		lits := make([]Literal, len(b.Literals))
+		for i, l := range b.Literals {
+			switch {
+			case l.Pos != nil && l.Pos.Fact != "":
+				a := *l.Pos
+				a.Relation, a.Args, a.Fact = a.Relation+"_fact", append(slices.Clone(a.Args), Term{Var: a.Fact}), ""
+				l.Pos = &a
+			case l.Agg != nil:
+				agg := *l.Agg
+				agg.Body = body(agg.Body)
+				l.Agg = &agg
+			}
+			lits[i] = l
+		}
+		b.Literals = lits
+		return b
+	}
+	rules := make([]Rule, len(q.Rules))
+	for i, r := range q.Rules {
+		r.Body = body(r.Body)
+		rules[i] = r
+	}
+	q.Rules, q.Goal = rules, body(q.Goal)
+	return q
 }
 
 func bindsByName(bind map[Var][]ns.Value) map[string]bool {
@@ -915,7 +949,11 @@ func varsOf(vs []Var) []string {
 func writeSouffleFacts(dir, prefix string, src ns.Source) error {
 	for rel := range souffleBase {
 		var b strings.Builder
-		for _, t := range src.Tuples(rel) {
+		tuples := src.Tuples(rel)
+		if base, ok := strings.CutSuffix(rel, "_fact"); ok {
+			tuples = factTuples(base, src.Tuples(base))
+		}
+		for _, t := range tuples {
 			for i, v := range t.Vals {
 				if i > 0 {
 					b.WriteByte('\t')

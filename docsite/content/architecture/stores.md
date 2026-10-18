@@ -25,6 +25,8 @@ While planning, after the [rewrites]({{.Site.PathPrefix}}/architecture/rewrites/
 
 Before solving a body, it collects what the body will ask (`prefetch`). It runs the body up to each looked-up literal and asks for the values no cache holds in batches of up to 1024 (`LookupBatch`), asks a pushed group's store for a batch of its inputs' bindings, and turns a probe a walk covers into one `Walk` from the values not yet reached. `solve` then finds everything in the caches, so it stays depth-first and the goal keeps streaming into its answer.
 
+A call that names its fact, `edge(?a, ?b) as ?r` ([#279](https://github.com/panyam/jaala/issues/279)), is rewritten before anything else runs into a call to a relation the store never sees, `edge`'s fact relation, whose last argument is the id. The base reads it as `edge` with each tuple's id after its values: whole, when it reads `edge` whole, and as `edge`'s own lookups and batches, kept under `edge`'s keys, otherwise. A store is never asked to push, walk, summarize or stream one, so a fact literal is solved by the engine while the literals around it still go to the store.
+
 While solving, a goal's first literal can read a streamed relation as it arrives, keeping none of it (`StreamSource`, [#264](https://github.com/panyam/jaala/issues/264)), and anything a prefetch missed is looked up as before. So batching, pushing and walking each only ever replace calls that would otherwise have been made one at a time. When one can't apply, the query falls back to those calls, never to a different answer.
 
 ## Where answers are kept

@@ -105,7 +105,7 @@ func (t *typer) isDerived(rel string) bool { _, ok := t.rules[rel]; return ok }
 // declaration, or a derived relation's declared or inferred head types. A derived relation already
 // being typed further up the walk answers nothing, which is what ends a cycle.
 func (t *typer) argTypes(rel string, seen map[string]bool) ([]string, []ns.ArgType, bool) {
-	if s, ok := t.reg.Schema(rel); ok {
+	if s, ok := schemaIn(t.reg, rel); ok {
 		return s.Labels, s.Types, true
 	}
 	if b, ok := t.reg.Predicate(rel); ok {

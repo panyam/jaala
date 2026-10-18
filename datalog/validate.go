@@ -57,6 +57,9 @@ func validateBound(q Query, reg *ns.Vocabulary, vars []Var) error {
 	if err != nil {
 		return err
 	}
+	if q, err = lowerFacts(q, reg); err != nil {
+		return err
+	}
 	if q, err = coerceConstants(q, reg); err != nil {
 		return err
 	}

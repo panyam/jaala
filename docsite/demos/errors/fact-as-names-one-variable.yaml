@@ -1,0 +1,3 @@
+fixture: "deps"
+query: "imports(?a, ?b) as \"r\" => ?a"
+expect_error: '"as" names the fact an atom matched'
