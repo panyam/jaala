@@ -16,7 +16,7 @@ if [ -z "$V" ]; then
 fi
 for mod in $MODS; do
     if grep -q '^replace github.com/panyam/jaala' "$mod/go.mod"; then
-        echo "$mod/go.mod still replaces jaala; run make bump-root V=<a published jaala tag> and commit first"
+        echo "$mod/go.mod still replaces jaala or a module of it; run make bump-root V=<a published jaala tag> and commit first"
         exit 1
     fi
 done

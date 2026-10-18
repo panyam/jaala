@@ -2,7 +2,7 @@ module github.com/panyam/jaala/frontends/mcp
 
 go 1.26.9
 
-require github.com/panyam/jaala v0.1.69
+require github.com/panyam/jaala v0.1.70
 
 require (
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
@@ -11,6 +11,7 @@ require (
 	github.com/invopop/jsonschema v0.14.0 // indirect
 	github.com/panyam/gocurrent v0.1.2 // indirect
 	github.com/panyam/goutils v0.1.13 // indirect
+	github.com/panyam/jaala/frontends/nl v0.0.0
 	github.com/panyam/mcpkit v0.8.2
 	github.com/panyam/servicekit v0.1.5 // indirect
 	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect
@@ -24,3 +25,7 @@ require (
 	google.golang.org/grpc v1.84.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 )
+
+replace github.com/panyam/jaala/frontends/nl => ../nl
+
+replace github.com/panyam/jaala => ../../

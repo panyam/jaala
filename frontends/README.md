@@ -1,7 +1,9 @@
 # frontends
 
 What turns text other than jaala's own syntax into a program that checks. Nothing here is needed to
-run the engine, and no engine-only host imports it.
+run the engine, and no engine-only host imports it. Each front end is a module of its own, so no
+core package can import one and what one depends on reaches only its importers; run its tests from
+inside its directory.
 
 - `nl/` asks a model to write a program from a plain-language question (#321): the vocabulary as a
   card, a grammar per vocabulary for constrained decoding, errors a model can fix from, the

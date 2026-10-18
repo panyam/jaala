@@ -38,6 +38,33 @@ jobs:
           extra=$(go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '^vendor/' || true)
           if [ -n "$extra" ]; then echo "non-stdlib dependencies:"; echo "$extra"; exit 1; fi
 
+  # The plain-language front end is a module of its own, so no core package can import it. It stays
+  # standard library and jaala only, and builds for the browser as the engine does.
+  nl:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontends/nl
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: frontends/nl/go.mod
+      - name: gofmt
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then echo "gofmt needed:"; echo "$out"; exit 1; fi
+      - name: vet
+        run: go vet ./...
+      - name: test
+        run: go test -race -count=1 ./...
+      - name: wasm build
+        run: GOOS=js GOARCH=wasm go build ./...
+      - name: standard library and jaala only
+        run: |
+          extra=$(go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./... | grep -v '^github.com/panyam/jaala' || true)
+          if [ -n "$extra" ]; then echo "dependencies outside jaala:"; echo "$extra"; exit 1; fi
+
   # The local-model clients are a module of their own (#330), so the root's ./... doesn't reach them.
   # They may use the network, but nothing outside the standard library and jaala.
   nlmodels:

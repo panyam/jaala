@@ -8,9 +8,9 @@ A Datalog engine for graph-shaped data, extracted from agni. Three packages: `ns
 program that checks, and no engine-only host imports it: `frontends/nl`, the plain-language front end
 (#321), and `frontends/nlmodels`, its clients for local models in a module of their own (#330), and `frontends/mcp`,
 an MCP server for any vocabulary in another (#347); and `frontends/cypher`, which compiles Cypher
-into a program (#352), in a third. A front end is a module of its own so no core package can import
-one and what it depends on reaches only its importers; `frontends/nl` is the exception until it moves
-too, which is a host-facing release (Declaire imports it from the root). They moved there in #337, after v0.1.65 had shipped
+into a program (#352), in a third. Every front end is a module of its own, `frontends/nl` included
+since #359, so no core package can import one and what one depends on reaches only its importers;
+the root's `./...` stops at each, so run a front end's tests from inside it. They moved there in #337, after v0.1.65 had shipped
 `nl` and `nlmodels` at the root. jaala is a Datalog engine, not a graph library: a host's fast
 path is a generator (its own Go running inside a query), not a jaala function called around the
 engine (#41).
@@ -63,7 +63,8 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   so `Locate(text, err)` finds the call or variable in the text, and `nl.Explain` writes it for a
   model. A new check builds one (`checkErr(kind, msg)`, `b.arityErr`, `b.unknownErr`), and
   `TestBrokenProgramsFailTheSameWay` requires each broken literal's error to be one Locate finds.
-  `nl` (the card, Explain, `Translate`) imports `ns` and `datalog`, and nothing in jaala imports it.
+  `nl` (the card, Explain, `Translate`) imports `ns` and `datalog`, is a module of its own (#359; CI's
+  `nl` job), and nothing in the root imports it.
   `Translate` (#325) runs no model: `Model` and `Grounder` are the host's, a refused draft goes back
   with `Explain`'s text, a `Complete` error, a repeated draft (#340, refused unchecked) or an empty
   answer (over `Options.Base`) moves straight to the fallback, which starts a fresh conversation (an
@@ -87,7 +88,7 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   accepts must parse: `TestEveryProgramTheGrammarWritesParses` samples 21,000 programs from the table
   over 70 seeds and every depth (one seed alone missed `-(9)` as a column). The other direction lives
   in `datalog`'s tests, which can reach the corpus: they read `frontends/nl/testdata/program.gbnf` (`go
-  test ./frontends/nl -update` writes it) with a small Earley recognizer and require every corpus, fuzz-seed and docs
+  test -update .` in `frontends/nl` writes it) with a small Earley recognizer and require every corpus, fuzz-seed and docs
   program, printed in jaala's spelling, to be accepted. A grammar change regenerates the file, or
   `datalog` checks the old one. The card is memoized on the vocabulary (`Memo`). A name is capped at
   `nameMax` (32) characters (#340: a model writing prose ran one to its token limit), written as
@@ -101,10 +102,12 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   it as `Prompt.Grammar`.
 - **`frontends/nlmodels` is a module of its own** (#330): thin clients for local models already
   running, `llamacpp` (sends the grammar, `cache_prompt`) and `ollama` (no GBNF, so no grammar).
-  CI's `nlmodels` job tests it; the root's `./...` doesn't reach it. It requires a published jaala
-  tag; a change needing `frontends/nl` API no tag holds puts `replace github.com/panyam/jaala =>
-  ../../` back until `make bump-root` after the next jaala tag, and `make tag` won't tag it while the
-  replace is there (Releasing). Its old path, `github.com/panyam/jaala/nlmodels`, shipped
+  CI's `nlmodels` job tests it; the root's `./...` doesn't reach it. It requires published jaala and
+  `frontends/nl` tags; a change needing API no tag holds puts `replace github.com/panyam/jaala =>
+  ../../` (and `github.com/panyam/jaala/frontends/nl => ../nl`) back until `make bump-root` after
+  the next tags, and `make tag` won't tag it while a replace is there (Releasing). It replaces jaala
+  too while it replaces nl: jaala's tags up to v0.1.70 hold `frontends/nl` as a package, so a
+  published jaala beside the nl module is an ambiguous import. Its old path, `github.com/panyam/jaala/nlmodels`, shipped
   once (nlmodels/v0.1.65) with no consumer, and nothing is tagged under that prefix again. `./selfcheck.sh` runs a real
   `llama-server` on llama.cpp's 1 MB test model when `make llama` has fetched it (Homebrew's
   llama.cpp ships no GBNF validator, so a server is the only check llama.cpp reads the grammar): every reply must
@@ -142,7 +145,8 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   `TestEval` share, `testdata/eval.golden`, `-update`), and `FuzzCompile` (in selfcheck) requires
   any text to compile to a program that validates, or to fail with an `*Error` or a type error
   the query itself makes. It is a module of its own (CI's `cypher` job, `SUB_MODS_TO_TAG`), standard
-  library and jaala only, and replaces jaala with `../../` until a tag holds `internal/guide`, which
+  library and jaala only, and replaces jaala with `../../` and nl with `../nl` until tags hold
+  `internal/guide` and the nl module (Releasing); `internal/guide`
   imports no front end (its `Case` is converted to `nl.Case` in each test) so the root never
   requires one. Run its tests from inside it: the root's `./...` stops at the module.
 - **`Base` is shared across concurrent `Eval`s.** Anything mutable reachable from it must be
@@ -843,13 +847,19 @@ never a `replace`.
 
 Release with `make tag-push V=v0.1.N NOTES=notes.txt` on the merge commit (`scripts/`, after
 mcpkit's). It tags jaala and every module in the Makefile's `SUB_MODS_TO_TAG`
-(`frontends/nlmodels`, tagged `frontends/nlmodels/v0.1.N`) at the same commit, pushes jaala's tag
+(`frontends/nl`, tagged `frontends/nl/v0.1.N`, then `nlmodels`, `mcp` and `cypher`) at the same commit, pushes jaala's tag
 alone and then the others (GitHub raises no push event for several tags in one push, mcpkit #1391),
 and publishes the release page from jaala's annotation, which is the release notes: a short list
 of what changed, from NOTES. `make tag` alone tags without pushing. It refuses a sub-module still
 replacing jaala with its checkout, since a consumer ignores `replace`: when a sub-module needs jaala
 API no tag holds, release jaala first, then `make bump-root V=<that tag>` (points the sub-modules
-at it and drops the replace), commit, and tag the sub-modules. Put the upgrade note on the issue a
+at it and drops the replace), commit, and tag the sub-modules. A sub-module requiring another
+(`cypher`, `mcp` and `nlmodels` require `frontends/nl`) is bumped to that one's `<dir>/V` too, and
+`bump-root` leaves it alone (exit 1, naming what to tag) until that tag is pushed, so the order is
+jaala, then `frontends/nl` (`make tag-push V=... SUB_MODS_TO_TAG=frontends/nl`; `SUB_MODS_TO_TAG=`
+tags jaala alone), then the rest. #359's own release took three: jaala alone (for
+`internal/guide`), `bump-root` and jaala with nl, `bump-root` and everything; Declaire then needs
+the nl module beside a jaala past v0.1.70 (upgrade note on declaire's issue). Put the upgrade note on the issue a
 host filed or the PR's own issue.
 
 ## Issues and missions
@@ -861,7 +871,7 @@ passes too, so it can stay open after jaala's tickets close. One is active:
 `mission_agent_frontend` (#322), a host's caller asks in plain language and jaala's front end
 turns it into a program that checks. jaala's half is `frontends/nl` and `frontends/nlmodels`
 (#321, #323 to #326, #330, #331, #336, #337, released in v0.1.66 and frontends/nlmodels/v0.1.66);
-`go test ./frontends/nl -run TestEval -v` is its jaala-side exercise (fix line 5/5). Declaire's
+`go test -run TestEval -v .` in `frontends/nl` is its jaala-side exercise (fix line 5/5). Declaire's
 translator-alone arm (declaire#295, for declaire#290) first ran on v0.1.66 and passed 2 of 14 on
 Qwen2.5-Coder 7B against declaire#288's bar of 10; its jaala asks became #340 and #341 (PR #342,
 released in v0.1.67). Declaire's 32B run then stopped on an unexplained empty answer on 6 of its
