@@ -24,7 +24,7 @@ for mod in $MODS; do
         grep -q "github.com/panyam/jaala/$sib v" "$mod/go.mod" || continue
         if ! git ls-remote --exit-code --tags origin "refs/tags/$sib/$V" >/dev/null 2>&1; then
             echo "==> $mod/go.mod: left as it is, since it requires $sib and $sib/$V isn't pushed"
-            echo "    tag it first (make tag-push V=<next> NOTES=... SUB_MODS_TO_TAG=$sib), then bump-root to that"
+            echo "    tag it first (make tag-push V=$V SUB_MODS_TO_TAG=$sib), then run bump-root again"
             ready=no waiting=1
             break
         fi

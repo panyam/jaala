@@ -587,11 +587,14 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   program that parses is validated and evaluated without a panic, every error keeps `query:`, and when
   Naive answers within `fuzzBudget` all three evaluators must `agree`. Plain `go test` (so CI) runs the
   seeds and every input in `testdata/fuzz/`; `./selfcheck.sh` fuzzes each target for
-  `JAALA_FUZZ_TIME` (30s). A failing input is written to `testdata/fuzz/<Target>/`: fix it, rename the
+  `JAALA_FUZZ_TIME` (30s), and `frontends/cypher`'s `FuzzCompile` for `JAALA_CYPHER_FUZZ_TIME` (2m):
+  #352's second PR took five 10-minute runs to come back clean, four finding a bug 30s never
+  reached, so a compiler change gets 10-minute runs until one is clean. A failing input is written to `testdata/fuzz/<Target>/`: fix it, rename the
   file for what it caught, and commit it. A failure is a finding only when the saved input fails
   replayed; otherwise (a worker killed or hung, the machine under load, #169) selfcheck prints the
   run's last lines, removes an input that passes replayed (a killed worker saves the one it was
-  running), and fuzzes once more, passing if the rerun does.
+  running), and fuzzes once more, passing if the rerun does. Never chain a step on `go test ... |
+  tail -1 && next`: the `&&` reads tail's status, so a failing test ran the 10-minute fuzz after it.
   Its first hour found a quadratic did-you-mean, a parser panic, `?_: T` not printing back,
   comparison and head-`_` cases the evaluators answered differently, and a `-0` the index missed.
 - **A comparison is checked where its body binds it, not where it is written** (#89). Every solve
@@ -908,12 +911,16 @@ of what changed, from NOTES. `make tag` alone tags without pushing. It refuses a
 replacing jaala with its checkout, since a consumer ignores `replace`: when a sub-module needs jaala
 API no tag holds, release jaala first, then `make bump-root V=<that tag>` (points the sub-modules
 at it and drops the replace), commit, and tag the sub-modules. A sub-module requiring another
-(`cypher`, `mcp` and `nlmodels` require `frontends/nl`) is bumped to that one's `<dir>/V` too, and
-`bump-root` leaves it alone (exit 1, naming what to tag) until that tag is pushed, so the order is
-jaala, then `frontends/nl` (`make tag-push V=... SUB_MODS_TO_TAG=frontends/nl`; `SUB_MODS_TO_TAG=`
-tags jaala alone), then the rest. #359's own release took three: jaala alone (for
-`internal/guide`), `bump-root` and jaala with nl, `bump-root` and everything; Declaire then needs
-the nl module beside a jaala past v0.1.71 (upgrade note on declaire's issue). Put the upgrade note on the issue a
+(`cypher` and `nlmodels` require `frontends/nl`, and `mcp` requires `cypher`) is bumped to that
+one's `<dir>/V` too, and `bump-root` leaves it alone (exit 1, naming what to tag) until that tag is
+pushed. So a release whose sub-modules replace jaala goes in tiers under one V: `make tag-push
+V=v0.1.N SUB_MODS_TO_TAG=` (jaala alone), then for each tier `make bump-root V=v0.1.N`, commit and
+push, and `make tag-push V=v0.1.N SUB_MODS_TO_TAG=<the modules it moved>`; with V tagged already,
+`tag-all` tags only the sub-modules, at HEAD, and `tag-push` pushes only theirs (the release page
+went with jaala's). The tiers are `frontends/nl`, then `cypher` and `nlmodels`, then `mcp`.
+`bump-root` also tidies the docsite, which replaces jaala and the front ends but lists what they
+require (#362 left it stale and the docs workflow's `go test` stopped on "updates to go.mod
+needed"). #359's release (v0.1.72 to v0.1.74) predates the tiers and took a version per step. Put the upgrade note on the issue a
 host filed or the PR's own issue.
 
 ## Issues and missions
@@ -941,9 +948,11 @@ an agent or the model translating for it writes Cypher, and `frontends/cypher` c
 program that checks, so Declaire can measure whether Cypher or jaala's syntax costs an agent less per
 correct answer (declaire#288's "one arm per front end"; the arms are declaire#248). Its tickets: #352
 (the compiler over a graph view of a vocabulary, and `go test -run TestEval -v .` in `frontends/cypher`,
-`nl`'s cases in Cypher), #353 (errors located in the Cypher text), #354 (`nl.Translate` writing
-Cypher, the 32B arm) and #355 (`frontends/mcp` taking Cypher). The gaps (#279 to #284) stay
-`waiting` until an exercise case is refused for one. The two store missions closed on 2026-10-16. `mission_store_federation` (#219), a host answers a question over many stores without holding them
+`nl`'s cases in Cypher; PRs #359 and #369), #353 (errors located in the Cypher text, #372), #354
+(`nl.Translate` writing Cypher, the 32B arm) and #355 (`frontends/mcp` taking Cypher, closed by
+#366's `cypher` tool and `cypher.Store`, PR #368). #279 (facts as terms, #371) came out of
+`waiting` beside them; the other gaps (#280 to #284) and #364 (`CALL { }`, an order or limit in a
+stage) stay `waiting` until an exercise case is refused for one. Next is #354. The two store missions closed on 2026-10-16. `mission_store_federation` (#219), a host answers a question over many stores without holding them
 in memory, measured by the `Stores` benchmark (#218: stores asked, unindexed probes, round trips,
 peak heap and a repeated question's fetches as the number of stores grows) and Declaire's `bench
 -time` on a federated view. The benchmark's stores run in its process, so `peak-MB` counts their

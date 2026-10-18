@@ -12,7 +12,14 @@ if [ -z "$V" ]; then
     echo "Usage: make tag-push V=v0.1.N NOTES=notes.txt"
     exit 1
 fi
-git push origin "$V"
+# jaala's tag goes once, with the release page; a later tier of the same release pushes its
+# sub-modules' tags alone.
+first=yes
+if git ls-remote --exit-code --tags origin "refs/tags/$V" >/dev/null 2>&1; then
+    first=no
+else
+    git push origin "$V"
+fi
 refs=()
 for mod in $MODS; do
     refs+=("$mod/$V")
@@ -20,4 +27,6 @@ done
 if [ ${#refs[@]} -gt 0 ]; then
     git push origin "${refs[@]}"
 fi
-gh release create "$V" --title "$V" --notes-from-tag --latest
+if [ "$first" = yes ]; then
+    gh release create "$V" --title "$V" --notes-from-tag --latest
+fi

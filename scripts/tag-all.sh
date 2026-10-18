@@ -2,7 +2,9 @@
 # Tags jaala and every published sub-module at V, at HEAD (after mcpkit's scripts/tag-all.sh). Local
 # only: it prints the push, which `make tag-push` runs. The root tag's annotation is the release
 # notes, read from NOTES. A sub-module still replacing jaala with its checkout isn't tagged: a
-# consumer ignores replace, so it would build against whatever jaala its require names.
+# consumer ignores replace, so it would build against whatever jaala its require names. When V is
+# tagged already, only the sub-modules are tagged, at HEAD: a sub-module requiring another is tagged
+# after make bump-root points it at that one's V, so one release's tiers share V.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
@@ -21,12 +23,16 @@ for mod in $MODS; do
     fi
 done
 
-echo "Tagging $V across all modules..."
-if [ -n "$NOTES" ]; then
-    git tag -a "$V" -F "$NOTES"
+if git rev-parse -q --verify "refs/tags/$V" >/dev/null; then
+    echo "$V is tagged already; tagging only the sub-modules at HEAD..."
 else
-    echo "  (no NOTES: $V's annotation, and so its release notes, is just its name)"
-    git tag -a "$V" -m "$V"
+    echo "Tagging $V across all modules..."
+    if [ -n "$NOTES" ]; then
+        git tag -a "$V" -F "$NOTES"
+    else
+        echo "  (no NOTES: $V's annotation, and so its release notes, is just its name)"
+        git tag -a "$V" -m "$V"
+    fi
 fi
 
 refs=""
