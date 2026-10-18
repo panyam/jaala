@@ -39,4 +39,6 @@ done
 echo ""
 echo "Tags created locally. Push with:"
 echo "  git push origin $V"
-[ -n "$refs" ] && echo "  git push origin$refs"
+if [ -n "$refs" ]; then
+    echo "  git push origin$refs"
+fi
