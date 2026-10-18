@@ -1,2 +1,4 @@
-github.com/panyam/jaala/frontends/nl v0.1.73 h1:zS8zBdGkjjRzAc+cbWdUl95AFlIKVfoVaD73XB8DERE=
-github.com/panyam/jaala/frontends/nl v0.1.73/go.mod h1:Bbb53dLggn9twGNyGlRm9e7sGGYfm7auXEFawDDEibU=
+github.com/panyam/jaala v0.1.75 h1:+XAK0tEbUE1IGUStHCtrBAse1O8yBV3gqk1a5qUmnr0=
+github.com/panyam/jaala v0.1.75/go.mod h1:A/dm6zBFvdjXavPfpGp0xP8BZAFHKMjQ5e3ASkzdaqE=
+github.com/panyam/jaala/frontends/nl v0.1.75 h1:QzTzVK+QqLXgVPfctSqpK8+GocEj+aNF/Hm/baFyNv4=
+github.com/panyam/jaala/frontends/nl v0.1.75/go.mod h1:wDs834XEgqkVjF/o8JJw8HviGLqH8BM8EAz5Nj0R/kM=
