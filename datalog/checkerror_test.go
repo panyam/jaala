@@ -3,7 +3,10 @@ package datalog
 import (
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
+
+	"github.com/panyam/jaala/ns"
 )
 
 // checkErrorOf is the CheckError Validate and every evaluator give for text, failing unless they all
@@ -138,6 +141,7 @@ func TestLocateFindsTheCallTheErrorIsAbout(t *testing.T) {
 			}
 		})
 	}
+	locatesValue(t)
 	_, err := Parse("edge(?a, ?b) =>\n  ?a,")
 	var pe *ParseError
 	if !errors.As(err, &pe) {
@@ -145,5 +149,37 @@ func TestLocateFindsTheCallTheErrorIsAbout(t *testing.T) {
 	}
 	if pos, ok := Locate("", err); !ok || pos != (Position{pe.Offset, pe.Line, pe.Column}) {
 		t.Fatalf("Locate(ParseError) = %+v %v, want its own position", pos, ok)
+	}
+}
+
+// A value an argument refuses is located at that value, in the call holding it, not at the first
+// call to its relation. control: the first call holds a value the argument takes.
+func locatesValue(t *testing.T) {
+	t.Helper()
+	src := ns.NewMemSource().DeclareSchema("pkg", ns.Schema{Arity: 3, Labels: []string{"name", "loc", "tier"},
+		Types: []ns.ArgType{{}, {Type: ns.TypeNumber}, {Domain: []string{"core", "edge"}}}})
+	v := std(src)
+	for _, c := range []struct {
+		name, text, at string
+		arg            int
+	}{
+		{"a value outside a Domain", `pkg(?a, _, "core"), pkg(?b, _, "middle") => ?a, ?b`, `"middle"`, 2},
+		{"text in a number argument", `pkg(?a, 3, _), pkg(?b, "big", _) => ?a, ?b`, `"big"`, 1},
+		{"a number compared with text, at the comparison", `pkg(?a, ?n, _), ?n > "big" => ?a`, `?n > "big"`, -1},
+		{"text in arithmetic, at the text", `pkg(?a, ?n, _), 0 = ?n * "" => ?a`, `""`, 1},
+		{"an expression compared with text, at the text", `pkg(?a, ?n, _), "" = -(?n) => ?a`, `""`, -1},
+	} {
+		err := Validate(mustParse(t, c.text), v)
+		var ce *CheckError
+		if !errors.As(err, &ce) {
+			t.Fatalf("%s: %v, want a CheckError", c.name, err)
+		}
+		if ce.Arg != c.arg {
+			t.Errorf("%s: Arg = %d, want %d", c.name, ce.Arg, c.arg)
+		}
+		pos, ok := Locate(c.text, err)
+		if want := strings.Index(c.text, c.at); !ok || pos.Offset != want {
+			t.Errorf("%s: Locate = %+v %v, want offset %d (%s)", c.name, pos, ok, want, c.at)
+		}
 	}
 }

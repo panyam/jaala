@@ -31,7 +31,14 @@ type CheckError struct {
 	Args     int
 	// Var is the variable the error is about, without "?".
 	Var string
-	msg string
+	// Arg is the argument of Relation's call the error is about, from 0, when it is about a value
+	// written there (a constant its type or Domain refuses), else -1. Locate then finds the call
+	// holding that value, rather than the first call to Relation.
+	Arg      int
+	value    string // the constant the error is about, as written: at Arg, or compared with Var
+	hasValue bool   // value is set, so a CheckError built elsewhere never chases one
+	cmp      bool   // Var is an operand of a comparison, which Locate finds rather than its binder
+	msg      string
 }
 
 func (e *CheckError) Error() string { return e.msg }
@@ -53,11 +60,23 @@ const (
 
 // checkErr builds a CheckError with no call or variable to point at.
 func checkErr(kind ErrorKind, msg string) *CheckError {
-	return &CheckError{Kind: kind, Args: -1, msg: msg}
+	return &CheckError{Kind: kind, Args: -1, Arg: -1, msg: msg}
 }
 
 func (e *CheckError) call(rel string, args int) *CheckError {
 	e.Relation, e.Args = shownName(rel), args
+	return e
+}
+
+// argument records that the error is about the constant value at argument i of its call.
+func (e *CheckError) argument(i int, value string) *CheckError {
+	e.Arg, e.value, e.hasValue = i, value, true
+	return e
+}
+
+// compared records that the error is about Var as a comparison's operand, compared with value.
+func (e *CheckError) compared(value string) *CheckError {
+	e.cmp, e.value, e.hasValue = true, value, true
 	return e
 }
 
@@ -121,8 +140,18 @@ func Locate(text string, err error) (Position, bool) {
 		}
 	}
 	at := -1
-	if ce.Relation != "" {
+	if ce.Relation != "" && ce.Arg >= 0 && ce.hasValue {
+		at = src.findValue(clauses, ce.Relation, ce.Args, ce.Arg, ce.value)
+	}
+	if at < 0 && ce.Relation != "" {
 		at = src.findCall(clauses, ce.Relation, ce.Args)
+	}
+	if at < 0 && ce.Var != "" && ce.cmp {
+		at = src.findCompared(clauses, ce.Var)
+	}
+	if at < 0 && ce.hasValue {
+		// a call arithmetic wrote (num.mul for ?a * ""), or a comparison of an expression
+		at = src.findConst(clauses, ce.value)
 	}
 	if at < 0 && ce.Var != "" {
 		at = src.findVar(clauses, ce.Var)
@@ -190,6 +219,77 @@ func (src *source) headName(c [2]int) string {
 	return ""
 }
 
+// findValue returns the offset of argument arg of the first call to rel with args arguments whose
+// argument there is the constant value (a string's text, or a number as written), or -1.
+func (src *source) findValue(clauses [][2]int, rel string, args, arg int, value string) int {
+	for _, c := range clauses {
+		for i := c[0]; i < c[1]; i++ {
+			if i > c[0] && src.toks[i-1].kind == tokSymbol && src.toks[i-1].text == "." {
+				continue
+			}
+			name, j := src.nameAt(i, c[1])
+			if name != rel || j >= c[1] || src.toks[j].text != "(" || (args >= 0 && src.argCount(j, c[1]) != args) {
+				continue
+			}
+			if k := src.argStart(j, c[1], arg); k >= 0 && constText(src.toks[k]) == value {
+				return src.toks[k].pos
+			}
+		}
+	}
+	return -1
+}
+
+// findConst returns the offset of the first constant written as value, or -1.
+func (src *source) findConst(clauses [][2]int, value string) int {
+	for _, c := range clauses {
+		for i := c[0]; i < c[1]; i++ {
+			if t := src.toks[i]; (t.kind == tokString || t.kind == tokNumber) && constText(t) == value {
+				return t.pos
+			}
+		}
+	}
+	return -1
+}
+
+// argStart is the index of the first token of argument arg of the call whose "(" is at open, or -1.
+func (src *source) argStart(open, hi, arg int) int {
+	depth, n := 0, 0
+	for i := open; i < hi; i++ {
+		t := src.toks[i]
+		if t.kind == tokSymbol {
+			switch t.text {
+			case "(", "{":
+				depth++
+				if depth == 1 {
+					continue
+				}
+			case ")", "}":
+				depth--
+				if depth == 0 {
+					return -1
+				}
+			case ",":
+				if depth == 1 {
+					n++
+					continue
+				}
+			}
+		}
+		if depth == 1 && n == arg {
+			return i
+		}
+	}
+	return -1
+}
+
+// constText is a constant token's value as written: a string's text without its quotes.
+func constText(t token) string {
+	if t.kind == tokString && len(t.text) >= 2 {
+		return t.text[1 : len(t.text)-1]
+	}
+	return t.text
+}
+
 // findCall returns the offset of the first call to rel among the clauses with args arguments, or
 // with any number when args is -1 or none has that many.
 func (src *source) findCall(clauses [][2]int, rel string, args int) int {
@@ -246,6 +346,28 @@ func (src *source) argCount(open, hi int) int {
 }
 
 // findVar returns the offset of the first ?v among the clauses.
+// findCompared returns the offset of the first ?v beside a comparison operator, or -1.
+func (src *source) findCompared(clauses [][2]int, v string) int {
+	isOp := func(i int) bool {
+		if i < 0 || i >= len(src.toks) || src.toks[i].kind != tokSymbol {
+			return false
+		}
+		switch src.toks[i].text {
+		case "=", "!=", "<", "<=", ">", ">=":
+			return true
+		}
+		return false
+	}
+	for _, c := range clauses {
+		for i := c[0]; i < c[1]; i++ {
+			if t := src.toks[i]; t.kind == tokVar && t.text == "?"+v && (isOp(i-1) || isOp(i+1)) {
+				return t.pos
+			}
+		}
+	}
+	return -1
+}
+
 func (src *source) findVar(clauses [][2]int, v string) int {
 	for _, c := range clauses {
 		for i := c[0]; i < c[1]; i++ {

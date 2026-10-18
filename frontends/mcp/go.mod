@@ -27,3 +27,7 @@ require (
 	google.golang.org/grpc v1.84.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 )
+
+replace github.com/panyam/jaala => ../../
+
+replace github.com/panyam/jaala/frontends/cypher => ../cypher

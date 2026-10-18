@@ -138,7 +138,7 @@ func (b *Base) checkArgValues(atom *Atom, s ns.Schema) error {
 			fix = "use one of: " + values
 		}
 		return checkErr(KindType, fmt.Sprintf("query: %s's %q argument cannot be %q%s (it holds one of: %s)",
-			atom.Relation, label, got, hint, values)).call(atom.Relation, len(atom.Args)).fix(fix)
+			atom.Relation, label, got, hint, values)).call(atom.Relation, len(atom.Args)).argument(i, got).fix(fix)
 	}
 	return nil
 }

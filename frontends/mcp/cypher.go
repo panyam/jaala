@@ -1,7 +1,6 @@
 package mcp
 
 import (
-	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -36,7 +35,7 @@ func (c *call) cypher(ctx core.ToolContext, in cypherInput) (core.ToolResult, er
 	}
 	p, err := cypher.Compile(c.v, *c.p.Cypher, in.Query)
 	if err != nil {
-		return core.ErrorResult(refuseCypher(in.Query, err)), nil
+		return core.ErrorResult(cypher.Explain(in.Query, p, err) + "Or ask with the query tool.\n"), nil
 	}
 	values, err := paramValues(in.Params)
 	if err != nil {
@@ -56,7 +55,9 @@ func (c *call) cypher(ctx core.ToolContext, in cypherInput) (core.ToolResult, er
 	}
 	tab, err := datalog.SemiNaive{}.EvalTable(ctx, p.Query, b, c.evalOptions(in.MaxWork, extra...)...)
 	if err != nil {
-		return c.refuse(p.Text, err), nil
+		// Said in the query's terms, at its place in the query, with the program it ran for reference.
+		text := cypher.Explain(in.Query, p, err) + c.budgetHint(err)
+		return core.ErrorResult(text + "ran: " + strings.Join(strings.Fields(p.Text), " ") + "\n"), nil
 	}
 	a := page(p.Text, tab, offset, c.limit(in.Limit))
 	a.Cypher = in.Query
@@ -81,26 +82,6 @@ func paramValues(params map[string]any) (map[string]ns.Value, error) {
 		}
 	}
 	return out, nil
-}
-
-// refuseCypher is a compile error as an agent fixes the query from: the message, the line with a
-// caret under the place, and for a construct a program can't express yet, that it should be written
-// another way.
-func refuseCypher(text string, err error) string {
-	var ce *cypher.Error
-	if !errors.As(err, &ce) {
-		return err.Error()
-	}
-	var b strings.Builder
-	b.WriteString(ce.Error() + "\n")
-	lines := strings.Split(text, "\n")
-	if l := ce.Pos.Line; l >= 1 && l <= len(lines) {
-		fmt.Fprintf(&b, "line %d, column %d:\n  %s\n  %s^\n", l, ce.Pos.Column, lines[l-1], strings.Repeat(" ", max(ce.Pos.Column-1, 0)))
-	}
-	if ce.Gap != 0 {
-		b.WriteString("Write the query without it, or ask with the query tool.\n")
-	}
-	return b.String()
 }
 
 // pageOffset reads a page_token: "" is the start, and anything else must be an offset this server gave.

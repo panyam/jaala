@@ -95,19 +95,23 @@ func (c *call) evalOptions(asked int64, extra ...datalog.Option) []datalog.Optio
 // refuse is err as a tool error an agent fixes the program from: nl.Explain's message, place and fix,
 // and for a budget, how far the server lets it go.
 func (t *tools) refuse(program string, err error) core.ToolResult {
-	text := nl.Explain(program, err)
+	return core.ErrorResult(nl.Explain(program, err) + t.budgetHint(err))
+}
+
+// budgetHint is, for a spent budget, what to do about it and how far the server lets max_work go.
+func (t *tools) budgetHint(err error) string {
 	var be *datalog.BudgetExceeded
-	if errors.As(err, &be) {
-		text += "\nAsk something narrower, bind more of its arguments, or add a limit"
-		if t.o.MaxWork == 0 || be.Limit < t.o.MaxWork {
-			text += ", or raise max_work"
-			if t.o.MaxWork > 0 {
-				text += fmt.Sprintf(" (up to %d)", t.o.MaxWork)
-			}
-		}
-		text += "."
+	if !errors.As(err, &be) {
+		return ""
 	}
-	return core.ErrorResult(text)
+	text := "\nAsk something narrower, bind more of its arguments, or add a limit"
+	if t.o.MaxWork == 0 || be.Limit < t.o.MaxWork {
+		text += ", or raise max_work"
+		if t.o.MaxWork > 0 {
+			text += fmt.Sprintf(" (up to %d)", t.o.MaxWork)
+		}
+	}
+	return text + ".\n"
 }
 
 func (t *tools) answer(a Answer, asJSON bool) (core.ToolResult, error) {

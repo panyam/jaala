@@ -196,3 +196,15 @@ func (e subquery) kind() string {
 	return "EXISTS"
 }
 func (e unsupported) at() Pos { return e.pos }
+
+// startOf is where e's text starts: its leftmost operand for an operator written between or after
+// its operands (a > b, x IS NULL), whose own position is the operator's.
+func startOf(e expr) Pos {
+	switch e := e.(type) {
+	case binary:
+		return startOf(e.l)
+	case isNull:
+		return startOf(e.e)
+	}
+	return e.at()
+}

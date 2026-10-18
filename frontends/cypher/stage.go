@@ -20,6 +20,14 @@ type world struct {
 	rules     []rule
 	inRule    bool // rendering a rule, where a parameter can't go (datalog.Bind binds the goal)
 	err       *Error
+	// cur is where in the Cypher the literals being compiled come from, for the rules a helper writes;
+	// origins are the places render has marked, by the index its markers carry (#353).
+	cur     Pos
+	origins []Pos
+	marks   [3]byte // chooseMarks'
+	marking bool
+	// names are jaala variables by the Cypher they stand for: ?p for p, ?p_loc for p.loc.
+	names map[string]string
 }
 
 // A compiler compiles one stage: the clauses up to a WITH or the RETURN. Each stage is a rule (the
@@ -230,6 +238,7 @@ func (c *compiler) compileStage(in *stageIn, s stage, where expr) (projected, *E
 			if it.node {
 				n := &nodeVar{name: it.name, jv: c.fresh(it.name), labels: it.labels, slots: map[string]*slot{},
 					endpoint: true, carried: true}
+				c.name(n.jv, it.name)
 				c.nodes[it.name] = n
 				c.order = append(c.order, n)
 				atom = append(atom, keyArg{n})
@@ -265,11 +274,12 @@ func (c *compiler) compileStage(in *stageIn, s stage, where expr) (projected, *E
 	}
 	for _, rc := range s.clauses {
 		if rc.call != nil {
+			c.cur = rc.call.pos
 			f, err := c.callClause(*rc.call)
 			if err != nil {
 				return projected{}, err
 			}
-			calls = append(calls, f)
+			calls = append(calls, at(rc.call.pos, f))
 			if rc.call.where != nil {
 				if err := addWhere(rc.call.where); err != nil {
 					return projected{}, err
@@ -304,15 +314,16 @@ func (c *compiler) compileStage(in *stageIn, s stage, where expr) (projected, *E
 	for _, n := range c.order {
 		for _, l := range n.labels {
 			// A carried node was matched already, so its label atom is needed only to read a column.
-			c.shared = append(c.shared, frag{nodeAtm{n: n, label: l, lazy: n.carried}})
+			c.shared = append(c.shared, at(n.pos, frag{nodeAtm{n: n, label: l, lazy: n.carried}}))
 		}
 	}
 	for _, r := range rels {
+		c.cur = r.r.pos
 		f, err := c.relLiteral(r.r, r.from, r.to)
 		if err != nil {
 			return projected{}, err
 		}
-		c.shared = append(c.shared, f)
+		c.shared = append(c.shared, at(r.r.pos, f))
 	}
 	c.shared = append(c.shared, calls...)
 
@@ -347,7 +358,7 @@ func (c *compiler) compileStage(in *stageIn, s stage, where expr) (projected, *E
 			if err != nil {
 				return projected{}, err
 			}
-			eqs = append(eqs, pending{n: n, val: vf})
+			eqs = append(eqs, pending{n: n, val: vf, at: startOf(b)})
 			continue
 		case propRef:
 			n, err := c.nodeRef(varRef{pos: r.pos, name: r.v})
@@ -360,11 +371,11 @@ func (c *compiler) compileStage(in *stageIn, s stage, where expr) (projected, *E
 			}
 			switch {
 			case identity:
-				eqs = append(eqs, pending{n: n, val: vf})
+				eqs = append(eqs, pending{n: n, val: vf, at: startOf(b)})
 			case !kvRead:
-				eqs = append(eqs, pending{n: n, s: c.slotFor(n, label, r.key), key: r.key, val: vf})
+				eqs = append(eqs, pending{n: n, s: c.slotFor(n, label, r.key), key: r.key, val: vf, at: startOf(b)})
 			default:
-				c.shared = append(c.shared, c.kvAtom(n, quote(r.key), vf))
+				c.shared = append(c.shared, at(startOf(b), c.kvAtom(n, quote(r.key), vf)))
 			}
 			continue
 		}
@@ -385,11 +396,16 @@ func (c *compiler) compileStage(in *stageIn, s stage, where expr) (projected, *E
 		var lits []frag
 		c.scope = &lits
 		for _, cd := range d {
+			c.cur = startOf(cd.e)
+			from := len(lits)
 			f, err := c.condition(cd.e, cd.neg)
 			if err != nil {
 				return projected{}, err
 			}
 			lits = append(lits, f)
+			for i := from; i < len(lits); i++ {
+				lits[i] = at(startOf(cd.e), lits[i])
+			}
 		}
 		bodies[i] = lits
 	}
@@ -398,11 +414,12 @@ func (c *compiler) compileStage(in *stageIn, s stage, where expr) (projected, *E
 	c.settle(eqs)
 	for _, n := range c.order {
 		if len(n.labels) == 0 && !n.endpoint {
+			c.cur = n.pos
 			f, err := c.anyNode(n)
 			if err != nil {
 				return projected{}, err
 			}
-			c.shared = append(c.shared, f)
+			c.shared = append(c.shared, at(n.pos, f))
 		}
 	}
 	out := projected{cols: ret.cols, order: ret.order, limit: ret.limit, skip: ret.skip}
@@ -433,6 +450,7 @@ func (c *compiler) compileStage(in *stageIn, s stage, where expr) (projected, *E
 func (c *compiler) addValue(name string) {
 	c.values[name] = c.fresh(name)
 	c.vorder = append(c.vorder, name)
+	c.name(c.values[name], name)
 }
 
 // callClause is CALL proc(args) YIELD ...: an atom over the predicate or relation proc names, its
@@ -574,10 +592,11 @@ func (w *world) write(goal projected) (Program, *Error) {
 	var b strings.Builder
 	for _, r := range w.rules {
 		w.inRule = true
-		b.WriteString(w.render(r.head))
-		b.WriteString(" :- ")
-		b.WriteString(w.joinLits(r.body))
-		b.WriteString(";\n")
+		text := w.render(r.head) + " :- " + w.joinLits(r.body)
+		if r.at.Line > 0 {
+			text = w.mark(r.at, text)
+		}
+		b.WriteString(text + ";\n")
 		w.inRule = false
 	}
 	cols := make([]string, len(goal.cols))
@@ -599,7 +618,8 @@ func (w *world) write(goal projected) (Program, *Error) {
 	if goal.skip != nil {
 		fmt.Fprintf(&b, " offset %d", *goal.skip)
 	}
-	prog.Text = b.String()
+	prog.Text, prog.spans = w.unmark(b.String())
+	prog.names = w.names
 	for name, jv := range w.params {
 		prog.Params[name] = datalog.Var(jv)
 	}
