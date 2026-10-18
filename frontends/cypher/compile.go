@@ -17,6 +17,8 @@ type Program struct {
 	Query   datalog.Query
 	Columns []string
 	Params  map[string]datalog.Var
+	spans   []span            // where in the Cypher each piece of Text came from (Locate)
+	names   map[string]string // jaala variables by the Cypher they stand for (Explain)
 }
 
 // Bind is the datalog.Bind option giving each named $parameter its value. A name the query doesn't
@@ -61,6 +63,7 @@ func Compile(v *ns.Vocabulary, g Graph, text string, opts ...Option) (Program, e
 	for _, o := range opts {
 		o(w)
 	}
+	w.marks, w.marking = chooseMarks(text, g, w.paramVals)
 	prog, cerr := w.compile(st)
 	if cerr != nil {
 		return Program{}, cerr
@@ -114,7 +117,12 @@ type (
 	}
 	// braces are a body aggregate's literals, which jaala lowers to rules, so a parameter can't
 	// reach them either.
-	braces  struct{ lits []frag }
+	braces struct{ lits []frag }
+	// origin is a piece of program written for the Cypher at at, so an error in it is located there.
+	origin struct {
+		at Pos
+		f  frag
+	}
 	paramEl struct {
 		name string
 		pos  Pos
@@ -124,6 +132,121 @@ type (
 type rule struct {
 	head frag
 	body []frag
+	at   Pos // the Cypher a helper rule was written for, when it has no origin of its own
+}
+
+// addRule adds helper rules written for the Cypher being compiled (the world's cur).
+func (w *world) addRule(rs ...rule) {
+	for _, r := range rs {
+		r.at = w.cur
+		w.rules = append(w.rules, r)
+	}
+}
+
+// at marks f as written for the Cypher at pos, unless pos is no place (a node a WITH carried).
+func at(pos Pos, f frag) frag {
+	if pos.Line == 0 {
+		return f
+	}
+	return frag{origin{pos, f}}
+}
+
+// name records that jaala variable jv stands for the Cypher name, for messages read in Cypher.
+func (w *world) name(jv, name string) {
+	if name == "" || strings.ContainsRune(name, 0) {
+		return
+	}
+	if w.names == nil {
+		w.names = map[string]string{}
+	}
+	if _, ok := w.names[jv]; !ok {
+		w.names[jv] = name
+	}
+}
+
+// chooseMarks picks the three bytes render marks an origin with (its start, the end of its index, and
+// its end), from the control characters no text the program can be written from holds: the query,
+// the graph's names and constants, and the parameters' values. With none free, which takes a query
+// holding most control characters, nothing is marked and Locate places only compile errors.
+func chooseMarks(text string, g Graph, params map[string]ns.Value) ([3]byte, bool) {
+	var all strings.Builder
+	all.WriteString(text)
+	add := func(fixed map[int]string, props map[string]int, names ...string) {
+		for _, n := range names {
+			all.WriteString(n)
+		}
+		for _, k := range fixed {
+			all.WriteString(k)
+		}
+		for k := range props {
+			all.WriteString(k)
+		}
+	}
+	for _, n := range g.Nodes {
+		add(n.Fixed, n.Props, n.Label, n.Relation)
+	}
+	for _, e := range g.Edges {
+		add(e.Fixed, e.Props, e.Type, e.Relation)
+	}
+	if g.Props != nil {
+		all.WriteString(g.Props.Relation)
+	}
+	for k, v := range params {
+		all.WriteString(k + v.S + v.BaseUnit)
+	}
+	used := all.String()
+	var marks [3]byte
+	n := 0
+	for c := byte(1); c < 0x20 && n < 3; c++ {
+		if c == '\t' || c == '\n' || c == '\r' || strings.IndexByte(used, c) >= 0 {
+			continue
+		}
+		marks[n] = c
+		n++
+	}
+	return marks, n == 3
+}
+
+// mark wraps text in the markers of a new origin at pos.
+func (w *world) mark(pos Pos, text string) string {
+	if !w.marking {
+		return text
+	}
+	w.origins = append(w.origins, pos)
+	return string(w.marks[0]) + strconv.Itoa(len(w.origins)-1) + string(w.marks[1]) + text + string(w.marks[2])
+}
+
+// unmark strips the markers from text, returning it and each marked piece's place in it.
+func (w *world) unmark(text string) (string, []span) {
+	if !w.marking {
+		return text, nil
+	}
+	var b strings.Builder
+	var spans []span
+	var open []span
+	for i := 0; i < len(text); i++ {
+		switch text[i] {
+		case w.marks[0]:
+			j := strings.IndexByte(text[i:], w.marks[1]) + i
+			idx, _ := strconv.Atoi(text[i+1 : j])
+			open = append(open, span{start: b.Len(), at: w.origins[idx]})
+			i = j
+		case w.marks[2]:
+			s := open[len(open)-1]
+			open = open[:len(open)-1]
+			s.end = b.Len()
+			spans = append(spans, s)
+		default:
+			b.WriteByte(text[i])
+		}
+	}
+	return b.String(), spans
+}
+
+// A span is a piece of a Program's text, from start to end in bytes, written for the Cypher at at.
+type span struct {
+	start, end int
+	at         Pos
 }
 
 func (w *world) fail(err *Error) {
@@ -152,6 +275,10 @@ func (c *world) render(f frag) string {
 				b.WriteString("not ")
 			}
 			b.WriteString(c.nodeAtom(el.n, el.label, el.not))
+		case origin:
+			if s := c.render(el.f); s != "" {
+				b.WriteString(c.mark(el.at, s))
+			}
 		case braces:
 			was := c.inRule
 			c.inRule = true
@@ -268,6 +395,7 @@ type pending struct {
 	s   *slot // nil for the key
 	key string
 	val frag
+	at  Pos // the equality, so a value an argument refuses is located there
 }
 
 func (c *compiler) settle(eqs []pending) {
@@ -290,25 +418,26 @@ func (c *compiler) settle(eqs []pending) {
 	for _, n := range nodes {
 		ps := byNode[n]
 		if len(ps) == 1 && !n.valued && !(n.anchor && hasParam(ps[0].val)) {
-			n.subst = ps[0].val
+			n.subst = at(ps[0].at, ps[0].val)
 			continue
 		}
 		n.valued = true
 		for _, p := range ps {
-			c.shared = append(c.shared, frag{keyVal{n}, " = ", p.val})
+			c.shared = append(c.shared, at(p.at, frag{keyVal{n}, " = ", p.val}))
 		}
 	}
 	for _, s := range slots {
 		ps := bySlot[s]
 		if len(ps) == 1 && s.jv == "" {
-			s.konst = ps[0].val
+			s.konst = at(ps[0].at, ps[0].val)
 			continue
 		}
 		if s.jv == "" {
 			s.jv = c.fresh(ps[0].n.jv + "_" + ps[0].key)
+			c.name(s.jv, ps[0].n.name+"."+ps[0].key)
 		}
 		for _, p := range ps {
-			c.shared = append(c.shared, frag{"?" + s.jv, " = ", p.val})
+			c.shared = append(c.shared, at(p.at, frag{"?" + s.jv, " = ", p.val}))
 		}
 	}
 }
@@ -380,6 +509,7 @@ func (c *compiler) declareNode(np nodePat, conds *[]expr) (*nodeVar, *Error) {
 			jv = "_n"
 		}
 		n = &nodeVar{name: name, jv: c.fresh(jv), pos: np.pos, slots: map[string]*slot{}}
+		c.name(n.jv, np.v)
 		if np.v != "" {
 			c.nodes[np.v] = n
 		}
@@ -533,6 +663,7 @@ func (c *compiler) prop(r propRef) (frag, *Error) {
 	s := c.slotFor(n, label, r.key)
 	if s.jv == "" {
 		s.jv = c.fresh(n.jv + "_" + r.key)
+		c.name(s.jv, n.name+"."+r.key)
 	}
 	return frag{"?" + s.jv}, nil
 }
@@ -553,6 +684,7 @@ func (c *compiler) kvRead(n *nodeVar, key string) string {
 		return jv
 	}
 	jv := c.fresh(n.jv + "_" + key)
+	c.name(jv, n.name+"."+key)
 	m[k] = jv
 	*c.scope = append(*c.scope, c.kvAtom(n, quote(key), "?"+jv))
 	return jv
@@ -588,7 +720,7 @@ func (c *compiler) anyNode(n *nodeVar) (frag, *Error) {
 	name := c.helper("node")
 	for _, nd := range c.g.Nodes {
 		tmp := &nodeVar{jv: "n", slots: map[string]*slot{}}
-		c.rules = append(c.rules, rule{head: frag{name + "(?n)"}, body: []frag{{c.nodeAtom(tmp, nd.Label, false)}}})
+		c.addRule(rule{head: frag{name + "(?n)"}, body: []frag{{c.nodeAtom(tmp, nd.Label, false)}}})
 	}
 	return frag{name, "(", keyArg{n}, ")"}, nil
 }
@@ -702,9 +834,9 @@ func (c *compiler) relLiteral(r relPat, from, to *nodeVar) (frag, *Error) {
 	if len(es) > 1 || r.dir == 0 || hasParamIn(argss) {
 		name := c.helper("step")
 		for i, e := range es {
-			c.rules = append(c.rules, rule{head: frag{name + "(?x, ?y)"}, body: []frag{edgeAtom(e, argss[i], "?x", "?y")}})
+			c.addRule(rule{head: frag{name + "(?x, ?y)"}, body: []frag{edgeAtom(e, argss[i], "?x", "?y")}})
 			if r.dir == 0 {
-				c.rules = append(c.rules, rule{head: frag{name + "(?x, ?y)"}, body: []frag{edgeAtom(e, argss[i], "?y", "?x")}})
+				c.addRule(rule{head: frag{name + "(?x, ?y)"}, body: []frag{edgeAtom(e, argss[i], "?y", "?x")}})
 			}
 		}
 		step = func(x, y any) frag { return frag{name, "(", x, ", ", y, ")"} }
@@ -743,12 +875,12 @@ func (c *compiler) relLiteral(r relPat, from, to *nodeVar) (frag, *Error) {
 		return body
 	}
 	if r.max == -1 {
-		c.rules = append(c.rules,
+		c.addRule(
 			rule{head: frag{reach + "(?x, ?y)"}, body: chain(r.min)},
 			rule{head: frag{reach + "(?x, ?y)"}, body: []frag{{reach + "(?x, ?z)"}, step("?z", "?y")}})
 	} else {
 		for k := r.min; k <= r.max; k++ {
-			c.rules = append(c.rules, rule{head: frag{reach + "(?x, ?y)"}, body: chain(k)})
+			c.addRule(rule{head: frag{reach + "(?x, ?y)"}, body: chain(k)})
 		}
 	}
 	return frag{reach, "(", src, ", ", dst, ")"}, nil
@@ -1088,7 +1220,7 @@ func (c *compiler) patternTest(pats []pattern, where expr, allowNew, neg bool) (
 	}
 	head = append(head, ")")
 	for _, body := range bodies {
-		c.rules = append(c.rules, rule{head: head, body: body})
+		c.addRule(rule{head: head, body: body})
 	}
 	call = append(call, ")")
 	if neg {
@@ -1363,10 +1495,16 @@ func (c *compiler) returning(r returnClause) (returned, *Error) {
 		}
 	}
 	for _, it := range items {
+		c.cur = startOf(it.e)
+		from := len(*c.scope)
 		col, err := c.column(it)
 		if err != nil {
 			return out, err
 		}
+		for i := from; i < len(*c.scope); i++ {
+			(*c.scope)[i] = at(startOf(it.e), (*c.scope)[i])
+		}
+		col.text = at(startOf(it.e), col.text)
 		out.cols = append(out.cols, col)
 	}
 	for _, o := range r.order {

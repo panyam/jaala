@@ -88,7 +88,7 @@ func (t *typer) coerceAtom(a Atom) (Atom, error) {
 		}
 		v, ok := coerceValue(*arg.Const, types[j])
 		if !ok {
-			return a, checkErr(KindType, fmt.Sprintf("query: %s cannot be %q (it holds a number)", argName(a.Relation, labels, j), arg.Const.S)).call(a.Relation, len(a.Args))
+			return a, checkErr(KindType, fmt.Sprintf("query: %s cannot be %q (it holds a number)", argName(a.Relation, labels, j), arg.Const.S)).call(a.Relation, len(a.Args)).argument(j, arg.Const.S)
 		}
 		out.Args[j] = Term{Const: &v}
 	}
@@ -107,7 +107,7 @@ func (t *typer) coerceCompare(c Compare, body Body) (Compare, error) {
 		}
 		v, ok := coerceValue(*side.k.Const, ns.ArgType{Type: ns.TypeNumber})
 		if !ok {
-			return c, checkErr(KindType, fmt.Sprintf("query: ?%s cannot be compared with %q: it is a number (%s)", side.v.Var, side.k.Const.S, t.numberSource(side.v.Var, body))).about(side.v.Var)
+			return c, checkErr(KindType, fmt.Sprintf("query: ?%s cannot be compared with %q: it is a number (%s)", side.v.Var, side.k.Const.S, t.numberSource(side.v.Var, body))).about(side.v.Var).compared(side.k.Const.S)
 		}
 		*side.k = Term{Const: &v}
 	}

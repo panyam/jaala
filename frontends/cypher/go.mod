@@ -6,3 +6,5 @@ require (
 	github.com/panyam/jaala v0.1.73
 	github.com/panyam/jaala/frontends/nl v0.1.73
 )
+
+replace github.com/panyam/jaala => ../../

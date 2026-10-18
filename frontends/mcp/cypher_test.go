@@ -20,7 +20,7 @@ import (
 func code(t *testing.T) (*ns.Vocabulary, *datalog.Base) {
 	t.Helper()
 	src := ns.NewMemSource().
-		DeclareSchema("node", ns.Schema{Arity: 2, Labels: []string{"id", "kind"}}).
+		DeclareSchema("node", ns.Schema{Arity: 2, Labels: []string{"id", "kind"}, Types: []ns.ArgType{{}, {Domain: []string{"func", "file"}}}}).
 		DeclareSchema("edge", ns.Schema{Arity: 3, Labels: []string{"from", "kind", "to"}}).
 		DeclareSchema("attr", ns.Schema{Arity: 3, Labels: []string{"id", "key", "value"}})
 	add := func(rel string, vals ...string) {
@@ -253,5 +253,26 @@ func TestNewRefusesAGraphTheVocabularyLacks(t *testing.T) {
 	g.Nodes[0].Relation = "function"
 	if _, err := mcp.New(v, codePack(g), mcp.Options{Base: func(context.Context) (*datalog.Base, error) { return b, nil }}); err == nil || !strings.Contains(err.Error(), "function") {
 		t.Errorf("New accepted a graph reading a relation the vocabulary lacks: %v", err)
+	}
+}
+
+// A program that compiles but doesn't check comes back in the query's terms, at its place in the query
+// the agent wrote, with the program it ran for reference.
+func TestACypherCheckErrorPointsIntoTheQuery(t *testing.T) {
+	g := codeGraph("Func")
+	g.Nodes = append(g.Nodes, cypher.Node{Label: "Method", Relation: "node", Key: 0, Fixed: map[int]string{1: "method"}})
+	c := dialCode(t, codePack(g), mcp.Options{})
+	q := "MATCH (f:Func)-[:CALLS]->\n      (m:Method) RETURN m"
+	res := call(t, c, "cypher", map[string]any{"query": q})
+	text := res.Content[0].Text
+	for _, want := range []string{
+		`node's "kind" argument cannot be "method"`,
+		"line 2, column 7:\n        (m:Method) RETURN m\n        ^\n",
+		"fix: ",
+		"ran: node(?f, \"func\")",
+	} {
+		if !res.IsError || !strings.Contains(text, want) {
+			t.Errorf("want %q in:\n%s", want, text)
+		}
 	}
 }

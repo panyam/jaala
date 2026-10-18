@@ -1,0 +1,2 @@
+go test fuzz v1
+string("MATCH({name:'\x01'})--(d)RETURN *")

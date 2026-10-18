@@ -147,15 +147,20 @@ func Example_cypherGap() {
 	if err != nil {
 		panic(err)
 	}
-	_, err = cypher.Compile(v, depsGraph, `MATCH (p:Package) OPTIONAL MATCH (p)-[:IMPORTS]->(q) RETURN p, q`)
+	q := `MATCH (p:Package) OPTIONAL MATCH (p)-[:IMPORTS]->(q) RETURN p, q`
+	p, err := cypher.Compile(v, depsGraph, q)
 	var ce *cypher.Error
 	if errors.As(err, &ce) {
-		fmt.Printf("line %d, column %d: gap #%d\n", ce.Pos.Line, ce.Pos.Column, ce.Gap)
+		fmt.Printf("gap #%d\n", ce.Gap)
 	}
-	fmt.Println(err)
+	fmt.Print(cypher.Explain(q, p, err))
 	// Output:
-	// line 1, column 19: gap #282
+	// gap #282
 	// cypher: not supported yet: OPTIONAL MATCH and null values (jaala#282): write the match without OPTIONAL, or as a second query
+	// line 1, column 19:
+	//   MATCH (p:Package) OPTIONAL MATCH (p)-[:IMPORTS]->(q) RETURN p, q
+	//                     ^
+	// Write the query without it.
 }
 
 // A store keeping every node in node(id, kind), every relationship in

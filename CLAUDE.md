@@ -61,7 +61,9 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   (`Relation` and `Args`, `Var`, `Rule`) and a `Fix` when the engine can tell, its message unchanged.
   A Query carries no positions (the slicer, parse and fuzz tests compare Queries with `DeepEqual`),
   so `Locate(text, err)` finds the call or variable in the text, and `nl.Explain` writes it for a
-  model. A new check builds one (`checkErr(kind, msg)`, `b.arityErr`, `b.unknownErr`), and
+  model. A value error says which argument (`Arg`, with the value kept unexported) and a comparison's
+  type error its constant, so `Locate` finds the call holding that value, the variable at its
+  comparison, or for a call arithmetic wrote (`num.mul` for `?a * ""`) the constant itself (#353). A new check builds one (`checkErr(kind, msg)`, `b.arityErr`, `b.unknownErr`), and
   `TestBrokenProgramsFailTheSameWay` requires each broken literal's error to be one Locate finds.
   `nl` (the card, Explain, `Translate`) imports `ns` and `datalog`, is a module of its own (#359; CI's
   `nl` job), and nothing in the root imports it.
@@ -134,8 +136,11 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   tests are a toy host (`roads`) through mcpkit's `testutil` client. A pack with a `Cypher` graph
   (#366) adds a `cypher` tool: it compiles over the call's pack (so `Run.Pack` brings its own graph,
   and one without refuses), answers as `query` does with `ran:` and the program first, and names
-  its columns as Cypher did (`Answer.Columns`, `Answer.Cypher`; `query` fills `Columns` too). A
-  compile refusal carries a caret and, for a gap, its issue. `cypher.Store` writes the graph of a
+  its columns as Cypher did (`Answer.Columns`, `Answer.Cypher`; `query` fills `Columns` too). Its
+  refusals, compile or check or run, are `cypher.Explain`'s (#353): `Program.Locate` maps a check
+  error back to the Cypher that wrote the failing piece, since the compiler wraps each piece in an
+  `origin` fragment that `render` marks with three control bytes `chooseMarks` picks from those no
+  input holds (fuzzing found a query string holding `\x01`), and `write` strips them into spans. `cypher.Store` writes the graph of a
   `node(id, kind)`, `edge(from, kind, to)`, `attr(id, key, value)` store, one label per kind
   (`DefaultLabel`, `DefaultType`), reading the kinds with `Kinds`; mcp's tests build their graph by
   hand, since mcp requires a tagged `frontends/cypher`.

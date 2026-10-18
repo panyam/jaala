@@ -2,6 +2,7 @@ package cypher_test
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/panyam/jaala/datalog"
@@ -36,6 +37,11 @@ func FuzzCompile(f *testing.F) {
 			}
 			return
 		}
+		for _, r := range p.Text {
+			if r < 0x20 && r != '\t' && r != '\n' && r != '\r' && !strings.ContainsRune(text, r) {
+				t.Fatalf("%q compiled to text holding a control character the query doesn't, one of the compiler's markers: %q", text, p.Text)
+			}
+		}
 		var params []datalog.Var
 		for _, jv := range p.Params {
 			params = append(params, jv)
@@ -43,7 +49,11 @@ func FuzzCompile(f *testing.F) {
 		err = datalog.ValidateBound(p.Query, v, params...)
 		var ce *datalog.CheckError
 		if errors.As(err, &ce) && ce.Kind == datalog.KindType {
-			return // the query's own mistake, as negating a string is
+			// the query's own mistake, as negating a string is, which is located in the query
+			if pos, ok := p.Locate(err); !ok || pos.Offset < 0 || pos.Offset > len(text) {
+				t.Fatalf("%q compiled to %s, whose type error %v Locate places at %+v %v, not in the query", text, p.Text, err, pos, ok)
+			}
+			return
 		}
 		if err != nil {
 			t.Fatalf("%q compiled to %s, which doesn't check: %v", text, p.Text, err)

@@ -41,7 +41,7 @@ Agents know Cypher far better than jaala's Datalog. A pack whose `Cypher` field 
 - It takes a Cypher `query`, `params` for its `$parameters` (a string or a number each), and `limit`, `page_token`, `max_work` and `json` as `query` does, plus the host's own arguments.
 - It compiles the query over the call's pack, so a `Run`'s pack can bring a graph of its own for the call, and a pack without one refuses the call. The program it compiled to then runs exactly as `query` runs a program, with the same base, budget, witnesses and paging.
 - The answer opens with `ran:` and the program, as the last call in the example above shows, so an agent sees what ran and can hand it to `explain`. Its columns are named as the query named them, an alias or `p.name`, and `Pack.Format` gets the Cypher text and those names in `Answer.Cypher` and `Answer.Columns`. With `json` the answer carries `cypher` and `program` too.
-- A query the compiler refuses is a tool error with the line, a caret under the place, and, for Cypher a program can't express yet, the issue that would let it and a nudge to write it another way, so the agent rewrites rather than retries.
+- A query the compiler refuses, or whose program doesn't check or run, is a tool error written by [`cypher.Explain`]({{.Site.PathPrefix}}/guide/cypher/#errors-in-the-querys-terms): the message in the query's terms, the line of the query with a caret under the place, the fix, and for Cypher a program can't express yet, the issue that would let it, so the agent rewrites rather than retries. An error from checking or running the program also shows the program it ran.
 
 ## Instructions
 
