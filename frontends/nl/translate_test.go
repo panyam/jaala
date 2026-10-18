@@ -179,7 +179,7 @@ func TestTranslateSaysWhichLiteralLeftTheAnswerEmpty(t *testing.T) {
 	if err != nil || len(p.Rows) != 1 {
 		t.Fatalf("Translate = %+v, %v", p, err)
 	}
-	want := `edge(?x, "a") matched nothing (first called as edge("b", "a"))`
+	want := `edge(?x, "a") matched nothing, even alone (first called as edge("b", "a"))`
 	if turns := m.asked[1].Turns; len(turns) != 3 || !strings.Contains(turns[2].Text, want) {
 		t.Errorf("second prompt's turns %+v; want %q in the feedback", turns, want)
 	}

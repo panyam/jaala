@@ -101,8 +101,9 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   `llama-server` on llama.cpp's 1 MB test model when `make llama` has fetched it (Homebrew's
   llama.cpp ships no GBNF validator, so a server is the only check llama.cpp reads the grammar): every reply must
   stay inside the grammar as `internal/gbnf` reads it. The model (`frontends/nlmodels/testdata/stories260K.gguf`)
-  is gitignored and found by a relative path, so a selfcheck worktree needs its own copy (`cp` it in
-  after `git worktree add`), or the step reports "could not run". `llama-server` exits with "Abort
+  is gitignored and found by a relative path, so a selfcheck worktree needs its own copy (`mkdir -p`
+  its `testdata` and `cp` it in after `git worktree add`: the directory holds nothing tracked, so
+  the worktree lacks it and a bare `cp` fails), or the step reports "could not run". `llama-server` exits with "Abort
   trap: 6" when selfcheck's cleanup kills it, after its test, which is not a failure.
 - **`Base` is shared across concurrent `Eval`s.** Anything mutable reachable from it must be
   per-query (the `idb*` fields on Eval's shallow copy), atomic (`work`), or locked (`edbCache`,
@@ -530,11 +531,17 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   An empty answer fills `Report.Empty` (#343) from the counts alone: the first literal that passed
   nothing, its `Missed` (the first call that passed nothing, written in `solve`'s explaining branch
   and `passesNegationsExplained`, never in `solveAt`), and, through a derived relation whose bodies
-  derived nothing, each rule's (`explainer.reads` maps a literal to the relation it reads, kept off
+  derived nothing, each rule's (`explainer.reads` maps a literal to the atom it reads, kept off
   `LiteralReport` so its JSON reads back; a demand guard that passed nothing means the body wasn't
   asked). `LiteralReport.Stopped` is set in `check` when the budget runs out. A count over nothing
   answers a row though its literal passed nothing, which is the control that `Empty` keys on the
-  rows: every literal passing something can't tell.
+  rows: every literal passing something can't tell. Each culprit's atom is then run alone, only its
+  constants bound and `limit 1` (`explainer.alone`, after `finish`, #348), on a copy of the Base
+  counting no work and keeping no derived relation, as `coldCost` runs, under the Eval's `Budget`
+  or `probeBudget`; a base relation the Base doesn't hold (streamed, or only looked up) isn't
+  probed unless the Source looks it up and the call has a constant, since that reads the store
+  whole (`TestAReadStoppedAtTheBudgetIsNotKept` caught a streamed one read twice). Its test reuses the Base's derived cache so the query is cheap and
+  only the probe hits the budget.
 - **`CanonicalCites()` keeps each tuple's shortest derivation** (`canonical.go`, #22): fewest rule
   steps (a witness node's `height`), then the rule's written text, then the body nodes in written
   order by relation, values and a leaf's citations. It records witnesses to compare (so `tagWritten`

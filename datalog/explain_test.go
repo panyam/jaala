@@ -258,14 +258,15 @@ func literalNames(lits []*LiteralReport) []string {
 // on, and has no Empty.
 func TestExplainSaysWhereAnEmptyAnswerLostItsLastBinding(t *testing.T) {
 	cases := []struct{ query, want string }{
-		{`edge("a", ?x), edge(?x, "a") => ?x`, `edge(?x, "a") matched nothing (first called as edge("b", "a"))`},
-		{`edge("zz", ?b) => ?b`, `edge("zz", ?b) matched nothing`},
+		{`edge("a", ?x), edge(?x, "a") => ?x`, `edge(?x, "a") matched nothing, even alone (first called as edge("b", "a"))`},
+		{`edge("a", ?x), edge(?x, "d") => ?x`, `edge(?x, "d") matched nothing here, though it matches alone (first called as edge("b", "d"))`},
+		{`edge("zz", ?b) => ?b`, `edge("zz", ?b) matched nothing, even alone`},
 		{`edge(?a, ?b), ?b = "q" => ?a`, `?b = "q" held for none (first called as "b" = "q")`},
 		{`node(?n), not weight(?n, _) => ?n`, `not weight(?n, _) let nothing through (first called as not weight("a", _))`},
 		{`far(?a, ?c) :- edge(?a, ?b), edge(?b, ?c), weight(?c, 99); far(?a, ?c) :- edge(?c, ?a), weight(?c, 99); far(?x, ?y) => ?x`,
-			"far(?x, ?y) matched nothing\n" +
-				`  because weight(?c, 99) matched nothing (first called as weight("c", 99)), in far(?a, ?c) :- edge(?a, ?b), edge(?b, ?c), weight(?c, 99)` + "\n" +
-				`  because weight(?c, 99) matched nothing (first called as weight("a", 99)), in far(?a, ?c) :- edge(?c, ?a), weight(?c, 99)`},
+			"far(?x, ?y) matched nothing, even alone\n" +
+				`  because weight(?c, 99) matched nothing, even alone (first called as weight("c", 99)), in far(?a, ?c) :- edge(?a, ?b), edge(?b, ?c), weight(?c, 99)` + "\n" +
+				`  because weight(?c, 99) matched nothing, even alone (first called as weight("a", 99)), in far(?a, ?c) :- edge(?c, ?a), weight(?c, 99)`},
 	}
 	for _, c := range cases {
 		for _, ev := range []Evaluator{Naive{}, SemiNaive{WrittenOrder: true}} {
@@ -274,13 +275,60 @@ func TestExplainSaysWhereAnEmptyAnswerLostItsLastBinding(t *testing.T) {
 				t.Errorf("%T: %s: empty\n%v\nwant\n%s", ev, c.query, r.Empty, c.want)
 			}
 		}
-		if r := explained(t, SemiNaive{}, c.query, baseFor(std(graph()))); r.Empty == nil || r.Empty.Literal == "" {
+		r := explained(t, SemiNaive{}, c.query, baseFor(std(graph())))
+		if r.Empty == nil || r.Empty.Literal == "" {
 			t.Errorf("planned: %s: no Empty\n%s", c.query, r)
+		} else if probed := r.Empty.Alone != nil; probed != strings.Contains(c.want, "alone") {
+			t.Errorf("planned: %s: Alone is %v\n%s", c.query, r.Empty.Alone, r)
 		}
 	}
 	r := explained(t, SemiNaive{}, `edge("zz", ?b) => count(?b)`, baseFor(std(graph())))
 	if r.Rows != 1 || r.Goal.Literals[0].Passed != 0 || r.Empty != nil {
 		t.Errorf("control: a count over nothing, Empty is %v\n%s", r.Empty, r)
+	}
+}
+
+// An empty answer's culprit is run alone over a store only when that can't read the store whole: a
+// looked-up relation called with no constant isn't, unless the Eval read it whole. control: with a
+// constant it is, at one lookup.
+func TestExplainRunsAnEmptyAnswersCulpritAloneOnlyWhereTheStoreIsAsked(t *testing.T) {
+	for _, c := range []struct {
+		query   string
+		probed  bool
+		lookups int
+	}{
+		{`edge("a", ?x), edge(?x, ?y), edge(?y, ?x) => ?x`, false, 0},
+		{`edge("a", ?x), edge(?x, ?y), edge(?y, "a") => ?x`, true, 1},
+		{`edge(?a, ?b), edge(?b, ?a) => ?a`, true, 0}, // edge was read whole, so it is held
+	} {
+		plain, store := lookingAt(graph()), lookingAt(graph())
+		if _, err := (SemiNaive{WrittenOrder: true}).Eval(bg, mustParse(t, c.query), baseFor(std(plain))); err != nil {
+			t.Fatal(err)
+		}
+		r := explained(t, SemiNaive{WrittenOrder: true}, c.query, baseFor(std(store)))
+		if r.Empty == nil || (r.Empty.Alone != nil) != c.probed {
+			t.Errorf("%s: Empty %v, Alone %v; want probed %v", c.query, r.Empty, r.Empty.Alone, c.probed)
+		}
+		if store.wholes["edge"] != plain.wholes["edge"] || store.lookups["edge"] != plain.lookups["edge"]+c.lookups {
+			t.Errorf("%s: %d whole reads and %d lookups; without Explain %d and %d, want %d more lookups",
+				c.query, store.wholes["edge"], store.lookups["edge"], plain.wholes["edge"], plain.lookups["edge"], c.lookups)
+		}
+	}
+}
+
+// The probe is bounded by the Eval's Budget and counts toward neither its Work nor the Base's. The
+// second Eval reuses the derived reach the first kept, so only its probe, on a copy keeping nothing,
+// derives it again. control: without a budget the same culprit is probed.
+func TestExplainBoundsAnEmptyAnswersProbe(t *testing.T) {
+	q := closure + `edge("v57", ?x), reach(?x, "v57") => ?x`
+	b := baseFor(std(chainOf(60)))
+	full := explained(t, SemiNaive{}, q, b)
+	if full.Empty == nil || full.Empty.Alone == nil || !*full.Empty.Alone || full.Work != b.Work() {
+		t.Fatalf("control: Alone %v, work %d against the Base's %d\n%s", full.Empty.Alone, full.Work, b.Work(), full)
+	}
+	r := explained(t, SemiNaive{}, q, b, Budget(100))
+	if r.Empty == nil || r.Empty.Alone != nil || r.Work > 10 {
+		t.Errorf("Alone %v under a budget of 100\n%s", r.Empty.Alone, r)
 	}
 }
 

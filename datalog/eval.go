@@ -336,6 +336,9 @@ func evaluate(ctx context.Context, q Query, b *Base, opts []Option, rewrite func
 	tab, err := evaluateOn(&nb, gen, q, o, rewrite, fixpoint)
 	err = localFix(err, q.Rules)
 	nb.run.explain.finish(&nb, tab.Len(), err, o.budget)
+	if err == nil && !o.cold && o.explain.Empty != nil {
+		nb.run.explain.alone(ctx, q.Rules, b, o.budget, rewrite, fixpoint)
+	}
 	if err == nil && !o.cold && nb.run.explain.warm(&nb) {
 		o.explain.Cold = coldCost(ctx, q, b, opts, rewrite, fixpoint)
 	}
