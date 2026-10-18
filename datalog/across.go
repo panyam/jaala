@@ -128,7 +128,7 @@ func (s *acrossSource) within(timed []ns.TimedTuple) ([]ns.Tuple, []ns.VersionSe
 			cites = []string{factCite + strconv.Itoa(len(s.facts))}
 			s.facts = append(s.facts, t)
 		}
-		out = append(out, ns.Tuple{Vals: t.Vals, Cites: cites})
+		out = append(out, ns.Tuple{Vals: t.Vals, Cites: cites, ID: t.ID})
 		sets = append(sets, in)
 	}
 	return out, sets

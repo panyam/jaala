@@ -51,6 +51,7 @@ func prefetch(b *Base, lits, negs []Literal) error {
 		if i == 0 || !b.looksUpBase(atom) {
 			continue // the first literal has only its constants bound, one lookup
 		}
+		atom = lookedUpAtom(atom)
 		if err := prefetchFor(b, bl, lits[:i], []prefetchCall{{atom, i}}); err != nil {
 			return err
 		}

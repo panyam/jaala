@@ -356,7 +356,7 @@ func (f *Federation) cite(i int, t Tuple) Tuple {
 	for j, c := range t.Cites {
 		cites[j] = name + ":" + c
 	}
-	return Tuple{Vals: t.Vals, Cites: cites}
+	return Tuple{Vals: t.Vals, Cites: cites, ID: t.ID}
 }
 
 // NewPartitionedFederation is NewFederation over members that partition the facts and evaluate
@@ -1220,7 +1220,7 @@ func (t *TimedFederation) TimedTuples(ctx context.Context, rel string) ([]TimedT
 			all = t.Versions()
 		}
 		for _, x := range t.cited(i, ts) {
-			out = append(out, TimedTuple{Vals: x.Vals, Versions: all, Cites: []TimedCites{{Versions: all, Cites: x.Cites}}})
+			out = append(out, TimedTuple{Vals: x.Vals, Versions: all, Cites: []TimedCites{{Versions: all, Cites: x.Cites}}, ID: x.ID})
 		}
 	}
 	return out, nil
@@ -1235,7 +1235,7 @@ func (t *TimedFederation) citeTimed(i int, x TimedTuple) TimedTuple {
 	for j, c := range x.Cites {
 		cites[j] = TimedCites{Versions: c.Versions, Cites: t.cite(i, Tuple{Cites: c.Cites}).Cites}
 	}
-	return TimedTuple{Vals: x.Vals, Versions: x.Versions, Cites: cites}
+	return TimedTuple{Vals: x.Vals, Versions: x.Versions, Cites: cites, ID: x.ID}
 }
 
 // LooksUpTimed implements TimedLookupRelations: rel is looked up across versions when every member
@@ -1305,7 +1305,7 @@ func (t *TimedFederation) LookupTimed(ctx context.Context, rel string, bound map
 			all = t.Versions()
 		}
 		for _, x := range t.cited(i, ts) {
-			out = append(out, TimedTuple{Vals: x.Vals, Versions: all, Cites: []TimedCites{{Versions: all, Cites: x.Cites}}})
+			out = append(out, TimedTuple{Vals: x.Vals, Versions: all, Cites: []TimedCites{{Versions: all, Cites: x.Cites}}, ID: x.ID})
 		}
 	}
 	return out, nil

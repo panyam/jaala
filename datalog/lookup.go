@@ -17,13 +17,31 @@ import (
 // looksUp reports whether a call to rel goes to the Source's Lookup: the Source answers lookups for
 // rel, the Base indexes (Unindexed scans, as the oracle an equivalence test compares against), and the
 // Base doesn't already hold the relation whole, whose index answers without asking the Source.
+// A fact relation is looked up as its relation is, unless the Base holds either whole.
 func (b *Base) looksUp(rel string) bool {
+	if base, ok := factOf(rel); ok {
+		return b.looksUp(base) && (b.edb == nil || !b.edb.holds(rel))
+	}
 	return b.lookable(rel) && !b.noIndex && b.run != nil && (b.edb == nil || !b.edb.holds(rel))
 }
 
-// lookable reports whether the Source answers lookups for rel (ns.LookupRelations, #211).
+// lookable reports whether the Source answers lookups for rel (ns.LookupRelations, #211), a fact
+// relation's being its relation's.
 func (b *Base) lookable(rel string) bool {
+	if base, ok := factOf(rel); ok {
+		rel = base
+	}
 	return b.looker != nil && (b.lookRels == nil || b.lookRels.LooksUp(rel))
+}
+
+// lookedUpAtom is the call the Source is asked for atom: a fact relation's (#279) is its relation's
+// over the same arguments but the id, so its lookups are the relation's own, kept under their keys.
+func lookedUpAtom(atom *Atom) *Atom {
+	base, ok := factOf(atom.Relation)
+	if !ok {
+		return atom
+	}
+	return &Atom{Relation: base, Args: atom.Args[:len(atom.Args)-1]}
 }
 
 // lookup asks the Source for rel's facts matching atom's bound arguments, once per Eval for each
@@ -31,6 +49,10 @@ func (b *Base) lookable(rel string) bool {
 // when nothing is bound, so the caller reads the relation whole. Under Across, sets are the versions
 // each row holds in (#317), and nil otherwise.
 func (b *Base) lookup(atom *Atom, bnd *binding) (rows []ns.Tuple, sets []ns.VersionSet, ok bool, err error) {
+	if base, fact := factOf(atom.Relation); fact {
+		rows, sets, ok, err = b.lookup(lookedUpAtom(atom), bnd)
+		return factTuples(base, rows), sets, ok, err
+	}
 	mask, vals, any := boundArgs(atom.Args, bnd)
 	if !any {
 		return nil, nil, false, nil

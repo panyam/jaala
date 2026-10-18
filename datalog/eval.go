@@ -190,8 +190,23 @@ func (b *Base) Work() int64 {
 	return atomic.LoadInt64(b.work)
 }
 
-// edbTuples returns a base relation's tuples, reading them from the Source once per Base.
+// edbTuples returns a base relation's tuples, reading them from the Source once per Base. A fact
+// relation's are its relation's, each with its id (#279), kept as a relation of their own so their
+// indexes are too.
 func (b *Base) edbTuples(rel string) ([]ns.Tuple, error) {
+	if base, ok := factOf(rel); ok {
+		read := func() ([]ns.Tuple, error) {
+			t, err := b.edbTuples(base)
+			if err != nil {
+				return nil, err
+			}
+			return factTuples(base, t), nil
+		}
+		if b.edb == nil {
+			return read()
+		}
+		return b.edb.read(b.run, rel, read)
+	}
 	if b.edb == nil {
 		t, err := readTuples(b.run, b.src, rel)
 		return normalizeTuples(b.units(), t, b.argTypesOf(rel)), err
@@ -376,6 +391,9 @@ func evaluateOn(b *Base, gen int64, q Query, o evalOptions, rewrite func(*Base, 
 	}
 	q, err = Link(q, b.reg)
 	if err != nil {
+		return nil, err
+	}
+	if q, err = lowerFacts(q, b.reg); err != nil {
 		return nil, err
 	}
 	// A rule taking an argument from its caller (#200) is checked as written with that argument bound,

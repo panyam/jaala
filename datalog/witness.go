@@ -35,6 +35,9 @@ type Witness struct {
 	// Versions are, for a witness an Across Eval answered (#180), the versions this node's fact holds
 	// in, or this derivation was found for; nil otherwise. At gives the witness of one version.
 	Versions ns.VersionSet
+	// Fact is, for a leaf whose literal bound its fact (`edge(?a, ?b) as ?r`, #279), the fact's id,
+	// which Values leave out so the leaf reads as the relation the program names; "" otherwise.
+	Fact string
 	// height is the number of rule steps above the facts, which CanonicalCites keeps shortest.
 	height int
 	// across and raw are, for a fact an Across Eval answered, its Source and its citations as made,
@@ -104,6 +107,9 @@ func tagBody(b Body) Body {
 // shownName is a relation's name as the program wrote it, without the spellings rewrites give it: an
 // adorned or delta relation's suffix, or a private member's module scope.
 func shownName(rel string) string {
+	if base, ok := factOf(rel); ok {
+		rel = base
+	}
 	if i := strings.IndexByte(rel, 0); i >= 0 {
 		rel = rel[:i]
 	}
@@ -112,7 +118,11 @@ func shownName(rel string) string {
 
 // leaf is the witness of one fact a Source or generator gave.
 func leaf(rel string, vals []ns.Value, cites []string) *Witness {
-	return &Witness{Relation: shownName(rel), Values: append([]ns.Value(nil), vals...), Cites: append([]string(nil), cites...)}
+	w := &Witness{Relation: shownName(rel), Values: append([]ns.Value(nil), vals...), Cites: append([]string(nil), cites...)}
+	if n := len(w.Values); isFact(rel) && n > 0 {
+		w.Fact, w.Values = w.Values[n-1].S, w.Values[:n-1]
+	}
+	return w
 }
 
 // atomValues resolves an atom's arguments under a binding; an unbound one is the zero Value.

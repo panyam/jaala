@@ -1,0 +1,3 @@
+fixture: "deps"
+query: "package(?p), not test(_, ?p) as ?t => ?p"
+expect_error: "names no fact: a negated atom matched none"

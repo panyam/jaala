@@ -29,7 +29,7 @@ func normalizeTuples(units *ns.Units, tuples []ns.Tuple, types []ns.ArgType) []n
 		if out == nil {
 			out = append([]ns.Tuple(nil), tuples...)
 		}
-		out[i] = ns.Tuple{Vals: vals, Cites: t.Cites}
+		out[i] = ns.Tuple{Vals: vals, Cites: t.Cites, ID: t.ID}
 	}
 	if out == nil {
 		return tuples

@@ -209,8 +209,8 @@ func (b *Base) pushable(lit Literal) bool {
 	if lit.Pos == nil {
 		return false
 	}
-	if _, base := b.schemaOf(lit.Pos.Relation); !base {
-		return false
+	if _, base := b.schemaOf(lit.Pos.Relation); !base || isFact(lit.Pos.Relation) {
+		return false // a store knows nothing of a fact relation (#279)
 	}
 	return b.edb == nil || !b.edb.holds(lit.Pos.Relation)
 }

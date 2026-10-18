@@ -150,8 +150,16 @@ func resolveAll(v *ns.Vocabulary) (*resolution, error) {
 				privates[privateName(m.Path, r.Head.Relation, i)] = true
 			}
 		}
+		var resolved []Rule
 		for _, r := range rules {
-			rr := resolveRule(v, m.Path, own, i, r)
+			resolved = append(resolved, resolveRule(v, m.Path, own, i, r))
+		}
+		// Facts are bound once the module's names are full paths, so its own relations read as
+		// derived and a base relation by the name the vocabulary holds (#279).
+		if resolved, err = lowerFactRules(resolved, v); err != nil {
+			return nil, fail(i, fmt.Errorf("%w (in module %q)", err, m.Path))
+		}
+		for _, rr := range resolved {
 			perModule[i] = append(perModule[i], rr)
 			res.byHead[rr.Head.Relation] = append(res.byHead[rr.Head.Relation], rr)
 		}
@@ -165,7 +173,7 @@ func resolveAll(v *ns.Vocabulary) (*resolution, error) {
 		for i, rules := range perModule {
 			for _, rule := range rules {
 				for _, a := range ruleAtoms(rule.Body) {
-					if !privates[a.Relation] && !isAggHelper(a.Relation) && !v.Has(a.Relation) {
+					if !privates[a.Relation] && !isAggHelper(a.Relation) && !isFact(a.Relation) && !v.Has(a.Relation) {
 						return nil, fail(i, checkErr(KindUnknown, fmt.Sprintf("query: module %q rule %q reads %s", mods[i].Path, displayName(rule.Head.Relation), v.Unknown(a.Relation))))
 					}
 				}
@@ -264,7 +272,8 @@ func resolveRule(v *ns.Vocabulary, path string, privates map[string]bool, id int
 }
 
 func renameAtom(a Atom, name func(string) string) Atom {
-	return Atom{Relation: name(a.Relation), Args: a.Args}
+	a.Relation = name(a.Relation)
+	return a
 }
 
 // ruleAtoms returns the atoms of a body, positive and negated.

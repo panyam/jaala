@@ -1,0 +1,3 @@
+fixture: deps
+query: imports("app", ?b) as ?r => ?b, ?r
+expect: [[api, 'imports("app", "api")'], [config, 'imports("app", "config")'], [log, 'imports("app", "log")']]

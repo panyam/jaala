@@ -64,7 +64,7 @@ func findWalks(b *Base, q Query) {
 // to is head's column j, and its other arguments are constants or variables nothing else binds.
 func (b *Base) walkIn(head, rec *Atom, lit Literal) (walkStep, bool) {
 	a := lit.Pos
-	if a == nil || !b.looksUpBase(a) {
+	if a == nil || isFact(a.Relation) || !b.looksUpBase(a) {
 		return walkStep{}, false
 	}
 	for j := range rec.Args {

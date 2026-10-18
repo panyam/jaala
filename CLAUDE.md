@@ -348,6 +348,22 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   relation a fresh Base would have looked up. The rerun is a copy with no derived or lookup cache, no
   work counter, a fresh `edb` when the Source looks up, and `o.cold` set so it can't
   start another (a cold run that could reuse recursed forever under mutation).
+- **A base relation's facts are terms** (`facts.go`, #279): `edge(?a, ?b) as ?r` binds `?r` to
+  the fact's `ns.Tuple.ID` (or `TimedTuple.ID`), or `edge("a", "b")` when the store gave none.
+  `lowerFacts` runs right after `Link` (in `evaluateOn`, `validateBound`, and per module in
+  `resolveAll` after its names resolve), refusing `as` on a negated atom, a predicate or a derived
+  relation (`KindFact`), and writes the atom as `\x00f:edge(?a, ?b, ?r)`, so every check and rewrite
+  after it sees an ordinary base relation: `schemaIn` gives it `edge`'s schema plus a text `fact`
+  column (so `b.schemaOf` and the typer must go through it, never `reg.Schema`), `edbTuples` builds it
+  from `edge`'s tuples (`factTuples`, kept as a relation of its own so the id is indexed), and
+  `lookup`/`prefetch` ask the store `edge`'s own call (`lookedUpAtom`), so the cache keys are
+  `edge`'s. It is never pushed, walked, summarized or streamed (`isFact`), and `withoutOrphans` and
+  explain's naming must not take its NUL for a rewrite's relation (the corpus found the first under
+  Witnesses). A leaf shows it as `edge` with `Witness.Fact`. `Atom.Fact` is set only by the parser:
+  `bindGoal`'s and `Link`'s atom copies must keep it, or `as` vanishes silently. The corpus binds an
+  edge's fact now and then from a stream of its own (`generator.facts`, `bound fact`), every third
+  generated edge left without an id, and Soufflé reads `edge_fact`. nl's grammar writes `as ?v`
+  (`fact`), so `frontends/nl` replaces jaala with its checkout until the next tag (`make bump-root`).
 - **A rewrite that rebuilds a `Literal` must keep its `at`, and one that rebuilds a `Rule` its
   `text`.** They carry the written position and form a witness follows (`witness.go`); dropping
   either makes that literal vanish from explanations or shows a rule in its rewritten form, with no

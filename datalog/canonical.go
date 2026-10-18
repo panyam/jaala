@@ -101,6 +101,9 @@ func compareNodes(a, b []*Witness) int {
 		if c := compareBool(x.Negated, y.Negated); c != 0 {
 			return c
 		}
+		if c := strings.Compare(x.Fact, y.Fact); c != 0 {
+			return c
+		}
 		if x.Rule == "" && !x.Negated {
 			if c := slices.Compare(x.Cites, y.Cites); c != 0 {
 				return c

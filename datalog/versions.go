@@ -249,7 +249,7 @@ func (s *atSource) TuplesContext(ctx context.Context, rel string) ([]ns.Tuple, e
 	var out []ns.Tuple
 	for _, t := range timed {
 		if t.Versions != nil && t.Versions.Contains(s.v) {
-			out = append(out, ns.Tuple{Vals: t.Vals, Cites: t.CitesAt(s.v)})
+			out = append(out, ns.Tuple{Vals: t.Vals, Cites: t.CitesAt(s.v), ID: t.ID})
 		}
 	}
 	return out, nil
@@ -300,7 +300,7 @@ func (b *Base) Diff(ctx context.Context, rel string, from, to ns.Version) (Diff,
 			vals, _ := normalizeValues(b.units(), t.Vals, b.argTypesOf(rel))
 			if k := tupleKey(vals); !keys[k] {
 				keys[k] = true
-				facts = append(facts, ns.Tuple{Vals: vals, Cites: t.CitesAt(v)})
+				facts = append(facts, ns.Tuple{Vals: vals, Cites: t.CitesAt(v), ID: t.ID})
 			}
 		}
 		return keys, facts

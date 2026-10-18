@@ -346,11 +346,16 @@ func scansOnLookup(b *Base, a *Atom, flags []bool) bool {
 	if b.indexed == nil || !b.looksUp(a.Relation) {
 		return false
 	}
+	_, fact := factOf(a.Relation)
+	a = lookedUpAtom(a)
 	var bound []int
 	for i, f := range flags {
-		if f {
+		if f && i < len(a.Args) {
 			bound = append(bound, i)
 		}
+	}
+	if fact && len(bound) == 0 {
+		return true // only its id bound, a fact relation's call reads its relation whole
 	}
 	return !b.indexed.Indexed(a.Relation, bound)
 }

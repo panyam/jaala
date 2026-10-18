@@ -34,7 +34,11 @@ func (a Atom) String() string {
 	for i, t := range a.Args {
 		args[i] = t.String()
 	}
-	return a.Relation + "(" + strings.Join(args, ", ") + ")"
+	s := a.Relation + "(" + strings.Join(args, ", ") + ")"
+	if a.Fact != "" {
+		s += " as ?" + string(a.Fact)
+	}
+	return s
 }
 
 // String renders the literal as query text: an atom, `not` an atom, a comparison, or an aggregate

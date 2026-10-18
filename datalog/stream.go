@@ -36,7 +36,7 @@ func streamable(b *Base, q Query) map[string]bool {
 		if n != 1 {
 			continue
 		}
-		if _, base := b.schemaOf(rel); !base || (b.edb != nil && b.edb.holds(rel)) {
+		if _, base := b.schemaOf(rel); !base || isFact(rel) || (b.edb != nil && b.edb.holds(rel)) {
 			continue
 		}
 		if out == nil {
@@ -117,7 +117,7 @@ func (b *Base) streamEDB(atom *Atom, bnd *binding, yield func(*binding) error) e
 	err := streamTuples(b.run, b.src.(ns.StreamSource), rel, func(t ns.Tuple) error {
 		n++
 		if vs, changed := normalizeValues(b.units(), t.Vals, types); changed {
-			t = ns.Tuple{Vals: vs, Cites: t.Cites}
+			t = ns.Tuple{Vals: vs, Cites: t.Cites, ID: t.ID}
 		}
 		if !indexed {
 			return consider(t, false)

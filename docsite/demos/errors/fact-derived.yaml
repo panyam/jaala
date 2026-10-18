@@ -1,0 +1,3 @@
+fixture: "deps"
+query: "uses(?a, ?b) :- imports(?a, ?b); uses(\"app\", ?b) as ?f => ?f"
+expect_error: "is derived, and only a base relation's facts have ids"
