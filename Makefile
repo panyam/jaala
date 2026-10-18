@@ -17,7 +17,7 @@ llama: ## Install llama-server and fetch its 1 MB test model, for selfcheck's gr
 # =============================================================================
 
 # The sub-modules published with jaala, each tagged <dir>/vX at the same commit as jaala's vX.
-SUB_MODS_TO_TAG := frontends/nlmodels
+SUB_MODS_TO_TAG := frontends/nlmodels frontends/mcp
 export SUB_MODS_TO_TAG
 
 tag: ## Tag jaala and its sub-modules at HEAD, the notes from NOTES (make tag V=v0.1.N NOTES=notes.txt)

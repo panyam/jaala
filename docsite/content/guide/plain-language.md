@@ -62,6 +62,19 @@ The card says what a program can call, but not what the data holds or what a que
 
 The pack's part goes after the card and the instructions, `About` and the examples as comments, so the prefix is still the same for every question and stays cached. `Translate` checks every example against the vocabulary before asking a model, and fails naming the first that doesn't check, so a pack can't teach a model a relation the vocabulary lacks. A host's test can call `Pack.Validate` and `Pack.Prefix` itself.
 
+## Serving agents
+
+An agent with its own tools reaches for a graph tool only when it knows what the tool is for: Declaire's agent called Declaire's server on 1 of 42 questions until one sentence told it, and then on the hard ones ([declaire#288](https://github.com/panyam/declaire/issues/288)). `github.com/panyam/jaala/frontends/mcp`, a module of its own on [mcpkit](https://github.com/panyam/mcpkit), is an MCP server for any vocabulary whose instructions and tool descriptions are written from the host's pack ([#347](https://github.com/panyam/jaala/issues/347)), so wording that works for one host's agent works for every host's.
+
+`mcp.New(v, pack, opts)` takes the vocabulary, an `mcp.Pack` (an `nl.Pack` plus the server's name and version) and `mcp.Options`, whose `Base` func picks the Base for each call. It serves four tools:
+
+- `query` runs a program and answers a page of rows, each with the facts it was derived from, and a `page_token` for the next page. `limit` and `max_work` are capped by the server's `Options.Limit` and `Options.MaxWork`. A program that doesn't parse, check or finish within its budget is a tool error carrying `Explain`'s text, so the agent fixes it and calls again.
+- `schema` answers the card with no path, a module's members or a relation's signature, doc and rules with one, and the pack's `Card` at `data`.
+- `explain` runs a program and answers its `Report` instead of its rows: where the work went and, for an empty answer, the literal that matched nothing.
+- `ask`, offered only when `Options.Model` is set, translates a question through `Translate` with the pack and answers the program, its rows and each try. Its `mode` is `local` (the model alone), `frontier` (the fallback alone) or `both`.
+
+The instructions open with the pack's `About`, say how to write a program and to call `schema` first, and show the pack's first two examples; `mcp.Instructions` returns them, and `Pack.Instructions` replaces them word for word for a host trying wordings against its own agent. `mcp.AgentLine` is a sentence for the host's agent instructions, such as a CLAUDE.md. A host registers its own tools on the server `New` returns, and writes answers its own way with `Pack.Format`, which gets each page as an `mcp.Answer`.
+
 ## Scoring a translator
 
 `nl.Eval` runs a set of `nl.Case`s, each a question and the rows a right program answers, through a translator and a base, and reports how it went ([#326](https://github.com/panyam/jaala/issues/326)). The translator is a function from a question to `Translate`'s results, usually `Translate` closed over a vocabulary, a model and options, so a host can wrap its own fallback or tool around it. A program whose rows `Translate` already ran over `Options.Base` is scored on those; any other runs over the base given to `Eval`. A case failing, in translating or evaluating, fails alone.
