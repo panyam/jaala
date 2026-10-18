@@ -268,6 +268,11 @@ func TestExplainSaysWhereAnEmptyAnswerLostItsLastBinding(t *testing.T) {
 				`  because weight(?c, 99) matched nothing, even alone (first called as weight("c", 99)), in far(?a, ?c) :- edge(?a, ?b), edge(?b, ?c), weight(?c, 99)` + "\n" +
 				`  because weight(?c, 99) matched nothing, even alone (first called as weight("a", 99)), in far(?a, ?c) :- edge(?c, ?a), weight(?c, 99)`},
 	}
+	// The planned SemiNaive's own Empty, where its plan differs from the written order's: an equality to
+	// text binds its variable first (#370), so the call it empties is the culprit.
+	planned := map[string]string{
+		`edge(?a, ?b), ?b = "q" => ?a`: `edge(?a, ?b) matched nothing here, though it matches alone (first called as edge(?a, "q"))`,
+	}
 	for _, c := range cases {
 		for _, ev := range []Evaluator{Naive{}, SemiNaive{WrittenOrder: true}} {
 			r := explained(t, ev, c.query, baseFor(std(graph())))
@@ -276,6 +281,12 @@ func TestExplainSaysWhereAnEmptyAnswerLostItsLastBinding(t *testing.T) {
 			}
 		}
 		r := explained(t, SemiNaive{}, c.query, baseFor(std(graph())))
+		if want, ok := planned[c.query]; ok {
+			if r.Empty == nil || r.Empty.String() != want {
+				t.Errorf("planned: %s: empty\n%v\nwant\n%s", c.query, r.Empty, want)
+			}
+			continue
+		}
 		if r.Empty == nil || r.Empty.Literal == "" {
 			t.Errorf("planned: %s: no Empty\n%s", c.query, r)
 		} else if probed := r.Empty.Alone != nil; probed != strings.Contains(c.want, "alone") {

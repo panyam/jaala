@@ -45,7 +45,7 @@ func (s SemiNaive) EvalTable(ctx context.Context, q Query, b *Base, opts ...Opti
 	if !s.WrittenOrder {
 		rewrite = func(b *Base, q Query) Query {
 			b.run.batch = true // the planned order asks a batching Source ahead (see prefetch)
-			q = reuseDerived(b, withoutUnreached(q))
+			q = reuseDerived(b, withoutUnreached(bindEqualities(q)))
 			if !b.witnessing() {
 				q = unfold(b, q) // inlining would remove a relation's node from the witness
 			}
