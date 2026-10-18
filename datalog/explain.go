@@ -82,7 +82,17 @@ type EmptyReport struct {
 	Literal string `json:"literal"`
 	// Called is the first call of it that passed nothing, with the variables bound by then written as
 	// their values. "" when it was never reached.
-	Called  string         `json:"called,omitempty"`
+	Called string `json:"called,omitempty"`
+	// Alone says whether the literal's atom, run by itself with only its constants bound, matches
+	// anything (#348): false says the data holds nothing like it (a wrong value or name), true that it
+	// matches alone and only the values the literals before it bound found nothing (a wrong join). nil
+	// when it wasn't run: for a comparison or a `not`, a relation of the Source's the Base doesn't hold
+	// (one streamed, or only looked up) unless the Source looks it up and the call has a constant, since
+	// otherwise the probe reads the store whole, a probe the budget stopped (the Eval's Budget, or
+	// probeBudget when it has none) or one that failed. The probe counts toward neither Work nor
+	// Base.Work. A whole read from a Source that doesn't stream isn't charged to a budget, so a derived
+	// atom whose rules read one is read whole.
+	Alone   *bool          `json:"alone,omitempty"`
 	Because []*EmptyReport `json:"because,omitempty"`
 }
 
@@ -214,9 +224,10 @@ type explainer struct {
 	pushes int64
 	// walks counts the calls to the Source's Walk (#239).
 	walks int64
-	// reads is the relation each positive literal reads, as rewritten, for Empty to follow into a
-	// derived relation's rules.
-	reads map[*LiteralReport]string
+	// reads is the atom each positive literal reads, as rewritten, for Empty to follow into a derived
+	// relation's rules; culprits is the atom of each EmptyReport, for alone to run.
+	reads    map[*LiteralReport]*Atom
+	culprits map[*EmptyReport]*Atom
 	// quiet is set while prefetch runs a body's prefix again, whose literals were reached already: its
 	// work still counts against the body, but no literal counts it as reached or passed.
 	quiet bool
@@ -224,7 +235,7 @@ type explainer struct {
 
 func newExplainer(r *Report, b *Base) *explainer {
 	*r = Report{}
-	e := &explainer{report: r, reg: b.reg, start: time.Now(), bodies: map[string]*BodyReport{}, reads: map[*LiteralReport]string{}, rounds: map[string]int{}, sources: map[string]*SourceReport{}}
+	e := &explainer{report: r, reg: b.reg, start: time.Now(), bodies: map[string]*BodyReport{}, reads: map[*LiteralReport]*Atom{}, culprits: map[*EmptyReport]*Atom{}, rounds: map[string]int{}, sources: map[string]*SourceReport{}}
 	if b.edb != nil {
 		e.cachedTuples, e.cachedIndexes = b.edb.held()
 	}
@@ -264,7 +275,7 @@ func (e *explainer) enter(r *Rule, goal Body) func() {
 		for _, l := range append(pos, negs...) {
 			lr := &LiteralReport{Literal: ExplainName(l.String())}
 			if l.Pos != nil {
-				e.reads[lr] = l.Pos.Relation
+				e.reads[lr] = l.Pos
 			}
 			br.Literals = append(br.Literals, lr)
 		}
@@ -398,14 +409,16 @@ func (e *explainer) empty(br *BodyReport, seen map[string]bool) *EmptyReport {
 		if lr.Passed > 0 {
 			continue
 		}
-		read := e.reads[lr]
-		if isGuard(read) {
+		atom := e.reads[lr]
+		if atom != nil && isGuard(atom.Relation) {
 			return nil
 		}
 		er := &EmptyReport{Rule: br.Rule, Literal: lr.Literal, Called: lr.Missed}
-		if read == "" {
+		if atom == nil {
 			return er
 		}
+		e.culprits[er] = atom
+		read := atom.Relation
 		rel := explainRelation(read)
 		var bodies []*BodyReport
 		for _, b := range e.order {
@@ -429,6 +442,58 @@ func (e *explainer) empty(br *BodyReport, seen map[string]bool) *EmptyReport {
 		return er
 	}
 	return nil
+}
+
+// probeBudget bounds each of alone's probes when the Eval has no Budget.
+const probeBudget = 100_000
+
+// alone runs the atom of each EmptyReport the Eval filled by itself, its variables free and only its
+// constants bound, over the query's rules, and records on it whether that matched anything (see
+// EmptyReport.Alone). Like coldCost, each probe runs on a copy of b that counts no work and keeps no
+// derived relation, and starts no Explain of its own.
+func (e *explainer) alone(ctx context.Context, rules []Rule, b *Base, budget int64, rewrite func(*Base, Query) Query, fixpoint func(*Base, []Rule) error) {
+	if budget <= 0 || budget > probeBudget {
+		budget = probeBudget
+	}
+	for er, atom := range e.culprits {
+		held := b.edb != nil && b.edb.holds(atom.Relation)
+		if _, base := b.schemaOf(atom.Relation); base && !held && !(b.lookable(atom.Relation) && hasConst(atom.Args)) {
+			continue
+		}
+		rel := explainRelation(atom.Relation)
+		if rel == "" {
+			continue
+		}
+		goal := &Atom{Relation: rel, Args: make([]Term, len(atom.Args))}
+		names := map[Var]Var{}
+		for i, t := range atom.Args {
+			if t.Var != "" && t.Var != "_" {
+				if names[t.Var] == "" {
+					names[t.Var] = Var(fmt.Sprintf("v%d", len(names)+1))
+				}
+				t = Term{Var: names[t.Var]}
+			}
+			goal.Args[i] = t
+		}
+		q := Query{Rules: rules, Goal: Body{Literals: []Literal{{Pos: goal}}}, Limit: 1}
+		probe := *b
+		probe.derived, probe.work = nil, nil
+		tab, err := evaluate(ctx, q, &probe, []Option{Budget(budget), func(o *evalOptions) { o.cold = true }}, rewrite, fixpoint)
+		if err != nil {
+			continue
+		}
+		found := tab.Len() > 0
+		er.Alone = &found
+	}
+}
+
+func hasConst(args []Term) bool {
+	for _, t := range args {
+		if t.Const != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // called is lit as solving called it: the variables bnd binds written as their values.
@@ -799,6 +864,11 @@ func (er *EmptyReport) write(sb *strings.Builder, indent string) {
 		missed = "held for none"
 	}
 	fmt.Fprintf(sb, "%s %s", er.Literal, missed)
+	if er.Alone != nil && !*er.Alone {
+		sb.WriteString(", even alone")
+	} else if er.Alone != nil {
+		sb.WriteString(" here, though it matches alone")
+	}
 	if er.Called != "" && er.Called != er.Literal {
 		fmt.Fprintf(sb, " (first called as %s)", er.Called)
 	}
