@@ -8,7 +8,8 @@
 // from out), schema (the vocabulary card, a module's or relation's members and docs, and the pack's
 // data card), ask (plain language through nl.Translate, when a model is configured) and explain
 // (where a program's work went, and why its answer is empty). A host registers its own tools on the
-// server New returns, and writes answers its own way through Pack.Format.
+// server New returns, and writes answers its own way through Pack.Format. NewWith adds a host's own
+// arguments to every tool, and a hook that decides per call what they mean (#357).
 package mcp
 
 import (
@@ -67,9 +68,44 @@ type Answer struct {
 	Next string
 }
 
+// An Extension adds a host's own arguments, the fields of A, to every jaala tool (#357), such as
+// the repos a query reads or how much code an answer shows. An agent sends them flat, beside the
+// tool's own program and limit. A is a struct tagged as a tool's input is, with the json and
+// jsonschema tags mcpkit reads, so the schema the agent sees and the values Prepare gets both come
+// from it.
+type Extension[A any] struct {
+	// Prepare turns one call's host arguments into how the call runs. tool is the tool's name, so an
+	// argument can narrow some tools and not others. An error is the call's tool error, with its
+	// text. When nil, every call runs as Options and the Pack say.
+	Prepare func(ctx context.Context, tool string, a A) (Run, error)
+}
+
+// A Run is how one call evaluates and answers. A field left empty is the server's.
+type Run struct {
+	// Base is the Base the call reads, such as one narrowed to some repos. Options.Base is asked
+	// only when it is nil.
+	Base *datalog.Base
+	// Eval are options the call runs with after Options.Eval.
+	Eval []datalog.Option
+	// Pack replaces the server's pack for the call: its Card is what schema says at "data", its
+	// Format writes the answer, and ask translates with it. It isn't validated as New's is. Its
+	// Name, Version, Instructions, and the About the tool descriptions are written from, went to the
+	// client when it connected, so a Run's aren't read.
+	Pack *Pack
+}
+
 // New builds the server for v and p. It refuses a pack whose examples don't check against v
-// (nl.Pack.Validate) or options without a Base.
+// (nl.Pack.Validate) or options without a Base. It is NewWith with no host arguments, so its tools
+// too refuse an argument they don't name.
 func New(v *ns.Vocabulary, p Pack, o Options) (*server.Server, error) {
+	return NewWith(v, p, o, Extension[struct{}]{})
+}
+
+// NewWith is New with the host's arguments A on every tool, read per call by x.Prepare. It refuses
+// an A that isn't a struct, or whose json names one of a tool's own arguments, ask's included when
+// there is no Model, so a name means one thing on every tool. Each tool's schema allows only the
+// arguments it names, so a call with any other (a misspelling) is a tool error, never ignored.
+func NewWith[A any](v *ns.Vocabulary, p Pack, o Options, x Extension[A]) (*server.Server, error) {
 	if o.Base == nil {
 		return nil, errors.New("mcp: Options.Base is required")
 	}
@@ -93,16 +129,23 @@ func New(v *ns.Vocabulary, p Pack, o Options) (*server.Server, error) {
 	if text == "" {
 		text = instructions(p, o.Model != nil)
 	}
-	srv := server.NewServer(core.Implementation{Name: name, Version: version}, server.WithInstructions(text))
+	host, err := objectOf(core.GenerateSchema[A]())
+	if err != nil {
+		return nil, fmt.Errorf("mcp: the host's arguments: %w", err)
+	}
 	t := &tools{v: v, p: p, o: o}
 	topic := topic(p.About)
-	srv.Register(
-		core.TypedTool[queryInput, core.ToolResult]("query", fmt.Sprintf(queryDesc, topic), t.query),
-		core.TypedTool[schemaInput, core.ToolResult]("schema", fmt.Sprintf(schemaDesc, topic), t.schema),
-		core.TypedTool[explainInput, core.ToolResult]("explain", explainDesc, t.explain),
-	)
+	query, qerr := tool(t, x, host, "query", fmt.Sprintf(queryDesc, topic), (*call).query)
+	schema, serr := tool(t, x, host, "schema", fmt.Sprintf(schemaDesc, topic), (*call).schema)
+	explain, eerr := tool(t, x, host, "explain", explainDesc, (*call).explain)
+	ask, aerr := tool(t, x, host, "ask", fmt.Sprintf(askDesc, topic), (*call).ask)
+	if err := errors.Join(qerr, serr, eerr, aerr); err != nil {
+		return nil, err
+	}
+	srv := server.NewServer(core.Implementation{Name: name, Version: version}, server.WithInstructions(text))
+	srv.Register(query, schema, explain)
 	if o.Model != nil {
-		srv.Register(core.TypedTool[askInput, core.ToolResult]("ask", fmt.Sprintf(askDesc, topic), t.ask))
+		srv.Register(ask)
 	}
 	return srv, nil
 }

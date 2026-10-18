@@ -121,6 +121,11 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   which mcpkit v0.8.2 put on the initialize result where clients read it: before, Claude Code saw
   none) unless `Pack.Instructions` replaces them word for word, which declaire#308's wording runs
   use. A host adds its own tools on the returned server and writes answers with `Pack.Format`. Its
+  own arguments go on jaala's tools through `mcp.NewWith` and an `Extension[A]` (#357): `A`'s
+  fields are merged flat into each tool's schema (`args.go`, which reads the arguments twice, since
+  Go can't embed a type parameter), a clash with a tool's own name is refused at startup, and every
+  schema says `additionalProperties: false`, so mcpkit's argument validation fails a misspelled
+  call, plain `New`'s too. `Prepare` returns a `Run` per call (Base, Eval, and a whole Pack). Its
   tests are a toy host (`roads`) through mcpkit's `testutil` client.
 - **`Base` is shared across concurrent `Eval`s.** Anything mutable reachable from it must be
   per-query (the `idb*` fields on Eval's shallow copy), atomic (`work`), or locked (`edbCache`,

@@ -21,14 +21,7 @@ import (
 // reach module.
 func roads(t *testing.T) (*ns.Vocabulary, *datalog.Base) {
 	t.Helper()
-	src := ns.NewMemSource().
-		DeclareSchema("road", ns.Schema{Arity: 2, Labels: []string{"from", "to"}, Doc: "A one-way road between two towns."}).
-		DeclareSchema("weight", ns.Schema{Arity: 2, Labels: []string{"town", "w"}, Types: []ns.ArgType{{}, {Type: ns.TypeNumber}}})
-	towns := []string{"a", "b", "c", "d", "e"}
-	for i := range len(towns) - 1 {
-		src.Add("road", ns.Tuple{Vals: []ns.Value{ns.S(towns[i]), ns.S(towns[i+1])}, Cites: []string{fmt.Sprintf("map:%d", i+1)}})
-	}
-	src.Add("weight", ns.Tuple{Vals: []ns.Value{ns.S("a"), ns.N(3)}})
+	src := roadSource(func(string) bool { return true })
 	v, err := ns.NewVocabulary(src)
 	if err != nil {
 		t.Fatal(err)
@@ -50,6 +43,21 @@ reach(?a, ?c) :- reach(?a, ?b), road(?b, ?c);
 		t.Fatal(err)
 	}
 	return v, b
+}
+
+// roadSource is the toy host's facts with only the roads from towns keep allows.
+func roadSource(keep func(from string) bool) *ns.MemSource {
+	src := ns.NewMemSource().
+		DeclareSchema("road", ns.Schema{Arity: 2, Labels: []string{"from", "to"}, Doc: "A one-way road between two towns."}).
+		DeclareSchema("weight", ns.Schema{Arity: 2, Labels: []string{"town", "w"}, Types: []ns.ArgType{{}, {Type: ns.TypeNumber}}})
+	towns := []string{"a", "b", "c", "d", "e"}
+	for i := range len(towns) - 1 {
+		if keep(towns[i]) {
+			src.Add("road", ns.Tuple{Vals: []ns.Value{ns.S(towns[i]), ns.S(towns[i+1])}, Cites: []string{fmt.Sprintf("map:%d", i+1)}})
+		}
+	}
+	src.Add("weight", ns.Tuple{Vals: []ns.Value{ns.S("a"), ns.N(3)}})
+	return src
 }
 
 // pack is the toy host's pack: a few lines.
