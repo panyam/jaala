@@ -22,10 +22,11 @@ go test -count=1 ./datalog -run '^TestWorkStaysWithinBaseline$' -v >"$out" 2>&1 
 grep -E 'work |over its|under its|has no baseline|no workload|^(--- |ok|FAIL)' "$out" | sed 's/^ *bench_test.go:[0-9]*: /  /'
 
 echo "== fuzzed query text: $fuzztime per target"
-fuzz() { go test -count=1 ./datalog -run '^$' -fuzz "^$1\$" -fuzztime "$fuzztime" >"$out" 2>&1; }
+# pkg is the package holding the target being fuzzed: datalog's query text, or the Cypher compiler's.
+fuzz() { go test -count=1 "./$pkg" -run '^$' -fuzz "^$1\$" -fuzztime "$fuzztime" >"$out" 2>&1; }
 # saved is the input a failed run wrote, if any; it is a finding only if it still fails replayed.
 saved() { tr -d '\000' <"$out" | sed -n 's|.*Failing input written to testdata/fuzz/[^/]*/\([0-9a-f]*\).*|\1|p' | head -n 1; }
-replays() { go test -count=1 ./datalog -run "^$1/$2\$" >/dev/null 2>&1; }
+replays() { go test -count=1 "./$pkg" -run "^$1/$2\$" >/dev/null 2>&1; }
 tail30() { tr -d '\000' <"$out" | tail -n 30 | sed 's/^/    /'; }
 # fuzzed runs a target and reports it: 0 when it found nothing, 1 for an input that fails replayed,
 # 2 when the fuzz engine failed instead (#169): a worker killed or hung, out of memory, or the
@@ -39,7 +40,7 @@ fuzzed() {
 		return 1
 	fi
 	if [ -n "$id" ]; then
-		rm -f "datalog/testdata/fuzz/$1/$id"
+		rm -f "$pkg/testdata/fuzz/$1/$id"
 		echo "  $1: the fuzz engine failed; the input it saved ($id) passes replayed, so it was removed. Its last lines:"
 	else
 		echo "  $1: the fuzz engine failed without saving an input. Its last lines:"
@@ -47,8 +48,9 @@ fuzzed() {
 	tail30
 	return 2
 }
-for target in FuzzParse FuzzEval; do
-	# go test fuzzes one target at a time. A failing input is written to datalog/testdata/fuzz/<target>,
+for pair in datalog:FuzzParse datalog:FuzzEval frontends/cypher:FuzzCompile; do
+	pkg=${pair%%:*} target=${pair#*:}
+	# go test fuzzes one target at a time. A failing input is written to <pkg>/testdata/fuzz/<target>,
 	# which plain go test then replays: fix it, and commit the file as a seed. An engine failure gets
 	# one rerun, so it reads differently from a finding.
 	fuzzed "$target"

@@ -12,6 +12,11 @@ Maintained by /checkpoint: one thread per branch, pruned when the branch merges.
   left is Declaire's: declaire#302 (its translator and server as a pack on these), declaire#308
   (wording, which replaces `mcp.Instructions`' default), then declaire#290's arm. Exercise logged at
   e77029a (`TestEval` 7/8, `frontends/mcp`'s tests pass).
+- Mission #356 (`mission_cypher_frontend`) is active, 0/5, started 2026-10-18 from epic #278.
+  Branch `cypher/compile` is #352's first PR (the compiler, the `Graph` view, `TestEval` 7/8);
+  its second (WITH, UNION, CALL, EXISTS/COUNT subqueries, the docs page) closes #352, which
+  unblocks #353, #354 and #355.
+  Its consumer half is declaire#248 (a Cypher arm beside each Datalog arm). No exercise logged yet.
 - Waiting: #327 until a host times `Across` over a store; #288 (sessions) after #287 and agni#1027.
 - This run: merged #350 and #351, closed #344 and #347; dropped nl/domain-pack and mcp/frontend.
 

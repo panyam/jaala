@@ -7,8 +7,8 @@ A Datalog engine for graph-shaped data, extracted from agni. Three packages: `ns
 `ns/doc.go`, then `datalog/doc.go`. `frontends/` holds what turns text other than jaala's syntax into a
 program that checks, and no engine-only host imports it: `frontends/nl`, the plain-language front end
 (#321), and `frontends/nlmodels`, its clients for local models in a module of their own (#330), and `frontends/mcp`,
-an MCP server for any vocabulary in another (#347); a
-Cypher/GQL front end (#278) would go beside them. They moved there in #337, after v0.1.65 had shipped
+an MCP server for any vocabulary in another (#347); and `frontends/cypher`, which compiles Cypher
+into a program (#352). They moved there in #337, after v0.1.65 had shipped
 `nl` and `nlmodels` at the root. jaala is a Datalog engine, not a graph library: a host's fast
 path is a generator (its own Go running inside a query), not a jaala function called around the
 engine (#41).
@@ -122,6 +122,24 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   none) unless `Pack.Instructions` replaces them word for word, which declaire#308's wording runs
   use. A host adds its own tools on the returned server and writes answers with `Pack.Format`. Its
   tests are a toy host (`roads`) through mcpkit's `testutil` client.
+- **`frontends/cypher` compiles Cypher to jaala text over a host's `Graph`** (#352, mission #356):
+  `Node` and `Edge` name the relation holding a label or a type, its key or endpoints, `Fixed`
+  constants (Declaire's `node(id, "Function")`) and property columns, and `Props` a key-value
+  relation (`attr(id, key, value)`). The text goes through `datalog.Parse`, so `Validate`, `Locate`
+  and `Explain` read it unchanged. A node is its key; an equality every row holds is written into
+  the atom (`pkg("app", _)`) unless something else reads the value, which keeps a variable and a
+  comparison (`settle`), so a planner sees constants. A frag's node keys are rendered last for
+  that reason. An OR becomes a `cypher_match` rule per alternative, a WHERE pattern a
+  `cypher_exists` rule over the nodes it shares, a variable length `cypher_reach` (bounded: each
+  length up to 8). A `$param` is a goal variable (`Program.Bind`), refused inside a helper rule,
+  which Bind can't reach. Anything outside the subset is an `*Error` whose `Gap` names the issue
+  (#279 to #289, 352 for WITH/UNION/CALL/subqueries), tested by position in
+  `TestGapsAreRefusedByName`; its known differences from a Cypher engine (distinct rows,
+  reachability rather than trails, a Props read as a match) are in `doc.go`. `TestEval` scores the
+  guide's questions in Cypher with `nl.Eval` (`internal/guide` is the fixture both front ends'
+  `TestEval` share, `testdata/eval.golden`, `-update`), and `FuzzCompile` (in selfcheck) requires
+  any text to compile to a program that validates, or to fail with an `*Error` or a type error
+  the query itself makes.
 - **`Base` is shared across concurrent `Eval`s.** Anything mutable reachable from it must be
   per-query (the `idb*` fields on Eval's shallow copy), atomic (`work`), or locked (`edbCache`,
   `derivedCache`, the vocabulary's `Memo` entries). `TestConcurrentEvalsShareOneCheck` and
@@ -848,7 +866,15 @@ released in v0.1.67). Declaire's 32B run then stopped on an unexplained empty an
 MCP server for any vocabulary that a host wraps with its pack, PR #351, v0.1.70 and the first
 `frontends/mcp/v0.1.70`) followed; Declaire moves its translator and server onto them in
 declaire#302, and its wording experiments (declaire#308) replace `mcp.Instructions`' default. The mission's done-when points at
-declaire#288's translator line rather than quoting its number, which is Declaire's to set. The two store missions closed on 2026-10-16. `mission_store_federation` (#219), a host answers a question over many stores without holding them
+declaire#288's translator line rather than quoting its number, which is Declaire's to set.
+The second active mission is `mission_cypher_frontend` (#356, from epic #278), started 2026-10-18:
+an agent or the model translating for it writes Cypher, and `frontends/cypher` compiles it into a
+program that checks, so Declaire can measure whether Cypher or jaala's syntax costs an agent less per
+correct answer (declaire#288's "one arm per front end"; the arms are declaire#248). Its tickets: #352
+(the compiler over a graph view of a vocabulary, and `go test ./frontends/cypher -run TestEval -v`,
+`nl`'s cases in Cypher), #353 (errors located in the Cypher text), #354 (`nl.Translate` writing
+Cypher, the 32B arm) and #355 (`frontends/mcp` taking Cypher). The gaps (#279 to #284) stay
+`waiting` until an exercise case is refused for one. The two store missions closed on 2026-10-16. `mission_store_federation` (#219), a host answers a question over many stores without holding them
 in memory, measured by the `Stores` benchmark (#218: stores asked, unindexed probes, round trips,
 peak heap and a repeated question's fetches as the number of stores grows) and Declaire's `bench
 -time` on a federated view. The benchmark's stores run in its process, so `peak-MB` counts their

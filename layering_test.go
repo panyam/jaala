@@ -15,8 +15,10 @@ import (
 //	stdlib   the standard vocabulary     imports ns, never datalog
 //	datalog  the engine                  imports ns only
 //	frontends/nl        the plain-language front end (#321)   imports ns and datalog, and nothing imports it
+//	frontends/cypher    the Cypher front end (#352)            imports ns and datalog, and nothing imports it
 //	frontends/nlmodels  clients for local models (#330)       import frontends/nl, in a module of their own
 //	internal/gbnf  a GBNF recognizer      imports nothing; only tests import it (#324)
+//	internal/guide the guide's example     the front ends' shared test fixture (#352); only tests import it
 //
 // Test files are not checked: datalog's tests use stdlib for their fixtures.
 func TestLayering(t *testing.T) {
@@ -26,6 +28,7 @@ func TestLayering(t *testing.T) {
 		"stdlib":                      {"ns"},
 		"datalog":                     {"ns"},
 		"frontends/nl":                {"ns", "datalog"},
+		"frontends/cypher":            {"ns", "datalog"},
 		"frontends/nlmodels/llamacpp": {"frontends/nl"},
 		"frontends/nlmodels/ollama":   {"frontends/nl"},
 		"internal/gbnf":               {},

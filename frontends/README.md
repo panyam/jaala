@@ -9,5 +9,7 @@ run the engine, and no engine-only host imports it.
 - `nlmodels/` is a module of its own (#330) with clients for local models already running:
   llama.cpp's `llama-server`, which takes the grammar, and Ollama, which can't.
 
-A Cypher or GQL front end (#278) would sit beside `nl`, reusing its card, `Explain` and the
-engine's `Locate`.
+- `cypher/` compiles Cypher into a program (#352, mission #356) over a `Graph`, a host's view of
+  its relations as nodes, relationships and properties. It refuses what a program can't express
+  yet by the gap's issue (#279 to #289). It imports `ns` and `datalog`; its tests score it with
+  `nl.Eval` on the guide's questions (`internal/guide`), the ones `nl`'s `TestEval` asks.
