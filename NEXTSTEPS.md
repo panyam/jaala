@@ -5,11 +5,8 @@ Maintained by /checkpoint: one thread per branch, pruned when the branch merges.
 
 ## At a glance
 
-- No open branches. v0.1.75 is being released from main in tiers (CLAUDE.md, Releasing): jaala,
-  then `frontends/nl`, then `cypher` and `nlmodels`, then `mcp`, carrying #369 (the rest of #352),
-  #371 (#279, facts as terms) and #372 (#353, Cypher errors located in the Cypher). If a tier is
-  missing from `git tag -l '*v0.1.75'`, run `make bump-root V=v0.1.75`, commit, push, and
-  `make tag-push V=v0.1.75 SUB_MODS_TO_TAG=<what moved>`.
+- release/one-go — releases in one `make tag-push` again (mcpkit's bump-root); next: review and merge,
+  then `make bump-root V=v0.1.76` before the next tag.
 - Mission #356 (`mission_cypher_frontend`) is active, 5/7; next ready #354 (`nl.Translate` writing
   Cypher, the 32B arm); consumer half declaire#248. Exercise logged at 8a49fb1 (`TestEval` 7/8).
 - Mission #322 (`mission_agent_frontend`) is active, 16/18; next ready #370 (P1), then #354, then

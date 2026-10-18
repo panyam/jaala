@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Tags jaala and every published sub-module at V, at HEAD (after mcpkit's scripts/tag-all.sh). Local
 # only: it prints the push, which `make tag-push` runs. The root tag's annotation is the release
-# notes, read from NOTES. A sub-module still replacing jaala with its checkout isn't tagged: a
-# consumer ignores replace, so it would build against whatever jaala its require names. When V is
-# tagged already, only the sub-modules are tagged, at HEAD: a sub-module requiring another is tagged
-# after make bump-root points it at that one's V, so one release's tiers share V.
+# notes, read from NOTES. A sub-module requiring jaala, or another of the tagged modules, at anything
+# but V isn't tagged: a consumer reads the requires and ignores the replaces, so it would build
+# against that older version. `make bump-root V=...` points them at V; commit that first. When V is
+# tagged already, only the sub-modules are tagged, at HEAD, for a sub-module whose tag failed.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
@@ -16,12 +16,21 @@ if [ -z "$V" ]; then
     echo "Usage: make tag V=v0.1.N NOTES=notes.txt"
     exit 1
 fi
+stale=0
 for mod in $MODS; do
-    if grep -q '^replace github.com/panyam/jaala' "$mod/go.mod"; then
-        echo "$mod/go.mod still replaces jaala or a module of it; run make bump-root V=<a published jaala tag> and commit first"
-        exit 1
-    fi
+    for path in github.com/panyam/jaala $(printf 'github.com/panyam/jaala/%s ' $MODS); do
+        have="$(cd "$mod" && go mod edit -json | awk -v p="\"$path\"," '
+            $1 == "\"Path\":" && $2 == p { getline; gsub(/[",]/, "", $2); print $2; exit }')"
+        if [ -n "$have" ] && [ "$have" != "$V" ]; then
+            echo "$mod/go.mod requires $path $have, not $V"
+            stale=1
+        fi
+    done
 done
+if [ "$stale" = 1 ]; then
+    echo "run make bump-root V=$V and commit first"
+    exit 1
+fi
 
 if git rev-parse -q --verify "refs/tags/$V" >/dev/null; then
     echo "$V is tagged already; tagging only the sub-modules at HEAD..."
