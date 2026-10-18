@@ -5,15 +5,13 @@ Maintained by /checkpoint: one thread per branch, pruned when the branch merges.
 
 ## At a glance
 
-- No open branches. Latest tags v0.1.67 and frontends/nlmodels/v0.1.67; #345 (#143, the corpus
-  runs in its own CI step without `-race`: CI's `datalog` race step 360s to 141s) merged after
-  them, tests and CI only, so no release.
-- Mission #322 (`mission_agent_frontend`) is active. Its jaala queue gained #343 (P1, explain an
-  empty answer and profile work per rule) and #344 (P2, domain packs for `frontends/nl`), filed
-  2026-10-17. Declaire's translator arm still reruns on v0.1.67 from a Declaire session
-  (declaire#290). Exercise logged at 90e2f7d (`TestEval` 7/8); #345 since, which doesn't touch it.
+- No open branches. v0.1.68 and frontends/nlmodels/v0.1.68 are tagged on f1d599a, carrying #346
+  (#343: `Report.Empty`, `Try.Report`, `nl.EmptyAnswer`, `Report.Costliest`) and #349 (#348:
+  `EmptyReport.Alone`). Declaire's arm reruns on it from a Declaire session (declaire#296, #299).
+- Mission #322 (`mission_agent_frontend`) is active, 13/16. Next ready: #344 (P2, domain packs),
+  which blocks #347 (P1, `frontends/mcp`). Exercise logged at f1d599a (`TestEval` 7/8).
 - Waiting: #327 until a host times `Across` over a store; #288 (sessions) after #287 and agni#1027.
-- This run: merged #345 and closed #143; dropped the off-mission #143 line.
+- This run: merged #346 and #349, closed #343 and #348; dropped the #345 line.
 
 ## Across threads
 
