@@ -781,6 +781,15 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   `CanonicalCites` revised lists (only `marks` starts them over), so a tuple revised after the rule
   ran is still in its delta; `TestRoundOneRereadsWhatRoundZeroRevisedAfterARuleRan` guards that,
   since the corpus doesn't reach it.
+- **A name added to stdlib moves more than stdlib's tests** (#360). The plain-language card lists every
+  member, so `frontends/nl`'s `card.golden` and `eval.golden` (`-update`) and the docsite's
+  `Example_card` (`examples/guide/plainlang_test.go`, edited by hand) change, as do the two datalog
+  tests listing `str`'s members (`checkerror_test.go`, `namespace_test.go`). `TestEveryBuiltinHasADemo`
+  wants a `demos/reference/builtins-*.yaml` calling it, and a new error message the catalogue. Each line
+  is prompt cost for every `nl.Translate` call (#360's six took `TestEval` from 10,401 tokens to
+  14,190), so keep a builtin's `Doc` short. A text function is a relation with its result last, like
+  `num.*`, so expressions take it with no engine change; an absent input gives no row. When a test
+  marks a value unbound by comparing with `ns.Value{}`, `ns.S("")` is that value too.
 - Fixtures: `workloads`, `binaryTree`, `pointerProgram` and `netlistOf` (synthetic, agni-sized) in
   `bench_test.go`; `graph()` and the `eval`/`evalErr`/`col`/`std`/`baseFor` helpers in `helpers_test.go`;
   `withModules`/`evalReg` in `module_test.go`; the agni-shaped `circuit()` in `signature_test.go`;
@@ -928,6 +937,13 @@ A field added to a struct a host implements against (`ns.Conjunction`) is ignore
 host built before it, so behaviour that depends on the host acting on it is opt-in through a new
 optional interface (`ns.FilterSource`, #297): Declaire's store accepted filters it didn't apply, and
 groups grown past them joined every row the filter would drop.
+
+Most of what a host derives while ingesting stays in Go however much jaala grows (a survey of both on
+2026-10-18): parsing, type resolution (go/types, SCIP), minting identities, and anything ordered.
+Declaire's linkers are rules waiting on nothing in jaala since v0.1.71 (declaire#205), and moving them
+retires its hand-built linker store. agni's net roles and part classes could be rules too, but some 90
+Go rules, guards, trace and rendering read them off `check.Model`, so a rule there duplicates the Go
+until agni#1061 settles the model's shape. Write statements (#287) add edits; they replace no ingestion.
 
 agni (github.com/panyam/agni) is the first host and Declaire (github.com/panyam/declaire) the
 second. Cross-repo work is split by repo: jaala issues are worked from jaala sessions, host issues
