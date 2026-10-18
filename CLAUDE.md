@@ -106,7 +106,7 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   `frontends/nl` tags; a change needing API no tag holds puts `replace github.com/panyam/jaala =>
   ../../` (and `github.com/panyam/jaala/frontends/nl => ../nl`) back until `make bump-root` after
   the next tags, and `make tag` won't tag it while a replace is there (Releasing). It replaces jaala
-  too while it replaces nl: jaala's tags up to v0.1.70 hold `frontends/nl` as a package, so a
+  too while it replaces nl: jaala's tags up to v0.1.71 hold `frontends/nl` as a package, so a
   published jaala beside the nl module is an ambiguous import. Its old path, `github.com/panyam/jaala/nlmodels`, shipped
   once (nlmodels/v0.1.65) with no consumer, and nothing is tagged under that prefix again. `./selfcheck.sh` runs a real
   `llama-server` on llama.cpp's 1 MB test model when `make llama` has fetched it (Homebrew's
@@ -873,7 +873,7 @@ at it and drops the replace), commit, and tag the sub-modules. A sub-module requ
 jaala, then `frontends/nl` (`make tag-push V=... SUB_MODS_TO_TAG=frontends/nl`; `SUB_MODS_TO_TAG=`
 tags jaala alone), then the rest. #359's own release took three: jaala alone (for
 `internal/guide`), `bump-root` and jaala with nl, `bump-root` and everything; Declaire then needs
-the nl module beside a jaala past v0.1.70 (upgrade note on declaire's issue). Put the upgrade note on the issue a
+the nl module beside a jaala past v0.1.71 (upgrade note on declaire's issue). Put the upgrade note on the issue a
 host filed or the PR's own issue.
 
 ## Issues and missions

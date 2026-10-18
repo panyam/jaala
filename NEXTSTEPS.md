@@ -18,7 +18,7 @@ Maintained by /checkpoint: one thread per branch, pruned when the branch merges.
   unblocks #353, #354 and #355. #359 also makes `frontends/nl` and `frontends/cypher` modules of
   their own, so its release is three steps (CLAUDE.md, Releasing): jaala alone, then jaala with
   `frontends/nl`, then everything, with `make bump-root` between. Declaire then moves to the nl
-  module beside a jaala past v0.1.70 (an ambiguous import otherwise); that upgrade note is owed.
+  module beside a jaala past v0.1.71 (an ambiguous import otherwise); that upgrade note is owed.
   Its consumer half is declaire#248 (a Cypher arm beside each Datalog arm). No exercise logged yet.
 - Waiting: #327 until a host times `Across` over a store; #288 (sessions) after #287 and agni#1027.
 - This run: merged #350 and #351, closed #344 and #347; dropped nl/domain-pack and mcp/frontend.
