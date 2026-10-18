@@ -18,5 +18,6 @@ The [tutorials]({{.Site.PathPrefix}}/tutorials/) teach the language in order. Th
 11. [Absent values](absent-values/) covers a field the source didn't state.
 12. [Versions](versions/) covers a source serving several versions of its facts, `At`, `Across` and `Diff`, from memory or from stores.
 13. [Asking through a model](plain-language/) covers the vocabulary card and errors a model can fix a program from.
+14. [Asking in Cypher](cypher/) compiles a Cypher query into a program over a graph view of the vocabulary.
 
-The last seven are written in Go, as `Example` functions that `go test` runs, like the [Go tutorial]({{.Site.PathPrefix}}/tutorials/05-go-host/).
+The last eight are written in Go, as `Example` functions that `go test` runs, like the [Go tutorial]({{.Site.PathPrefix}}/tutorials/05-go-host/).

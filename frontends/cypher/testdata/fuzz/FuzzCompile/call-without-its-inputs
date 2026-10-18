@@ -1,0 +1,2 @@
+go test fuzz v1
+string("MATCH(p)CALL str.split()YIELD indeX RETURN *")

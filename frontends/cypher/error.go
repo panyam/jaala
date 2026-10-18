@@ -19,7 +19,10 @@ type Error struct {
 }
 
 func (e *Error) Error() string {
-	if e.Gap != 0 {
+	switch {
+	case e.Gap != 0 && e.Capability == "":
+		return fmt.Sprintf("cypher: not supported yet (jaala#%d): %s", e.Gap, e.Msg)
+	case e.Gap != 0:
 		return fmt.Sprintf("cypher: not supported yet: %s (jaala#%d): %s", e.Capability, e.Gap, e.Msg)
 	}
 	return "cypher: " + e.Msg
@@ -39,8 +42,9 @@ var (
 	gapFunctions = gap{284, "this function"}
 	gapWrites    = gap{287, "writing to the graph"}
 	gapGraphs    = gap{289, "choosing a graph"}
-	// Not gaps in jaala: clauses this package compiles next, under #352.
-	gapStages = gap{352, "this clause"}
+	// What a program has no form for yet: CALL { } subqueries, and an order or limit inside a WITH
+	// or a UNION part.
+	gapLater = gap{364, ""}
 )
 
 type gap struct {

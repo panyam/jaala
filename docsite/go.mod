@@ -23,10 +23,13 @@ require (
 
 require (
 	github.com/panyam/jaala v0.1.73
-	github.com/panyam/jaala/frontends/nl v0.0.0
+	github.com/panyam/jaala/frontends/cypher v0.0.0
+	github.com/panyam/jaala/frontends/nl v0.1.73
 	gopkg.in/yaml.v3 v3.0.1
 )
 
 replace github.com/panyam/jaala => ../
 
 replace github.com/panyam/jaala/frontends/nl => ../frontends/nl
+
+replace github.com/panyam/jaala/frontends/cypher => ../frontends/cypher

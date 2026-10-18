@@ -2,6 +2,7 @@
 title: "Asking through a model"
 description: "What a host hands a model so it can write a program from a question: the vocabulary as a card, a grammar that keeps its output parseable and to the vocabulary, errors that say where the program is wrong and how to fix it, the loop that retries until a program checks, and scoring it over questions with known answers."
 prev: {url: "/jaala/guide/versions/", title: "Versions"}
+next: {url: "/jaala/guide/cypher/", title: "Asking in Cypher"}
 ---
 
 A host that lets someone ask in plain language puts a model in front of jaala: the model writes a program from the question, jaala checks it, and a program that doesn't check goes back to the model with its error. Package `nl` holds the parts of that every host would otherwise write alike ([#321](https://github.com/panyam/jaala/issues/321)). What the words mean, the model and the tool that serves it stay with the host. An engine-only host never imports `nl`.

@@ -7,14 +7,23 @@
 // reads a query against one and returns the Program: its text, parsed, the columns as Cypher names
 // them, and the variable each $parameter binds. The text is ordinary jaala, so Validate, Eval,
 // Explain and Locate read it as they read any program. Helper relations Compile writes start with
-// cypher_ (a variable-length step, a pattern test, the alternatives of an OR).
+// cypher_: a variable-length step (step, reach), a WITH stage (with, its head what the stage hands
+// on), a pattern test or EXISTS (exists), the alternatives of an OR (match), and a UNION (union, with
+// a part rule for a part that aggregates).
 //
 // It compiles the part of Cypher a program expresses today: MATCH over node and relationship
 // patterns (labels, inline properties, either direction, several types, variable length as recursion
 // or, when bounded, as the paths of each length up to 8 hops), WHERE (comparisons, AND, OR, XOR,
 // NOT, IS NULL, STARTS WITH, ENDS WITH, CONTAINS, =~, IN over a written list, a label test, a
-// pattern), and RETURN with aliases, DISTINCT, count, min, max, sum and collect (as jaala's list, a
-// text), ORDER BY, SKIP and LIMIT. A $parameter in the goal is bound with Program.Bind.
+// pattern, EXISTS { } and COUNT { }, the last a body aggregate so a node with no match counts 0),
+// WITH stages with their aggregates and WHERE, UNION and UNION ALL, CALL proc(args) YIELD over a
+// predicate or relation of the vocabulary (each YIELD at the argument its label names), and RETURN
+// with aliases, DISTINCT, count, min, max, sum and collect (as jaala's list, a text), ORDER BY, SKIP
+// and LIMIT. toLower, toUpper, replace, split(s, sep)[i] and + between text compile to stdlib's
+// str.* (+ joins when a side is a string, a string function or a property typed as text, and adds
+// otherwise). A $parameter in the goal is bound with Program.Bind; one a rule reads (a stage, a
+// union part, an OR, a pattern test, a variable-length step) needs Params, which writes the values
+// in as constants.
 //
 // Where its answers differ from a Cypher engine's, it says so here rather than guess:
 //
@@ -30,6 +39,6 @@
 // The rest it refuses with an *Error naming the issue that would let it: a relationship variable
 // read anywhere (#279), paths as values (#280), shortest paths and long or zero-length bounds
 // (#281), OPTIONAL MATCH (#282), lists, maps and UNWIND (#283), functions beyond the aggregates
-// above (#284), writes (#287) and USE (#289). WITH, UNION, CALL and EXISTS and COUNT subqueries are
-// #352's next part.
+// above (#284), writes (#287) and USE (#289), and CALL { } subqueries and an ORDER BY, SKIP or
+// LIMIT inside a WITH or a UNION part (#364).
 package cypher

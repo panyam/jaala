@@ -10,6 +10,7 @@ import (
 	"github.com/panyam/jaala/frontends/cypher"
 	"github.com/panyam/jaala/internal/guide"
 	"github.com/panyam/jaala/ns"
+	"github.com/panyam/jaala/stdlib"
 )
 
 type compileCase struct {
@@ -95,6 +96,55 @@ var depsCases = []compileCase{
 		"cypher_node1(?n) :- pkg(?n, _);\ncypher_node1(?a) => ?a", [][]string{{"api"}, {"app"}, {"log"}, {"util"}}},
 	{`MATCH (a)-[:IMPORTS]->(b) WHERE id(a) = 'app' RETURN id(b)`,
 		`imports(?a, ?b), ?a = "app" => ?b`, [][]string{{"api"}}},
+	// A WITH stage is a rule; what it hands on is its head, a node keeping its labels, so a column
+	// read after it brings its relation back.
+	{`MATCH (a:Package)-[:IMPORTS*]->(d) WITH a, count(DISTINCT d) AS n WHERE n > 1 RETURN a.name, n ORDER BY n DESC`,
+		"cypher_reach1(?x, ?y) :- imports(?x, ?y);\ncypher_reach1(?x, ?y) :- cypher_reach1(?x, ?z), imports(?z, ?y);\n" +
+			"cypher_with1(?a, count(distinct ?d)) :- pkg(?a, _), cypher_reach1(?a, ?d);\n" +
+			`cypher_with1(?a, ?n), ?n > 1 => ?a, ?n order by ?n desc`, [][]string{{"app", "3"}, {"api", "2"}}},
+	{`MATCH (a:Package {name: 'app'})-[:IMPORTS*]->(b:Package) WITH b RETURN b.license`,
+		"cypher_reach1(?x, ?y) :- imports(?x, ?y);\ncypher_reach1(?x, ?y) :- cypher_reach1(?x, ?z), imports(?z, ?y);\n" +
+			"cypher_with1(?b) :- pkg(\"app\", _), pkg(?b, _), cypher_reach1(\"app\", ?b);\n" +
+			`cypher_with1(?b), pkg(?b, ?b_license) => ?b_license`, [][]string{{"absent"}, {""}, {"Apache-2.0"}}},
+	// control: a carried node whose columns nothing reads needs no atom after the WITH.
+	{`MATCH (b:Package) WITH b RETURN b`,
+		"cypher_with1(?b) :- pkg(?b, _);\n" + `cypher_with1(?b) => ?b`, [][]string{{"api"}, {"app"}, {"log"}, {"util"}}},
+	{`MATCH (a:Package)-[:IMPORTS]->(b) WITH a, b WITH * RETURN a, b`,
+		"cypher_with1(?a, ?b) :- pkg(?a, _), imports(?a, ?b);\ncypher_with2(?a, ?b) :- cypher_with1(?a, ?b);\n" +
+			`cypher_with2(?a, ?b) => ?a, ?b`, [][]string{{"api", "log"}, {"app", "api"}, {"log", "util"}}},
+	{`MATCH (a {name: 'app'})-[:IMPORTS]->(x) RETURN x.name AS n UNION MATCH (y {name: 'util'}) RETURN y.name AS n`,
+		"cypher_node1(?n) :- pkg(?n, _);\ncypher_union1(?x) :- imports(\"app\", ?x);\ncypher_union1(?y) :- ?y = \"util\", cypher_node1(?y);\n" +
+			`cypher_union1(?n) => ?n`, [][]string{{"api"}, {"util"}}},
+	// An aggregating part is a rule of its own, since an aggregating head is its relation's only rule.
+	{`MATCH (p:Package) RETURN count(p) AS n UNION ALL MATCH (a)-[:IMPORTS]->(b) RETURN count(b) AS n`,
+		"cypher_part1(count(?p)) :- pkg(?p, _);\ncypher_union1(?n) :- cypher_part1(?n);\n" +
+			"cypher_part2(count(?b)) :- imports(?a, ?b);\ncypher_union1(?n) :- cypher_part2(?n);\n" +
+			`cypher_union1(?n) => ?n`, [][]string{{"3"}, {"4"}}},
+	// A call comes after the patterns that bind its arguments, wherever it's written.
+	{`MATCH (p:Package {name: 'util'}) CALL str.split(p.license, '-') YIELD index, part RETURN index, part`,
+		`pkg("util", ?p_license), str.split(?p_license, "-", ?index, ?part) => ?index, ?part`, [][]string{{"0", "Apache"}, {"1", "2.0"}}},
+	{`MATCH (p:Package) CALL str.split(p.license, '-') YIELD part AS piece WHERE piece = '2.0' RETURN p`,
+		`pkg(?p, ?p_license), str.split(?p_license, "-", _, ?piece), ?piece = "2.0" => ?p`, [][]string{{"util"}}},
+	{`MATCH (p:Package) WHERE EXISTS { (p)-[:IMPORTS]->(q) WHERE q.license = '' } RETURN p`,
+		"cypher_exists1(?p) :- imports(?p, ?q), pkg(?q, ?q_license), ?q_license = \"\";\n" +
+			`pkg(?p, _), cypher_exists1(?p) => ?p`, [][]string{{"api"}}},
+	{`MATCH (p:Package) WHERE NOT EXISTS { MATCH (p)-[:IMPORTS]->(:Package) } RETURN p`,
+		"cypher_exists1(?p) :- pkg(?_n, _), imports(?p, ?_n);\n" +
+			`pkg(?p, _), not cypher_exists1(?p) => ?p`, [][]string{{"util"}}},
+	// COUNT { } is a body aggregate, so a node it never matches from counts 0 (util) rather than
+	// dropping out, as a helper rule with a counting head would.
+	{`MATCH (p:Package) RETURN p.name, COUNT { (p)-[:IMPORTS]->() } AS n`,
+		`pkg(?p, _), ?_count = count(?_n) : { imports(?p, ?_n) } => ?p, ?_count`,
+		[][]string{{"api", "1"}, {"app", "1"}, {"log", "1"}, {"util", "0"}}},
+	{`MATCH (p:Package) WHERE COUNT { (p)<-[:IMPORTS]-() } = 0 RETURN p`,
+		`pkg(?p, _), ?_count = count(?_n) : { imports(?_n, ?p) }, ?_count = 0 => ?p`, [][]string{{"app"}}},
+	{`MATCH (p:Package) RETURN toUpper(p.name) AS up`,
+		`pkg(?p, _), ?_c = str.upper(?p) => ?_c`, [][]string{{"API"}, {"APP"}, {"LOG"}, {"UTIL"}}},
+	{`MATCH (p:Package) WHERE toLower(p.license) STARTS WITH 'apache' RETURN replace(p.license, '-', ' ') AS l, split(p.license, '-')[0] AS head`,
+		`pkg(?p, ?p_license), ?_c = str.replace(?p_license, "-", " "), ?_c1 = str.split(?p_license, "-", 0), ?_c2 = str.lower(?p_license), str.prefix(?_c2, "apache") => ?_c, ?_c1`,
+		[][]string{{"Apache 2.0", "Apache"}}},
+	{`MATCH (p:Package) RETURN p.name + '!' AS loud`,
+		`pkg(?p, _), ?_c = str.concat(?p, "!") => ?_c`, [][]string{{"api!"}, {"app!"}, {"log!"}, {"util!"}}},
 	// MATCH-less WHERE text and a trailing semicolon, comments, backticks and keywords in any case.
 	{"// a comment\nMatch (`p`:Package) /* and another */ Return p.name Order By p.name Desc Limit 1;",
 		`pkg(?p, _) => ?p order by ?p desc limit 1`, [][]string{{"util"}}},
@@ -153,6 +203,11 @@ var codeCases = []compileCase{
 	{`MATCH (f:Function) WHERE NOT (f)-[:CALLS]->() AND NOT ()-[:CALLS]->(f) RETURN f`,
 		"cypher_exists1(?f) :- edge(?f, \"CALLS\", ?_n);\ncypher_exists2(?f) :- edge(?_n1, \"CALLS\", ?f);\n" +
 			`node(?f, "Function"), not cypher_exists1(?f), not cypher_exists2(?f) => ?f`, nil},
+	{`MATCH (f:Function)-[:CALLS]->(g) WITH f, count(g) AS n WHERE n > 1 RETURN f.name`,
+		"cypher_with1(?f, count(?g)) :- node(?f, \"Function\"), edge(?f, \"CALLS\", ?g);\n" +
+			`cypher_with1(?f, ?n), attr(?f, "name", ?f_name), ?n > 1 => ?f_name`, [][]string{{"main"}}},
+	{`MATCH (f:Function) WHERE COUNT { (f)<-[:CALLS]-() } = 2 RETURN f`,
+		`node(?f, "Function"), ?_count = count(?_n) : { edge(?_n, "CALLS", ?f) }, ?_count = 2 => ?f`, [][]string{{"f:parse"}}},
 	{`MATCH (f:Function)-[:CALLS]->(g) RETURN f, count(g) AS calls ORDER BY calls DESC, f LIMIT 1`,
 		`node(?f, "Function"), edge(?f, "CALLS", ?g) => ?f, count(?g) order by count(?g) desc, ?f limit 1`, [][]string{{"f:main", "2"}}},
 }
@@ -218,15 +273,17 @@ func TestGapsAreRefusedByName(t *testing.T) {
 		{`MATCH (a:Package) RETURN a {.name}`, 283, "{.name}"},
 		{`MATCH (a:Package) RETURN labels(a)`, 283, "labels"},
 		{`MATCH (a:Package) RETURN avg(a.license)`, 284, "avg"},
-		{`MATCH (a:Package) RETURN toUpper(a.name)`, 284, "toUpper"},
-		{`MATCH (a:Package) RETURN a.name + '!'`, 284, "+ '!'"},
+		{`MATCH (a:Package) RETURN trim(a.name)`, 284, "trim"},
+		{`MATCH (a:Package) RETURN split(a.name, '-')`, 283, "split"},
+		{`MATCH (a:Package) WHERE size(COLLECT { (a)-->(b) }) > 1 RETURN a`, 283, "COLLECT"},
 		{`MATCH (a:Package) RETURN CASE WHEN a.license IS NULL THEN 'none' END`, 284, "CASE"},
 		{`MATCH (a:Package) SET a.license = 'MIT' RETURN a`, 287, "SET"},
 		{`CREATE (a:Package {name: 'x'}) RETURN a`, 287, "CREATE"},
 		{`USE other MATCH (a) RETURN a`, 289, "USE"},
-		{`MATCH (a:Package) WITH a RETURN a`, 352, "WITH"},
-		{`MATCH (a:Package) RETURN a UNION MATCH (b:Package) RETURN b`, 352, "UNION"},
-		{`MATCH (a:Package) WHERE EXISTS { (a)-->() } RETURN a`, 352, "EXISTS"},
+		{`MATCH (a:Package) WITH a ORDER BY a LIMIT 1 RETURN a`, 364, "WITH a ORDER"},
+		{`MATCH (a:Package) RETURN a.name AS n UNION MATCH (b:Package) RETURN b.name AS n LIMIT 1`, 364, "RETURN b.name"},
+		{`CALL { MATCH (a:Package) RETURN a } RETURN a`, 364, "CALL {"},
+		{`MATCH (a:Package) WHERE EXISTS { MATCH (a)-->(b) RETURN b } RETURN a`, 364, "RETURN b }"},
 	} {
 		_, err := cypher.Compile(v, depsGraph, c.cypher)
 		var ce *cypher.Error
@@ -260,7 +317,16 @@ func TestMistakesSayWhatTheGraphHolds(t *testing.T) {
 		{`MATCH (a:Package) RETURN 'x'`, "RETURN of a constant", "'x'"},
 		{`RETURN 1`, "expected MATCH", "RETURN"},
 		{`MATCH (a:Package) RETURN a extra`, `unexpected "extra"`, "extra"},
-		{`MATCH (p:Package) WHERE p.name = $x OR p.name = 'log' RETURN p`, "$x is read inside an OR", "$x"},
+		{`MATCH (p:Package) WHERE p.name = $x OR p.name = 'log' RETURN p`, "which datalog.Bind can't reach: compile with cypher.Params", "$x"},
+		{`MATCH (p:Package {name: $x}) WHERE p.license = 'MIT' OR p.license = '' RETURN p.license`, "which datalog.Bind can't reach", "$x"},
+		{`MATCH (p:Package {name: $x})-[:IMPORTS]->(d) WITH d RETURN d`, "which datalog.Bind can't reach", "$x"},
+		{`MATCH (a:Package) RETURN a UNION MATCH (b:Package) RETURN b`, "every UNION part returns the same columns: a, not b", "MATCH (b"},
+		{`MATCH (a:Package) WITH a.name RETURN a`, "WITH a.name needs a name", "a.name RETURN"},
+		{`MATCH (a:Package) WITH a.name AS n RETURN n.license`, "n is a value, not a node", "n.license"},
+		{`MATCH (a:Package) CALL str.split(a.name, '-') YIELD piece RETURN piece`, "str.split yields index, part, not piece", "piece RETURN"},
+		{`MATCH (a:Package) CALL nothing.here(a) YIELD x RETURN x`, "no procedure nothing.here", "CALL"},
+		{`MATCH (a:Package) CALL str.split() YIELD part RETURN part`, "CALL str.split needs its string, separator as arguments", "CALL"},
+		{`MATCH (a:Package) RETURN COUNT { (a)-->(b) WHERE b.name = 'x' OR b.name = 'y' } AS n`, "COUNT { } over a WHERE with OR", "COUNT"},
 		{`MATCH (a:Package) WHERE a.license = 'say "hi"' RETURN a`, "double quote", "'say"},
 	} {
 		_, err := cypher.Compile(v, depsGraph, c.cypher)
@@ -299,5 +365,95 @@ func TestHelpersAvoidTheVocabularysNames(t *testing.T) {
 	}
 	if !slices.Contains(p.Columns, "d") {
 		t.Errorf("columns %v", p.Columns)
+	}
+}
+
+// Params writes a parameter's value in as a constant, so it reaches a WITH stage, a UNION part or an
+// OR's rules, where Bind can't. control: in the goal alone it answers as Bind does.
+func TestParamsWriteValuesIntoEveryRule(t *testing.T) {
+	v, b := guide.Deps(t)
+	vals := map[string]ns.Value{"pkg": ns.S("api")}
+	q := `MATCH (p:Package {name: $pkg})-[:IMPORTS*]->(d) RETURN d`
+	bound, err := cypher.Compile(v, depsGraph, q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bind, err := bound.Bind(vals)
+	if err != nil {
+		t.Fatal(err)
+	}
+	viaBind, err := rowsOf(t, bound, b, bind)
+	if err != nil {
+		t.Fatal(err)
+	}
+	written, err := cypher.Compile(v, depsGraph, q, cypher.Params(vals))
+	if err != nil {
+		t.Fatal(err)
+	}
+	viaParams, err := rowsOf(t, written, b)
+	if err != nil || fmt.Sprint(viaParams) != fmt.Sprint(viaBind) || fmt.Sprint(viaBind) != "[[log] [util]]" {
+		t.Errorf("control: Params answered %v (%v), Bind %v", viaParams, err, viaBind)
+	}
+	if len(written.Params) != 0 || strings.Contains(written.Text, "?pkg") {
+		t.Errorf("Params left a variable: %s, %v", written.Text, written.Params)
+	}
+	for _, c := range []struct {
+		cypher string
+		vals   map[string]ns.Value
+		rows   string
+	}{
+		{`MATCH (p:Package {name: $pkg})-[:IMPORTS*]->(d) WITH d RETURN d`, vals, "[[log] [util]]"},
+		{`MATCH (p:Package) WHERE p.name = $a OR p.name = $b RETURN p`, map[string]ns.Value{"a": ns.S("app"), "b": ns.S("log")}, "[[app] [log]]"},
+		{`MATCH (p:Package) RETURN p.name AS n UNION MATCH (p:Package {license: $l}) RETURN p.name AS n`, map[string]ns.Value{"l": ns.S("MIT")}, "[[api] [app] [log] [util]]"},
+		{`MATCH (a:Package)-[:IMPORTS*]->(d) WITH a, count(d) AS n WHERE n > $min RETURN a`, map[string]ns.Value{"min": ns.N(2)}, "[[app]]"},
+	} {
+		p, err := cypher.Compile(v, depsGraph, c.cypher, cypher.Params(c.vals))
+		if err != nil {
+			t.Errorf("%s: %v", c.cypher, err)
+			continue
+		}
+		rows, err := rowsOf(t, p, b)
+		if err != nil || fmt.Sprint(rows) != c.rows {
+			t.Errorf("%s (%s): %v, %v; want %s", c.cypher, p.Text, rows, err, c.rows)
+		}
+	}
+	for _, c := range []struct {
+		vals map[string]ns.Value
+		want string
+	}{
+		{map[string]ns.Value{}, "no value for $pkg"},
+		{map[string]ns.Value{"pkg": ns.Absent()}, "$pkg is absent"},
+		{map[string]ns.Value{"pkg": ns.S(`say "hi"`)}, "double quote"},
+	} {
+		if _, err := cypher.Compile(v, depsGraph, q, cypher.Params(c.vals)); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%v: %v, want %q", c.vals, err, c.want)
+		}
+	}
+}
+
+// A + joins text when a side is text: a string, a string function, or a property its schema types
+// as text; otherwise it adds. control: the same + over two number columns adds.
+func TestPlusJoinsTextAndAddsNumbers(t *testing.T) {
+	src := ns.NewMemSource().DeclareSchema("file", ns.Schema{Arity: 3, Labels: []string{"path", "ext", "lines"},
+		Types: []ns.ArgType{{Type: ns.TypeString}, {Type: ns.TypeString}, {Type: ns.TypeNumber}}})
+	src.Add("file", ns.Tuple{Vals: []ns.Value{ns.S("main"), ns.S(".go"), ns.N(12)}})
+	v, err := ns.NewVocabulary(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stdlib.Register(v); err != nil {
+		t.Fatal(err)
+	}
+	b, err := datalog.NewBase(v, src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := cypher.Graph{Nodes: []cypher.Node{{Label: "File", Relation: "file", Key: 0, Props: map[string]int{"path": 0, "ext": 1, "lines": 2}}}}
+	for _, c := range []compileCase{
+		{`MATCH (f:File) RETURN f.path + f.ext AS name`, `file(?f, ?f_ext, _), ?_c = str.concat(?f, ?f_ext) => ?_c`, [][]string{{"main.go"}}},
+		{`MATCH (f:File) RETURN f.lines + f.lines AS twice`, `file(?f, _, ?f_lines), ?_c = (?f_lines + ?f_lines) => ?_c`, [][]string{{"24"}}},
+		{`MATCH (f:File) RETURN toUpper(f.path) + f.ext AS name`, `file(?f, ?f_ext, _), ?_c = str.concat(str.upper(?f), ?f_ext) => ?_c`, [][]string{{"MAIN.go"}}},
+	} {
+		check(t, v, b, g, c)
 	}
 }

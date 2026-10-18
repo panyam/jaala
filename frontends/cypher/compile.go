@@ -33,11 +33,23 @@ func (p Program) Bind(values map[string]ns.Value) (datalog.Option, error) {
 	return datalog.Bind(vals), nil
 }
 
+// An Option changes how Compile writes a program.
+type Option func(*world)
+
+// Params writes each $parameter as the constant values gives it, everywhere the query reads it,
+// rather than as a goal variable for Program.Bind. A parameter a WITH stage, a UNION part, an OR, a
+// pattern test or a variable-length relationship reads needs it, since datalog.Bind binds only the
+// goal. A parameter values doesn't hold, and a value a query can't write (absent, or text holding a
+// double quote), are refused.
+func Params(values map[string]ns.Value) Option {
+	return func(w *world) { w.paramVals = values }
+}
+
 // Compile reads a Cypher query and writes the jaala program answering it over g, a graph view of v.
 // It refuses, with an *Error, a query outside the subset a program expresses today (see the package
 // doc), naming the gap that would let it, and a label, type or property g doesn't have. It parses
 // the program it writes but doesn't check it against v; evaluating or datalog.Validate does.
-func Compile(v *ns.Vocabulary, g Graph, text string) (Program, error) {
+func Compile(v *ns.Vocabulary, g Graph, text string, opts ...Option) (Program, error) {
 	if err := g.Validate(v); err != nil {
 		return Program{}, err
 	}
@@ -45,9 +57,11 @@ func Compile(v *ns.Vocabulary, g Graph, text string) (Program, error) {
 	if err != nil {
 		return Program{}, err
 	}
-	c := &compiler{v: v, g: g, used: map[string]bool{}, nodes: map[string]*nodeVar{}, rels: map[string]Pos{},
-		params: map[string]string{}, helpers: map[string]bool{}}
-	prog, cerr := c.compile(st)
+	w := &world{v: v, g: g, params: map[string]string{}, helpers: map[string]bool{}}
+	for _, o := range opts {
+		o(w)
+	}
+	prog, cerr := w.compile(st)
 	if cerr != nil {
 		return Program{}, cerr
 	}
@@ -59,35 +73,25 @@ func Compile(v *ns.Vocabulary, g Graph, text string) (Program, error) {
 	return prog, nil
 }
 
-type compiler struct {
-	v       *ns.Vocabulary
-	g       Graph
-	used    map[string]bool // jaala variable names taken
-	nodes   map[string]*nodeVar
-	order   []*nodeVar
-	rels    map[string]Pos // relationship variables, which nothing may read (#279)
-	params  map[string]string
-	helpers map[string]bool
-	rules   []rule
-	n       int // fresh names
-
-	shared []frag  // literals every disjunct holds
-	scope  *[]frag // where a property read through Props or a computed value goes
-	kv     map[*[]frag]map[string]string
-	inRule bool // rendering a rule's body or head, where a parameter can't go (datalog.Bind binds the goal)
-	err    *Error
-}
-
 type nodeVar struct {
 	name     string // the Cypher variable, or a fresh name for an anonymous node
 	jv       string
 	pos      Pos
 	labels   []string
 	slots    map[string]*slot // by label, then property: label + "\x00" + key
-	subst    string           // the constant (or parameter) the key equals, written in its place
+	subst    frag             // the constant (or parameter) the key equals, written in its place
 	valued   bool             // the key is read as a value, so it stays a variable
 	endpoint bool             // a relationship reads it
 	anchor   bool             // a rule reads it (a pattern test), so a parameter can't stand in for it
+	carried  bool             // a WITH handed it on, so it is matched already
+	of       *nodeVar         // inside a subquery, the outer node this one stands for
+}
+
+// markValued keeps n's key a variable, and the outer node's it stands for in a subquery.
+func markValued(n *nodeVar) {
+	for ; n != nil; n = n.of {
+		n.valued = true
+	}
 }
 
 type slot struct {
@@ -106,7 +110,11 @@ type (
 		n     *nodeVar
 		label string
 		not   bool
+		lazy  bool // written only when a column of it is read
 	}
+	// braces are a body aggregate's literals, which jaala lowers to rules, so a parameter can't
+	// reach them either.
+	braces  struct{ lits []frag }
 	paramEl struct {
 		name string
 		pos  Pos
@@ -118,13 +126,13 @@ type rule struct {
 	body []frag
 }
 
-func (c *compiler) fail(err *Error) {
-	if c.err == nil {
-		c.err = err
+func (w *world) fail(err *Error) {
+	if w.err == nil {
+		w.err = err
 	}
 }
 
-func (c *compiler) render(f frag) string {
+func (c *world) render(f frag) string {
 	var b strings.Builder
 	for _, el := range f {
 		switch el := el.(type) {
@@ -137,13 +145,21 @@ func (c *compiler) render(f frag) string {
 		case keyVal:
 			b.WriteString("?" + el.n.jv)
 		case nodeAtm:
+			if el.lazy && !slotsRead(el.n, el.label) {
+				continue
+			}
 			if el.not {
 				b.WriteString("not ")
 			}
 			b.WriteString(c.nodeAtom(el.n, el.label, el.not))
+		case braces:
+			was := c.inRule
+			c.inRule = true
+			b.WriteString(c.joinLits(el.lits))
+			c.inRule = was
 		case paramEl:
 			if c.inRule {
-				c.fail(errAt(el.pos, "$%s is read inside an OR, a pattern test or a variable-length relationship, which a parameter can't reach yet: write its value in the query", el.name))
+				c.fail(errAt(el.pos, "$%s is read inside a WITH stage, a UNION part, an OR, a pattern test or a variable-length relationship, which datalog.Bind can't reach: compile with cypher.Params", el.name))
 			}
 			b.WriteString("?" + c.params[el.name])
 		default:
@@ -153,14 +169,26 @@ func (c *compiler) render(f frag) string {
 	return b.String()
 }
 
-func (c *compiler) key(n *nodeVar) string {
-	if n.subst != "" && !n.valued {
-		return n.subst
+func slotsRead(n *nodeVar, label string) bool {
+	for k, s := range n.slots {
+		if strings.HasPrefix(k, label+"\x00") && (s.jv != "" || s.konst != nil) {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *world) key(n *nodeVar) string {
+	if n.of != nil {
+		return c.key(n.of)
+	}
+	if n.subst != nil && !n.valued {
+		return c.render(n.subst)
 	}
 	return "?" + n.jv
 }
 
-func (c *compiler) nodeAtom(n *nodeVar, label string, negated bool) string {
+func (c *world) nodeAtom(n *nodeVar, label string, negated bool) string {
 	nd, _ := c.g.node(label)
 	ar, _ := arity(c.v, nd.Relation)
 	args := make([]string, ar)
@@ -222,7 +250,7 @@ func sanitize(s string) string {
 	return b.String()
 }
 
-func (c *compiler) helper(base string) string {
+func (c *world) helper(base string) string {
 	name := "cypher_" + base
 	for i := 1; ; i++ {
 		cand := fmt.Sprintf("%s%d", name, i)
@@ -231,148 +259,6 @@ func (c *compiler) helper(base string) string {
 			return cand
 		}
 	}
-}
-
-func (c *compiler) compile(st statement) (Program, *Error) {
-	// Nodes and relationships first, so a property read anywhere knows its node's labels.
-	var conds []expr
-	type relAt struct {
-		r        relPat
-		from, to *nodeVar
-	}
-	var rels []relAt
-	for _, m := range st.matches {
-		for _, pat := range m.patterns {
-			ns := make([]*nodeVar, len(pat.nodes))
-			for i, np := range pat.nodes {
-				n, err := c.declareNode(np, &conds)
-				if err != nil {
-					return Program{}, err
-				}
-				ns[i] = n
-			}
-			for i, r := range pat.rels {
-				if err := c.declareRel(r); err != nil {
-					return Program{}, err
-				}
-				ns[i].endpoint, ns[i+1].endpoint = true, true
-				rels = append(rels, relAt{r, ns[i], ns[i+1]})
-			}
-		}
-		if m.where != nil {
-			for _, e := range conjuncts(m.where) {
-				if h, ok := e.(hasLabel); ok {
-					if err := c.declareLabels(h); err != nil {
-						return Program{}, err
-					}
-					continue
-				}
-				conds = append(conds, e)
-			}
-		}
-	}
-	c.scope = &c.shared
-	for _, n := range c.order {
-		for _, l := range n.labels {
-			c.shared = append(c.shared, frag{nodeAtm{n: n, label: l}})
-		}
-	}
-	for _, r := range rels {
-		f, err := c.relLiteral(r.r, r.from, r.to)
-		if err != nil {
-			return Program{}, err
-		}
-		c.shared = append(c.shared, f)
-	}
-
-	// Equalities every row holds become constants in atoms where nothing else reads the value.
-	var rest []expr
-	var eqs []pending
-	for _, e := range conds {
-		b, ok := e.(binary)
-		if !ok || b.op != "=" {
-			rest = append(rest, e)
-			continue
-		}
-		ref, val := b.l, b.r
-		if !isConst(val) {
-			ref, val = b.r, b.l
-		}
-		if !isConst(val) {
-			rest = append(rest, e)
-			continue
-		}
-		vf, err := c.value(val)
-		if err != nil {
-			return Program{}, err
-		}
-		switch r := ref.(type) {
-		case varRef:
-			n, err := c.nodeRef(r)
-			if err != nil {
-				return Program{}, err
-			}
-			eqs = append(eqs, pending{n: n, val: vf})
-			continue
-		case propRef:
-			n, err := c.nodeRef(varRef{pos: r.pos, name: r.v})
-			if err != nil {
-				return Program{}, err
-			}
-			label, identity, kvRead, err := c.resolveProp(n, r)
-			if err != nil {
-				return Program{}, err
-			}
-			switch {
-			case identity:
-				eqs = append(eqs, pending{n: n, val: vf})
-				continue
-			case !kvRead:
-				eqs = append(eqs, pending{n: n, s: c.slotFor(n, label, r.key), key: r.key, val: vf})
-				continue
-			default:
-				c.shared = append(c.shared, c.kvAtom(n, quote(r.key), vf))
-				continue
-			}
-		}
-		rest = append(rest, e)
-	}
-
-	// The answer, then the conditions, so a value they read is known before the equalities settle.
-	ret, err := c.returning(st)
-	if err != nil {
-		return Program{}, err
-	}
-	disjuncts, derr := c.dnf(rest)
-	if derr != nil {
-		return Program{}, derr
-	}
-	bodies := make([][]frag, len(disjuncts))
-	for i, d := range disjuncts {
-		var lits []frag
-		c.scope = &lits
-		for _, cd := range d {
-			f, err := c.condition(cd.e, cd.neg)
-			if err != nil {
-				return Program{}, err
-			}
-			lits = append(lits, f)
-		}
-		bodies[i] = lits
-	}
-	c.scope = &c.shared
-
-	c.settle(eqs)
-	for _, n := range c.order {
-		if len(n.labels) == 0 && !n.endpoint {
-			f, err := c.anyNode(n)
-			if err != nil {
-				return Program{}, err
-			}
-			c.shared = append(c.shared, f)
-		}
-	}
-	return c.write(ret, bodies)
 }
 
 // A pending equality is a node's key or one of its columns equal to a constant or a parameter in every
@@ -404,7 +290,7 @@ func (c *compiler) settle(eqs []pending) {
 	for _, n := range nodes {
 		ps := byNode[n]
 		if len(ps) == 1 && !n.valued && !(n.anchor && hasParam(ps[0].val)) {
-			n.subst = c.render(ps[0].val)
+			n.subst = ps[0].val
 			continue
 		}
 		n.valued = true
@@ -447,17 +333,21 @@ func isConst(e expr) bool {
 	return false
 }
 
-func readsVar(e expr) bool {
+// readsVar reports whether e reads something a body binds: a variable, a property, or a parameter
+// the host binds (one Params writes as a constant doesn't).
+func (c *compiler) readsVar(e expr) bool {
 	switch e := e.(type) {
-	case varRef, propRef, paramRef:
+	case varRef, propRef:
 		return true
+	case paramRef:
+		return c.paramVals == nil
 	case binary:
-		return readsVar(e.l) || readsVar(e.r)
+		return c.readsVar(e.l) || c.readsVar(e.r)
 	case minus:
-		return readsVar(e.e)
+		return c.readsVar(e.e)
 	case call:
 		for _, a := range e.args {
-			if readsVar(a) {
+			if c.readsVar(a) {
 				return true
 			}
 		}
@@ -475,6 +365,9 @@ func conjuncts(e expr) []expr {
 func (c *compiler) declareNode(np nodePat, conds *[]expr) (*nodeVar, *Error) {
 	if _, ok := c.rels[np.v]; ok && np.v != "" {
 		return nil, errAt(np.pos, "%s names a relationship, not a node", np.v)
+	}
+	if np.v != "" && c.values[np.v] != "" {
+		return nil, errAt(np.pos, "%s is a value, not a node", np.v)
 	}
 	n := c.nodes[np.v]
 	if np.v == "" || n == nil {
@@ -559,6 +452,9 @@ func (c *compiler) nodeRef(r varRef) (*nodeVar, *Error) {
 	if n, ok := c.nodes[r.name]; ok {
 		return n, nil
 	}
+	if c.values[r.name] != "" {
+		return nil, errAt(r.pos, "%s is a value, not a node", r.name)
+	}
 	if _, ok := c.rels[r.name]; ok {
 		return nil, gapEdgeVars.at(r.pos, "%s is a relationship: return or compare its endpoints instead", r.name)
 	}
@@ -629,7 +525,7 @@ func (c *compiler) prop(r propRef) (frag, *Error) {
 	}
 	switch {
 	case identity:
-		n.valued = true
+		markValued(n)
 		return frag{keyVal{n}}, nil
 	case kv:
 		return frag{"?" + c.kvRead(n, r.key)}, nil
@@ -863,7 +759,7 @@ func (c *compiler) relLiteral(r relPat, from, to *nodeVar) (frag, *Error) {
 func (c *compiler) value(e expr) (frag, *Error) {
 	switch e.(type) {
 	case binary, minus:
-		if !isConst(e) && !readsVar(e) {
+		if !isConst(e) && !c.readsVar(e) {
 			return nil, errAt(e.at(), "arithmetic over constants alone: write the value it comes to")
 		}
 	}
@@ -879,6 +775,9 @@ func (c *compiler) value(e expr) (frag, *Error) {
 		}
 		return frag{e.text}, nil
 	case paramRef:
+		if c.paramVals != nil {
+			return c.constant(e.name, e.pos)
+		}
 		if _, ok := c.params[e.name]; !ok {
 			jv := e.name
 			if c.used[jv] || sanitize(jv) != jv {
@@ -890,14 +789,22 @@ func (c *compiler) value(e expr) (frag, *Error) {
 		}
 		return frag{paramEl{name: e.name, pos: e.pos}}, nil
 	case varRef:
+		if jv := c.values[e.name]; jv != "" {
+			return frag{"?" + jv}, nil
+		}
 		n, err := c.nodeRef(e)
 		if err != nil {
 			return nil, err
 		}
-		n.valued = true
+		markValued(n)
 		return frag{keyVal{n}}, nil
 	case propRef:
 		return c.prop(e)
+	case subquery:
+		if !e.count {
+			return nil, errAt(e.pos, "EXISTS { } is a test, not a value: write it in WHERE")
+		}
+		return c.countSubquery(e)
 	case minus:
 		f, err := c.value(e.e)
 		if err != nil {
@@ -910,12 +817,6 @@ func (c *compiler) value(e expr) (frag, *Error) {
 	case binary:
 		switch e.op {
 		case "+", "-", "*", "/":
-			if _, ok := e.l.(strLit); ok && e.op == "+" {
-				return nil, gapFunctions.at(e.pos, "joining strings with +")
-			}
-			if _, ok := e.r.(strLit); ok && e.op == "+" {
-				return nil, gapFunctions.at(e.pos, "joining strings with +")
-			}
 			l, err := c.value(e.l)
 			if err != nil {
 				return nil, err
@@ -924,13 +825,35 @@ func (c *compiler) value(e expr) (frag, *Error) {
 			if err != nil {
 				return nil, err
 			}
+			if e.op == "+" && (c.isText(e.l) || c.isText(e.r)) {
+				return frag{"str.concat(", l, ", ", r, ")"}, nil
+			}
 			return frag{"(", l, " " + e.op + " ", r, ")"}, nil
 		case "%", "^":
 			return nil, gapFunctions.at(e.pos, "%s", e.op)
 		}
 		return nil, errAt(e.pos, "%s is a test, not a value", e.op)
 	case call:
+		if fn, ok := textFuncs[strings.ToLower(e.name)]; ok {
+			if len(e.args) != fn.args {
+				return nil, errAt(e.pos, "%s() takes %d arguments", e.name, fn.args)
+			}
+			f := frag{fn.name + "("}
+			for i, a := range e.args {
+				v, err := c.value(a)
+				if err != nil {
+					return nil, err
+				}
+				if i > 0 {
+					f = append(f, ", ")
+				}
+				f = append(f, v)
+			}
+			return append(f, ")"), nil
+		}
 		switch strings.ToLower(e.name) {
+		case "split":
+			return nil, gapLists.at(e.pos, "split() as a list: take one part with split(s, sep)[i]")
 		case "id", "elementid":
 			if len(e.args) == 1 {
 				if v, ok := e.args[0].(varRef); ok {
@@ -941,7 +864,7 @@ func (c *compiler) value(e expr) (frag, *Error) {
 			return nil, gapEdgeVars.at(e.pos, "%s()", e.name)
 		case "length", "nodes", "relationships":
 			return nil, gapPaths.at(e.pos, "%s()", e.name)
-		case "labels", "keys", "properties", "range", "size", "head", "last", "tail", "split":
+		case "labels", "keys", "properties", "range", "size", "head", "last", "tail":
 			return nil, gapLists.at(e.pos, "%s()", e.name)
 		}
 		if aggregates[strings.ToLower(e.name)] {
@@ -956,6 +879,47 @@ func (c *compiler) value(e expr) (frag, *Error) {
 	return nil, errAt(e.at(), "a test can't be a value here")
 }
 
+// textFuncs are Cypher's string functions that stdlib's str.* compute (#360), each a relation with
+// its result last, so an expression calls it.
+var textFuncs = map[string]struct {
+	name string
+	args int
+}{
+	"tolower": {"str.lower", 1}, "lower": {"str.lower", 1},
+	"toupper": {"str.upper", 1}, "upper": {"str.upper", 1},
+	"replace":  {"str.replace", 3},
+	splitIndex: {"str.split", 3},
+}
+
+// isText reports whether e is text a + joins rather than adds: a string, a string function, a join,
+// or a property its relation's schema types as text.
+func (c *compiler) isText(e expr) bool {
+	switch e := e.(type) {
+	case strLit:
+		return true
+	case binary:
+		return e.op == "+" && (c.isText(e.l) || c.isText(e.r))
+	case call:
+		_, ok := textFuncs[strings.ToLower(e.name)]
+		return ok
+	case propRef:
+		n, ok := c.nodes[e.v]
+		if !ok {
+			return false
+		}
+		for _, l := range n.labels {
+			nd, _ := c.g.node(l)
+			if i, ok := nd.Props[e.key]; ok {
+				if s, ok := c.v.Schema(nd.Relation); ok && i < len(s.Types) {
+					return s.Types[i].Type == ns.TypeString
+				}
+				return false
+			}
+		}
+	}
+	return false
+}
+
 // term is e as a predicate's argument, which takes a variable or a constant: arithmetic is computed
 // into a fresh variable first.
 func (c *compiler) term(e expr) (frag, *Error) {
@@ -963,11 +927,11 @@ func (c *compiler) term(e expr) (frag, *Error) {
 	if err != nil {
 		return nil, err
 	}
+	if isVar(f) || isConst(e) {
+		return f, nil
+	}
 	switch e.(type) {
-	case binary, minus:
-		if _, ok := e.(minus); ok && isConst(e) {
-			return f, nil
-		}
+	case binary, minus, call:
 		jv := c.fresh("_c")
 		*c.scope = append(*c.scope, frag{"?" + jv + " = ", f})
 		return frag{"?" + jv}, nil
@@ -1079,14 +1043,19 @@ func (c *compiler) condition(e expr, neg bool) (frag, *Error) {
 		}
 		return f, nil
 	case patExpr:
-		return c.patternTest(e.p, neg)
+		return c.patternTest([]pattern{e.p}, nil, false, neg)
+	case subquery:
+		if e.count {
+			return nil, errAt(e.pos, "COUNT { } is a number, not a test: compare it, COUNT { ... } > 0")
+		}
+		return c.patternTest(e.patterns, e.where, true, neg)
 	case call:
 		if strings.EqualFold(e.name, "exists") && len(e.args) == 1 {
 			if r, ok := e.args[0].(propRef); ok {
 				return c.condition(isNull{pos: e.pos, e: r, not: true}, neg)
 			}
 			if p, ok := e.args[0].(patExpr); ok {
-				return c.patternTest(p.p, neg)
+				return c.patternTest([]pattern{p.p}, nil, false, neg)
 			}
 		}
 		if _, err := c.value(e); err != nil {
@@ -1098,88 +1067,170 @@ func (c *compiler) condition(e expr, neg bool) (frag, *Error) {
 	return nil, errAt(e.at(), "WHERE needs a test here: a comparison, a string test, IS NULL, a label or a pattern")
 }
 
-// patternTest is a pattern in WHERE: a helper relation over the nodes it shares with the MATCH,
-// holding where the pattern matches from them, and called (or negated) on them.
-func (c *compiler) patternTest(p pattern, neg bool) (frag, *Error) {
-	saved, savedShared, savedScope := c.nodes, c.shared, c.scope
-	inner := map[string]*nodeVar{}
-	for k, v := range c.nodes {
-		inner[k] = v
+// patternTest is a pattern in WHERE, or EXISTS { }: a helper relation over the nodes it shares with
+// the MATCH, a rule for each alternative its WHERE has, called (or negated) on them.
+func (c *compiler) patternTest(pats []pattern, where expr, allowNew, neg bool) (frag, *Error) {
+	bodies, anchors, _, err := c.subBody(pats, where, allowNew)
+	if err != nil {
+		return nil, err
 	}
-	c.nodes = inner
-	defer func() { c.nodes, c.shared, c.scope = saved, savedShared, savedScope }()
-	var body []frag
-	c.shared, c.scope = nil, &body
-	var conds []expr
-	var anchors, ns []*nodeVar
-	for _, np := range p.nodes {
-		if np.v != "" {
-			if _, ok := saved[np.v]; !ok {
-				return nil, errAt(np.pos, "a pattern in WHERE can't introduce %s: a MATCH has to bind it", np.v)
-			}
-		}
-		decl := np
-		if np.v != "" {
-			if len(np.props) > 0 {
-				return nil, errAt(np.pos, "write %s's properties in the MATCH, not in a pattern in WHERE", np.v)
-			}
-			decl.labels = nil
-		}
-		before := len(c.order)
-		n, err := c.declareNode(decl, &conds)
-		if err != nil {
-			return nil, err
-		}
-		if len(c.order) > before {
-			c.order = c.order[:before] // an inner node is the helper's own, not the MATCH's
-		} else if !containsNode(anchors, n) {
-			anchors = append(anchors, n)
-		}
-		ns = append(ns, n)
-		for _, l := range np.labels {
-			if _, ok := c.g.node(l); !ok {
-				return nil, errAt(np.pos, "no label %s in this graph%s", l, oneOf("labels", c.g.labelNames()))
-			}
-			body = append(body, frag{nodeAtm{n: n, label: l}})
-		}
-	}
-	if len(anchors) == 0 {
-		return nil, errAt(p.pos, "a pattern in WHERE has to share a variable with the MATCH")
-	}
-	for i, r := range p.rels {
-		if r.v != "" {
-			return nil, gapEdgeVars.at(r.pos, "a relationship variable in a WHERE pattern")
-		}
-		f, err := c.relLiteral(r, ns[i], ns[i+1])
-		if err != nil {
-			return nil, err
-		}
-		body = append(body, f)
-	}
-	for _, e := range conds {
-		f, err := c.condition(e, false)
-		if err != nil {
-			return nil, err
-		}
-		body = append(body, f)
-	}
-	body = append(body, c.shared...)
 	name := c.helper("exists")
 	head := frag{name + "("}
 	call := frag{name + "("}
 	for i, a := range anchors {
-		a.anchor = true
+		for n := a; n != nil; n = n.of {
+			n.anchor = true
+		}
 		if i > 0 {
 			head, call = append(head, ", "), append(call, ", ")
 		}
-		head, call = append(head, keyArg{a}), append(call, keyArg{a})
+		head, call = append(head, keyArg{a}), append(call, keyArg{a.of})
 	}
-	c.rules = append(c.rules, rule{head: append(head, ")"), body: body})
+	head = append(head, ")")
+	for _, body := range bodies {
+		c.rules = append(c.rules, rule{head: head, body: body})
+	}
 	call = append(call, ")")
 	if neg {
 		return append(frag{"not "}, call...), nil
 	}
 	return call, nil
+}
+
+// countSubquery is COUNT { }: a body aggregate counting the pattern's matches from the nodes it shares,
+// so a node it never matches from counts 0.
+func (c *compiler) countSubquery(sq subquery) (frag, *Error) {
+	bodies, anchors, inner, err := c.subBody(sq.patterns, sq.where, true)
+	if err != nil {
+		return nil, err
+	}
+	if len(bodies) > 1 {
+		return nil, errAt(sq.pos, "COUNT { } over a WHERE with OR: count each alternative and add them")
+	}
+	var counted any
+	if len(inner) > 0 {
+		counted = keyVal{inner[0]}
+	} else {
+		markValued(anchors[0])
+		counted = keyVal{anchors[0]}
+	}
+	jv := c.fresh("_count")
+	*c.scope = append(*c.scope, frag{"?" + jv + " = count(", counted, ") : { ", braces{lits: bodies[0]}, " }"})
+	return frag{"?" + jv}, nil
+}
+
+// subBody compiles a subquery's patterns and WHERE, a body per alternative, with the nodes it shares
+// with the stage (anchors, each a stand-in for the stage's node, so reading one's column reads it
+// here) and those it introduces (inner, only with allowNew).
+func (c *compiler) subBody(pats []pattern, where expr, allowNew bool) (bodies [][]frag, anchors, inner []*nodeVar, err *Error) {
+	saved, savedShared, savedScope, savedOrder := c.nodes, c.shared, c.scope, c.order
+	c.nodes = map[string]*nodeVar{}
+	defer func() { c.nodes, c.shared, c.scope, c.order = saved, savedShared, savedScope, savedOrder }()
+	var body []frag
+	c.shared, c.scope = nil, &body
+	stand := map[*nodeVar]*nodeVar{}
+	var conds []expr
+	for _, p := range pats {
+		var ns []*nodeVar
+		for _, np := range p.nodes {
+			if outer, ok := saved[np.v]; ok && np.v != "" {
+				if len(np.props) > 0 {
+					return nil, nil, nil, errAt(np.pos, "write %s's properties in the MATCH, or as a WHERE inside the subquery", np.v)
+				}
+				a := stand[outer]
+				if a == nil {
+					a = &nodeVar{name: outer.name, jv: outer.jv, labels: append([]string(nil), outer.labels...),
+						slots: map[string]*slot{}, endpoint: true, carried: true, of: outer}
+					stand[outer] = a
+					c.nodes[np.v] = a
+					anchors = append(anchors, a)
+					for _, l := range a.labels {
+						body = append(body, frag{nodeAtm{n: a, label: l, lazy: true}})
+					}
+				}
+				for _, l := range np.labels {
+					if _, ok := c.g.node(l); !ok {
+						return nil, nil, nil, errAt(np.pos, "no label %s in this graph%s", l, oneOf("labels", c.g.labelNames()))
+					}
+					body = append(body, frag{nodeAtm{n: a, label: l}})
+				}
+				ns = append(ns, a)
+				continue
+			}
+			if np.v != "" && !allowNew && c.nodes[np.v] == nil {
+				return nil, nil, nil, errAt(np.pos, "a pattern in WHERE can't introduce %s: a MATCH has to bind it, or write EXISTS { ... }", np.v)
+			}
+			known := c.nodes[np.v] != nil && np.v != ""
+			n, err := c.declareNode(np, &conds)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			if !known && !containsNode(inner, n) {
+				inner = append(inner, n)
+				for _, l := range n.labels {
+					body = append(body, frag{nodeAtm{n: n, label: l}})
+				}
+			} else {
+				for _, l := range np.labels {
+					body = append(body, frag{nodeAtm{n: n, label: l}})
+				}
+			}
+			ns = append(ns, n)
+		}
+		for i, r := range p.rels {
+			if r.v != "" {
+				return nil, nil, nil, gapEdgeVars.at(r.pos, "a relationship variable in a subquery")
+			}
+			f, err := c.relLiteral(r, ns[i], ns[i+1])
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			body = append(body, f)
+		}
+	}
+	if len(anchors) == 0 {
+		return nil, nil, nil, errAt(pats[0].pos, "a pattern in WHERE has to share a variable with the MATCH")
+	}
+	// A subquery of shared nodes alone matches them by their labels.
+	if len(inner) == 0 && !hasRels(pats) {
+		for _, a := range anchors {
+			for _, l := range a.labels {
+				body = append(body, frag{nodeAtm{n: a, label: l}})
+			}
+		}
+		if len(body) == 0 {
+			return nil, nil, nil, errAt(pats[0].pos, "this subquery matches nothing of its own: give it a relationship or a label")
+		}
+	}
+	if where != nil {
+		conds = append(conds, conjuncts(where)...)
+	}
+	ds, err := c.dnf(conds)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	for _, d := range ds {
+		var lits []frag
+		c.scope = &lits
+		for _, cd := range d {
+			f, err := c.condition(cd.e, cd.neg)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			lits = append(lits, f)
+		}
+		bodies = append(bodies, append(append(append([]frag{}, body...), c.shared...), lits...))
+	}
+	return bodies, anchors, inner, nil
+}
+
+func hasRels(pats []pattern) bool {
+	for _, p := range pats {
+		if len(p.rels) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func containsNode(ns []*nodeVar, n *nodeVar) bool {
@@ -1279,6 +1330,7 @@ var aggregates = map[string]bool{"count": true, "min": true, "max": true, "sum":
 type column struct {
 	name string
 	text frag // the projection's column
+	agg  bool
 	vars []string
 	key  string // the expression, for ORDER BY to find it
 }
@@ -1290,16 +1342,11 @@ type returned struct {
 	skip  *int
 }
 
-func (c *compiler) returning(st statement) (returned, *Error) {
-	r := st.ret
+func (c *compiler) returning(r returnClause) (returned, *Error) {
 	var out returned
 	items := r.items
 	if r.star {
-		for _, n := range c.order {
-			if !strings.HasPrefix(n.name, "\x00") {
-				items = append(items, returnItem{e: varRef{pos: r.pos, name: n.name}, text: n.name})
-			}
-		}
+		items = c.starItems(r.pos)
 		if len(items) == 0 {
 			return out, errAt(r.pos, "RETURN * with no named variable")
 		}
@@ -1357,13 +1404,13 @@ func (c *compiler) column(it returnItem) (column, *Error) {
 		}
 		var arg frag
 		switch {
+		case fn.star && agg == "count" && len(c.order) > 0:
+			markValued(c.order[0])
+			arg = frag{keyVal{c.order[0]}}
+		case fn.star && agg == "count" && len(c.vorder) > 0:
+			arg = frag{"?" + c.values[c.vorder[0]]}
 		case fn.star && agg == "count":
-			if len(c.order) == 0 {
-				return col, errAt(fn.pos, "count(*) with nothing matched")
-			}
-			n := c.order[0]
-			n.valued = true
-			arg = frag{keyVal{n}}
+			return col, errAt(fn.pos, "count(*) with nothing matched")
 		case len(fn.args) != 1:
 			return col, errAt(fn.pos, "%s() takes one argument", fn.name)
 		default:
@@ -1380,7 +1427,7 @@ func (c *compiler) column(it returnItem) (column, *Error) {
 		if fn.distinct {
 			d = "distinct "
 		}
-		col.text = frag{agg + "(" + d, arg, ")"}
+		col.text, col.agg = frag{agg + "(" + d, arg, ")"}, true
 		return col, nil
 	}
 	switch it.e.(type) {
@@ -1445,77 +1492,6 @@ func exprKey(e expr) string {
 		return strings.ToLower(e.name) + "(" + d + strings.Join(args, ", ") + ")"
 	}
 	return fmt.Sprintf("%T@%d", e, e.at().Offset)
-}
-
-func (c *compiler) write(ret returned, bodies [][]frag) (Program, *Error) {
-	prog := Program{Params: map[string]datalog.Var{}}
-	for _, col := range ret.cols {
-		prog.Columns = append(prog.Columns, col.name)
-	}
-	var b strings.Builder
-	writeRule := func(r rule) {
-		c.inRule = true
-		b.WriteString(c.render(r.head))
-		b.WriteString(" :- ")
-		for i, l := range r.body {
-			if i > 0 {
-				b.WriteString(", ")
-			}
-			b.WriteString(c.render(l))
-		}
-		b.WriteString(";\n")
-		c.inRule = false
-	}
-	for _, r := range c.rules {
-		writeRule(r)
-	}
-	cols := make([]string, len(ret.cols))
-	for i, col := range ret.cols {
-		cols[i] = c.render(col.text)
-	}
-	var goal []string
-	if len(bodies) == 1 {
-		for _, l := range append(append([]frag{}, c.shared...), bodies[0]...) {
-			goal = append(goal, c.render(l))
-		}
-	} else {
-		name := c.helper("match")
-		var vars []string
-		seen := map[string]bool{}
-		for _, col := range cols {
-			for _, v := range varsIn(col) {
-				if !seen[v] {
-					seen[v] = true
-					vars = append(vars, v)
-				}
-			}
-		}
-		head := name + "(" + strings.Join(vars, ", ") + ")"
-		for _, body := range bodies {
-			writeRule(rule{head: frag{head}, body: append(append([]frag{}, c.shared...), body...)})
-		}
-		goal = []string{head}
-	}
-	if c.err != nil {
-		return Program{}, c.err
-	}
-	b.WriteString(strings.Join(goal, ", "))
-	b.WriteString(" => ")
-	b.WriteString(strings.Join(cols, ", "))
-	if len(ret.order) > 0 {
-		b.WriteString(" order by " + strings.Join(ret.order, ", "))
-	}
-	if ret.limit != nil {
-		fmt.Fprintf(&b, " limit %d", *ret.limit)
-	}
-	if ret.skip != nil {
-		fmt.Fprintf(&b, " offset %d", *ret.skip)
-	}
-	prog.Text = b.String()
-	for name, jv := range c.params {
-		prog.Params[name] = datalog.Var(jv)
-	}
-	return prog, nil
 }
 
 var varRe = regexp.MustCompile(`\?[A-Za-z0-9_]+`)

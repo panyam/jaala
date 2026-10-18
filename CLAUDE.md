@@ -139,11 +139,21 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   and `Explain` read it unchanged. A node is its key; an equality every row holds is written into
   the atom (`pkg("app", _)`) unless something else reads the value, which keeps a variable and a
   comparison (`settle`), so a planner sees constants. A frag's node keys are rendered last for
-  that reason. An OR becomes a `cypher_match` rule per alternative, a WHERE pattern a
-  `cypher_exists` rule over the nodes it shares, a variable length `cypher_reach` (bounded: each
-  length up to 8). A `$param` is a goal variable (`Program.Bind`), refused inside a helper rule,
-  which Bind can't reach. Anything outside the subset is an `*Error` whose `Gap` names the issue
-  (#279 to #289, 352 for WITH/UNION/CALL/subqueries), tested by position in
+  that reason, and kept as a frag (`subst`): rendered early, a `$param` key in a rule escaped the
+  refusal and matched everything (#352's second PR caught it). An OR becomes a `cypher_match` rule
+  per alternative, a WHERE pattern or `EXISTS { }` a `cypher_exists` rule over the nodes it shares
+  (each a stand-in, `nodeVar.of`, so reading one's column inside reads it there), `COUNT { }` a
+  body aggregate (so a node with no match counts 0), a variable length `cypher_reach` (bounded:
+  each length up to 8). Each `WITH` closes a stage (`stage.go`): a `compiler` per stage on a shared
+  `world`, the stage a `cypher_with` rule whose head is what it hands on, a carried node keeping
+  its labels with its label atom written only when a column is read (`nodeAtm.lazy`). A `UNION` is
+  one `cypher_union` relation, a part that aggregates first a `cypher_part` rule. `CALL p(args)
+  YIELD` is an atom over a predicate or relation, written after the patterns (Naive runs a
+  generator where it's written), each YIELD at the argument its label names. `toLower`, `toUpper`,
+  `replace`, `split(s, sep)[i]` and text `+` are str.* calls (`textFuncs`, `isText` reads the
+  schema's types). A `$param` is a goal variable (`Program.Bind`), refused inside any rule, or with
+  `Params` a constant everywhere. Anything outside the subset is an `*Error` whose `Gap` names the
+  issue (#279 to #289, #364 for CALL { } and an order or limit in a WITH or union part), tested by position in
   `TestGapsAreRefusedByName`; its known differences from a Cypher engine (distinct rows,
   reachability rather than trails, a Props read as a match) are in `doc.go`. `TestEval` scores the
   guide's questions in Cypher with `nl.Eval` (`internal/guide` is the fixture both front ends'
@@ -153,7 +163,9 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   library and jaala only, and replaces jaala with `../../` and nl with `../nl` until tags hold
   `internal/guide` and the nl module (Releasing); `internal/guide`
   imports no front end (its `Case` is converted to `nl.Case` in each test) so the root never
-  requires one. Run its tests from inside it: the root's `./...` stops at the module.
+  requires one. Run its tests from inside it: the root's `./...` stops at the module. The docsite's
+  `guide/cypher.md` includes `examples/guide/cypher_test.go`, so the docsite replaces the cypher
+  module with its checkout too.
 - **`Base` is shared across concurrent `Eval`s.** Anything mutable reachable from it must be
   per-query (the `idb*` fields on Eval's shallow copy), atomic (`work`), or locked (`edbCache`,
   `derivedCache`, the vocabulary's `Memo` entries). `TestConcurrentEvalsShareOneCheck` and
@@ -900,7 +912,7 @@ The second active mission is `mission_cypher_frontend` (#356, from epic #278), s
 an agent or the model translating for it writes Cypher, and `frontends/cypher` compiles it into a
 program that checks, so Declaire can measure whether Cypher or jaala's syntax costs an agent less per
 correct answer (declaire#288's "one arm per front end"; the arms are declaire#248). Its tickets: #352
-(the compiler over a graph view of a vocabulary, and `go test ./frontends/cypher -run TestEval -v`,
+(the compiler over a graph view of a vocabulary, and `go test -run TestEval -v .` in `frontends/cypher`,
 `nl`'s cases in Cypher), #353 (errors located in the Cypher text), #354 (`nl.Translate` writing
 Cypher, the 32B arm) and #355 (`frontends/mcp` taking Cypher). The gaps (#279 to #284) stay
 `waiting` until an exercise case is refused for one. The two store missions closed on 2026-10-16. `mission_store_federation` (#219), a host answers a question over many stores without holding them
