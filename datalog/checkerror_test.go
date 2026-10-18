@@ -60,7 +60,7 @@ func TestACheckErrorSaysWhatToFixAndWhere(t *testing.T) {
 		{"a qualified head", "str.mine(?a) :- node(?a);\nmine(?a) => ?a",
 			`query: rule head "str.mine" is a qualified path; a query defines only its own bare relations, and a shared one is registered with AddModule`, KindDefinition, "", "", "name the rule mine, without a module, and call it mine", 1, 1},
 		{"the program's rule called through a module", "mine(?a) :- node(?a);\nstr.mine(?a) => ?a",
-			`query: unknown relation "str.mine"; "str" holds contains, distance, glob, match, prefix, suffix`, KindUnknown, "str.mine", "", "mine is the program's own rule; call it mine, without a module", 2, 1},
+			`query: unknown relation "str.mine"; "str" holds capitalize, concat, contains, distance, glob, lower, match, prefix, replace, split, suffix, upper`, KindUnknown, "str.mine", "", "mine is the program's own rule; call it mine, without a module", 2, 1},
 		{"the program's rule called through no module", "out(?a, ?b) :- edge(?a, ?b);\nr(?b) :- foo.out(\"x\", ?b);\nr(?b) => ?b",
 			`query: rule "r" reads unknown module "foo" in "foo.out"`, KindUnknown, "foo.out", "", "out is the program's own rule; call it out, without a module", 2, 10},
 		{"the program's rule misspelled", "mine(?a) :- node(?a);\nmines(?a) => ?a",

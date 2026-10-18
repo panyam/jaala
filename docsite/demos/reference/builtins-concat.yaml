@@ -1,0 +1,3 @@
+fixture: deps
+query: owner(?p, "data"), str.concat(?p, ".go", ?f) => ?p, ?f
+expect: [[cache, cache.go], [db, db.go]]
