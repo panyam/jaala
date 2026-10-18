@@ -3,6 +3,8 @@ package datalog
 import (
 	"strconv"
 	"strings"
+
+	"github.com/panyam/jaala/ns"
 )
 
 // factor is magic sets' rewrite for right-linear recursion, applied to a goal call whose bound
@@ -32,7 +34,8 @@ import (
 // witnessed Eval is not factored: its witnesses mirror the rules as written, and the factoring folds
 // away the levels of the recursion they would show. The set is an ordinary derived relation, so an
 // answer's citations are the facts of one path from the start.
-func (m *magician) factor(a Atom, bound map[Var]bool) (Atom, bool) {
+func (m *magician) factor(call Atom, bound map[Var]bool) (Atom, bool) {
+	a := withEqualities(call, m.equals, bound)
 	if rules, derived := m.byHead[a.Relation]; !derived || m.b.witnessing() || m.aggregates(a.Relation) || len(rules[0].Head.Args) != len(a.Args) {
 		return a, false
 	}
@@ -82,7 +85,29 @@ func (m *magician) factor(a Atom, bound map[Var]bool) (Atom, bool) {
 		head := Atom{Relation: from, Args: boundTerms(*lits[calls[i]].Pos, adorn)}
 		m.rules = append(m.rules, Rule{Head: head, Body: m.guarded(guard, rest), text: r.text})
 	}
-	return Atom{Relation: answer, Args: a.Args}, true
+	return Atom{Relation: answer, Args: call.Args}, true
+}
+
+// withEqualities is a with each argument an equality bound to one value (#370) written as that
+// value, so a call `reach(?a, ?b)` after `?b = "v40"` is factored as `reach(?a, "v40")` is: the
+// reachable set starts from the value, and the call, still over ?b, reads the answer relation
+// holding it. A variable a host bound to several values isn't one of them, since a reachable set
+// can't tell which start reached which end.
+func withEqualities(a Atom, equals map[Var]*ns.Value, bound map[Var]bool) Atom {
+	var args []Term
+	for j, t := range a.Args {
+		if c, ok := equals[t.Var]; ok && t.Var != "" && bound[t.Var] {
+			if args == nil {
+				args = append([]Term(nil), a.Args...)
+			}
+			args[j] = Term{Const: c}
+		}
+	}
+	if args == nil {
+		return a
+	}
+	a.Args = args
+	return a
 }
 
 // fromSep marks a factored reachable set's name. Like a magic relation, the set guards the rules that

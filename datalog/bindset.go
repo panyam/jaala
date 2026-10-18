@@ -2,6 +2,7 @@ package datalog
 
 import (
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/panyam/jaala/ns"
@@ -117,4 +118,77 @@ func mentions(a *Atom, v Var) bool {
 		}
 	}
 	return false
+}
+
+// bindEqualities binds each goal variable an equality fixes to a text constant, `?h = "X"` or
+// `"X" = ?h`, through a relation holding that one value, read first as a set-bound variable's is
+// (#370). Agents write the constant last, `go.covers(?t, ?h), ?h = "X"`, and the planner then ran
+// go.covers with ?h unbound and filtered afterwards: coverage for every test, where the constant
+// written in place walked back from one handler. Bound first, ?h reaches demand, pushdown and a
+// generator's mode as the constant in place does.
+//
+// The equality stays, and holds of every row. The relation holds the comparison's own constant,
+// coerced as the comparison reads it, and each literal meets it through unify, the strict equality
+// the comparison applies, so no answer changes. A number is left alone: a query's number only
+// filters and never lends its spelling or unit to an answer (#227), and bound first it would. Only
+// the planned SemiNaive rewrites, so Naive stays the reference it's compared against.
+func bindEqualities(q Query) Query {
+	var guards []Literal
+	var facts []Rule
+	named := map[string]int{}
+	for _, l := range q.Goal.Literals {
+		v, c, ok := equalsText(l)
+		if !ok {
+			continue
+		}
+		rel := bindPrefix + "=" + string(v)
+		if named[rel]++; named[rel] > 1 {
+			rel += "#" + strconv.Itoa(named[rel])
+		}
+		facts = append(facts, Rule{Head: Atom{Relation: rel, Args: []Term{{Const: c}}}})
+		guards = append(guards, Literal{Pos: &Atom{Relation: rel, Args: []Term{{Var: v}}}})
+	}
+	if len(guards) == 0 {
+		return q
+	}
+	out := q
+	out.Rules = append(append([]Rule(nil), q.Rules...), facts...)
+	out.Goal = Body{Literals: append(guards, q.Goal.Literals...)}
+	return out
+}
+
+// equalities are the goal variables bindEqualities bound, each to its one value: a goal literal over
+// a \x00b:= relation, whose one rule is the value's fact.
+func equalities(goal Body, byHead map[string][]Rule) map[Var]*ns.Value {
+	var out map[Var]*ns.Value
+	for _, l := range goal.Literals {
+		if l.Pos == nil || !strings.HasPrefix(l.Pos.Relation, bindPrefix+"=") || len(l.Pos.Args) != 1 || l.Pos.Args[0].Var == "" {
+			continue
+		}
+		rules := byHead[l.Pos.Relation]
+		if len(rules) != 1 || len(rules[0].Body.Literals) != 0 || rules[0].Head.Args[0].Const == nil {
+			continue
+		}
+		if out == nil {
+			out = map[Var]*ns.Value{}
+		}
+		out[l.Pos.Args[0].Var] = rules[0].Head.Args[0].Const
+	}
+	return out
+}
+
+// equalsText is the variable and text constant of an equality between them, either way round.
+func equalsText(l Literal) (Var, *ns.Value, bool) {
+	c := l.Compare
+	if c == nil || c.Op != "=" {
+		return "", nil, false
+	}
+	v, k := c.Left, c.Right
+	if v.Var == "" {
+		v, k = k, v
+	}
+	if v.Var == "" || v.Var == "_" || strings.ContainsRune(string(v.Var), 0) || v.Expr != nil || k.Const == nil || k.Const.Num != nil || k.Const.Absent {
+		return "", nil, false
+	}
+	return v.Var, k.Const, true
 }

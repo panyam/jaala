@@ -23,14 +23,15 @@ func factored(t *testing.T, b *Base, text string) bool {
 
 // Asked about one start, right-linear recursion is factored into the set of nodes the start reaches,
 // so its work grows with the chain rather than with the chain's square. The control asks the same
-// question with the start bound through a variable, which plain magic sets serve.
+// question with the start bound through a variable a relation binds, which plain magic sets serve. An
+// equality to text no longer serves (#370): bound first, its value is factored as a constant is.
 func TestFactoringMakesRightLinearRecursionLinear(t *testing.T) {
 	q := rightReach + `reach("v0", ?x) => ?x`
 	ratio := float64(workOf(t, SemiNaive{}, line(400), q)) / float64(workOf(t, SemiNaive{}, line(200), q))
 	if ratio > 2.5 {
 		t.Errorf("factored closure work grew %.1fx when the chain doubled, want about 2x", ratio)
 	}
-	ctl := rightReach + `node(?s), ?s = "v0", reach(?s, ?x) => ?x`
+	ctl := rightReach + `edge(?s, "v1"), reach(?s, ?x) => ?x`
 	if factored(t, baseFor(std(line(4))), ctl) {
 		t.Fatal("control: a start bound through a variable was factored")
 	}

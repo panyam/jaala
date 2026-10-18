@@ -399,7 +399,11 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   value; the final `plan` orders the goal freely, since the adorned relations hold only what was
   demanded. Each value is checked as one constant would be (`checkBoundValue`: coerced, and against a
   closed Domain), and stored as a number when any place reads it as one. Its tuples carry no
-  citations and no witness node.
+  citations and no witness node. The planned SemiNaive's first rewrite does the same for a goal's
+  equality to text, `?h = "X"` either way round (`bindEqualities`, #370, relations `\x00b:=h`),
+  since agents write the constant last, and `factor` reads such a variable as its one value
+  (`magician.equals`, `withEqualities`), which a host's several values can't be. A number only
+  filters (#227) and is left alone, and so is everything outside the goal.
 - **Nothing inside a module resolution may call `Vocabulary.Signature` or `Check`.** They run
   through the memo entry that is mid-computation, and `sync.Once` deadlocks on re-entry. That is
   why the validation base carries `sigs` while it checks module rules.

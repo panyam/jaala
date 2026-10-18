@@ -5,6 +5,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/panyam/jaala/ns"
 )
 
 // magic is SemiNaive's demand-driven rewrite, the magic-sets transformation, run after unfold and
@@ -122,6 +124,7 @@ func magicWith(b *Base, q Query, intoNeg bool, inFull map[string]bool) Query {
 	for _, r := range q.Rules {
 		m.byHead[r.Head.Relation] = append(m.byHead[r.Head.Relation], r)
 	}
+	m.equals = equalities(q.Goal, m.byHead)
 	m.asGoal = asGoal(b, q, m.byHead)
 	out := q
 	if len(out.Select) == 0 {
@@ -381,13 +384,14 @@ type magician struct {
 	intoNeg  bool            // push demand into negated calls
 	done     map[string]bool // adorned relations already queued
 	queue    []adorned
-	rules    []Rule          // magic, supplementary, adorned and factored rules, in the order made
-	factored int             // goal calls factored so far, numbering their relations
-	supplied int             // supplementary relations made so far, numbering them
-	free     []adorned       // all-free adornments made (#60), for foldFree
-	asGoal   map[string]bool // relations whose rules get the goal's demand (see asGoal)
-	inFull   map[string]bool // relations read in full, never demanded (see magic)
-	runs     map[string]bool // constantRun's answers, by relation
+	rules    []Rule            // magic, supplementary, adorned and factored rules, in the order made
+	factored int               // goal calls factored so far, numbering their relations
+	supplied int               // supplementary relations made so far, numbering them
+	free     []adorned         // all-free adornments made (#60), for foldFree
+	asGoal   map[string]bool   // relations whose rules get the goal's demand (see asGoal)
+	inFull   map[string]bool   // relations read in full, never demanded (see magic)
+	runs     map[string]bool   // constantRun's answers, by relation
+	equals   map[Var]*ns.Value // goal variables an equality bound to one text value (bindEqualities, #370)
 }
 
 type adorned struct{ rel, adorn string }

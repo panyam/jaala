@@ -15,6 +15,8 @@ The planned `SemiNaive{}` rewrites a query before running it, in three steps: in
 
 jaala drops the rules the goal can't reach, since they can't change the answer and a rewrite renaming what they read would leave them reading nothing ([#90](https://github.com/panyam/jaala/issues/90)). They've already been checked by then, so a mistake in one is still reported. The second example above shows the check that comes first: the error names `depends_on`, the relation as written, though the rewrite would have renamed it.
 
+Before that, a goal's equality between a variable and text binds the variable first ([#370](https://github.com/panyam/jaala/issues/370)). Agents tend to write the constant last, `covers(?t, ?h), ?h = "X"`, and planned as written that evaluates `covers` for every `?h` and keeps one. The rewrite adds a literal reading a relation of that one value, as a host's set-bound variable gets ([#132](https://github.com/panyam/jaala/issues/132)), and the planner keeps it first, so demand starts from `"X"` and a recursive call is factored as `covers(?t, "X")` would be. The equality stays and holds of every row, so the answer, its citations and its witnesses don't change. A number is left alone, since a query's number only filters and mustn't lend an answer its spelling or unit ([#227](https://github.com/panyam/jaala/issues/227)).
+
 ## Inlining
 
 A call to a relation with one rule, not recursive, is replaced by that rule's body, so a constant at the call reaches the literals inside, where the planner can use it. It stands aside:
