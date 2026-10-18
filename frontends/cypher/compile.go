@@ -1181,6 +1181,7 @@ func (c *compiler) subBody(pats []pattern, where expr, allowNew bool) (bodies []
 			if r.v != "" {
 				return nil, nil, nil, gapEdgeVars.at(r.pos, "a relationship variable in a subquery")
 			}
+			ns[i].endpoint, ns[i+1].endpoint = true, true
 			f, err := c.relLiteral(r, ns[i], ns[i+1])
 			if err != nil {
 				return nil, nil, nil, err
@@ -1190,6 +1191,16 @@ func (c *compiler) subBody(pats []pattern, where expr, allowNew bool) (bodies []
 	}
 	if len(anchors) == 0 {
 		return nil, nil, nil, errAt(pats[0].pos, "a pattern in WHERE has to share a variable with the MATCH")
+	}
+	// A node of its own that nothing else matches ranges over every node, as in a MATCH.
+	for _, n := range inner {
+		if len(n.labels) == 0 && !n.endpoint {
+			f, err := c.anyNode(n)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			body = append(body, f)
+		}
 	}
 	// A subquery of shared nodes alone matches them by their labels.
 	if len(inner) == 0 && !hasRels(pats) {
