@@ -36,6 +36,11 @@ hideTitle: true
 <a href="{{.Site.PathPrefix}}/guide/versions/">Versions &rarr;</a>
 </div>
 <div class="feature-card">
+<h3>Asked in plain language or Cypher</h3>
+<p>A model writes a program from a question and fixes it from jaala's errors, an MCP server lets an agent ask with its own tools, and Cypher compiles to a program.</p>
+<a href="{{.Site.PathPrefix}}/guide/plain-language/">Asking through a model &rarr;</a>
+</div>
+<div class="feature-card">
 <h3>A library, in Go or in the browser</h3>
 <p>Pure Go with no dependencies outside the standard library, so it embeds in a service and runs in a browser as wasm.</p>
 <a href="{{.Site.PathPrefix}}/overview/#three-packages">The three packages &rarr;</a>

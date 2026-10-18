@@ -1,6 +1,6 @@
 module github.com/panyam/jaala/docsite
 
-go 1.26.4
+go 1.26.9
 
 require github.com/panyam/s3gen v0.1.6
 
@@ -8,25 +8,51 @@ require (
 	github.com/BurntSushi/toml v0.3.1 // indirect
 	github.com/adrg/frontmatter v0.2.0 // indirect
 	github.com/alecthomas/chroma v0.10.0 // indirect
+	github.com/bahlo/generic-list-go v0.2.0 // indirect
+	github.com/buger/jsonparser v1.6.1 // indirect
 	github.com/dlclark/regexp2 v1.11.4 // indirect
-	github.com/felixge/httpsnoop v1.0.4 // indirect
+	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/gorilla/mux v1.8.1 // indirect
+	github.com/gorilla/websocket v1.5.3 // indirect
+	github.com/invopop/jsonschema v0.14.0 // indirect
 	github.com/morrisxyang/xreflect v0.0.0-20231001053442-6df0df9858ba // indirect
+	github.com/panyam/gocurrent v0.1.2 // indirect
 	github.com/panyam/goutils v0.1.13 // indirect
+	github.com/panyam/servicekit v0.1.5 // indirect
 	github.com/panyam/templar v0.1.0 // indirect
+	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect
 	github.com/radovskyb/watcher v1.0.7 // indirect
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3 // indirect
+	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	github.com/yuin/goldmark v1.7.13 // indirect
 	github.com/yuin/goldmark-highlighting v0.0.0-20220208100518-594be1970594 // indirect
 	go.abhg.dev/goldmark/anchor v0.2.0 // indirect
+	go.yaml.in/yaml/v4 v4.0.0-rc.6 // indirect
+	golang.org/x/sys v0.48.0 // indirect
+	golang.org/x/text v0.42.0 // indirect
+	golang.org/x/time v0.16.0 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260917231906-eeb232e0883d // indirect
+	google.golang.org/grpc v1.84.0 // indirect
+	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/yaml.v2 v2.3.0 // indirect
 )
 
 require (
 	github.com/panyam/jaala v0.1.73
-	github.com/panyam/jaala/frontends/nl v0.0.0
+	github.com/panyam/jaala/frontends/cypher v0.0.0-00010101000000-000000000000
+	github.com/panyam/jaala/frontends/mcp v0.0.0-00010101000000-000000000000
+	github.com/panyam/jaala/frontends/nl v0.1.73
+	github.com/panyam/jaala/frontends/nlmodels v0.0.0-00010101000000-000000000000
+	github.com/panyam/mcpkit v0.8.2
 	gopkg.in/yaml.v3 v3.0.1
 )
 
 replace github.com/panyam/jaala => ../
 
 replace github.com/panyam/jaala/frontends/nl => ../frontends/nl
+
+replace github.com/panyam/jaala/frontends/cypher => ../frontends/cypher
+
+replace github.com/panyam/jaala/frontends/mcp => ../frontends/mcp
+
+replace github.com/panyam/jaala/frontends/nlmodels => ../frontends/nlmodels

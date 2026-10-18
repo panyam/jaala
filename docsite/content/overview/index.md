@@ -35,10 +35,18 @@ A host serves its facts through a `Source`, and the simplest one holds them in m
 jaala comes as three packages, layered one way.
 
 - `ns` is the vocabulary: the tree of names a query can call, each with its signature. A name is a base relation whose facts a host's `Source` serves, a predicate the host computes, or a derived relation a module defines. It doesn't parse or evaluate anything, which is the engine's job.
-- `stdlib` is the standard vocabulary: string tests like `str.contains` and `str.glob`, and `absent`.
+- `stdlib` is the standard vocabulary: string tests like `str.contains` and `str.glob`, functions that build text like `str.concat`, arithmetic and units (`num.*`), and `absent`.
 - `datalog` is the engine. It parses queries, links the modules a query names, and evaluates it over a vocabulary paired with a `Source`.
 
-All three use only the Go standard library, and they build for `GOOS=js GOARCH=wasm`, which is how the examples on this site will run in your browser.
+All three use only the Go standard library, and they build for `GOOS=js GOARCH=wasm`, which is how the examples on this site run in your browser.
+
+## Front ends
+
+A program can come from somewhere other than jaala's own syntax. Each of these is a Go module of its own under `frontends/`, so what one depends on reaches only the hosts that import it, and an engine-only host imports none of them.
+
+- `frontends/nl` lets a model write a program from a plain-language question: the vocabulary as a card, a grammar that keeps the model's output parseable, errors it can fix a program from, the retry loop, a host's domain pack, and scoring over questions with known answers ([asking through a model]({{.Site.PathPrefix}}/guide/plain-language/)). `frontends/nlmodels` holds clients for local models already running, llama.cpp's server and Ollama.
+- `frontends/mcp` is an MCP server for any vocabulary, whose instructions come from the host's pack, so an agent asks over the graph with its own tools ([serving agents]({{.Site.PathPrefix}}/guide/mcp-server/)).
+- `frontends/cypher` compiles Cypher into a program over a host's graph view of its relations ([asking in Cypher]({{.Site.PathPrefix}}/guide/cypher/)).
 
 ## Two evaluators
 

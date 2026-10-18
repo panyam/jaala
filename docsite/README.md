@@ -69,6 +69,16 @@ be shown on some page.
 `demo.Run` is the one function that runs an example: the build, the tests and the in-page editor
 (#107) all call it, with a work budget so an edited example that runs away stops instead of hanging.
 
+## Go examples
+
+A page about a Go API shows a whole file of `Example` functions with
+`{{ includeFileText "examples/<section>/<file>_test.go" }}` in a `go` fence, and `go test` runs each
+against its `// Output:`. The docsite's `go.mod` replaces jaala and every front end with the checkout,
+so an example runs the code beside it (and `make bump-root` tidies it after a release). An example
+needing a server stands one up with `httptest`, as the llama-server and MCP examples do, so nothing
+leaves the process. Go folds a run of blank lines in an `// Output:` comment into one, so an example
+printing two blank lines in a row can never match: print one.
+
 ## Live examples
 
 Every example has an Edit button (`static/js/demos.js`). It swaps the source for a textarea with the
