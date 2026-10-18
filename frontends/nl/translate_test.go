@@ -168,6 +168,31 @@ func TestTranslateSendsAnEmptyAnswerBackWithoutAFallback(t *testing.T) {
 	}
 }
 
+// An empty answer goes back with the literal that matched nothing and what it was first called with
+// (#343), and the Try keeps the error and the evaluation's report. control: the accepted draft's
+// report has no Empty.
+func TestTranslateSaysWhichLiteralLeftTheAnswerEmpty(t *testing.T) {
+	v := vocabulary(t)
+	b := graphBase(t, v)
+	m := model("small", `edge("a", ?x), edge(?x, "a") => ?x`, `edge("a", ?x), edge(?x, "c") => ?x`)
+	p, tr, err := nl.Translate(context.Background(), "what leads from a back to a?", v, nil, m, nl.Options{Base: b})
+	if err != nil || len(p.Rows) != 1 {
+		t.Fatalf("Translate = %+v, %v", p, err)
+	}
+	want := `edge(?x, "a") matched nothing (first called as edge("b", "a"))`
+	if turns := m.asked[1].Turns; len(turns) != 3 || !strings.Contains(turns[2].Text, want) {
+		t.Errorf("second prompt's turns %+v; want %q in the feedback", turns, want)
+	}
+	var empty *nl.EmptyAnswer
+	first := tr.Tries[0]
+	if !errors.As(first.Err, &empty) || empty.Why == nil || empty.Why.Called != `edge("b", "a")` || first.Report == nil || first.Report.Empty != empty.Why {
+		t.Errorf("first try: err %v, report %v", first.Err, first.Report)
+	}
+	if last := tr.Tries[1]; last.Report == nil || last.Report.Empty != nil || last.Report.Rows != 1 {
+		t.Errorf("control: the accepted try's report %v", last.Report)
+	}
+}
+
 // A draft the model already wrote, fenced or not, is refused without being checked and ends its
 // turn, so the fallback gets the remaining work. The Try's error wraps the first draft's. control: a model writing
 // a different second draft is asked a third time.

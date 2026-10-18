@@ -176,6 +176,9 @@ func (r *evalRun) readOne() error {
 // units of n when its context is done.
 func (r *evalRun) check(n int64) error {
 	if spent := r.used + r.read; r.budget > 0 && spent > r.budget {
+		if r.explain != nil && r.explain.cur != nil {
+			r.explain.cur.Stopped = true
+		}
 		return &BudgetExceeded{Work: spent, Limit: r.budget}
 	}
 	if n%ctxCheckEvery == 0 {

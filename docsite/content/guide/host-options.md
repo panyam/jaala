@@ -47,7 +47,9 @@ Last come the base relations it read, whether the `Base` already held them, and 
 
 `Work` is what the `Eval` spent, which is what a `Budget` caps, so it depends on what ran on the `Base` before: a query reusing a relation an earlier one kept costs less. `Report.Cold` is the same query's cost on a base that kept nothing, which doesn't move from run to run, so it's the number to compare two queries or plans by, or to suggest a budget from. When the query reused something, `Explain` finds it by running the query again on a copy of the base that keeps nothing. That run doesn't count toward `Base.Work`, but it does read the source again.
 
-The report is filled even when the `Eval` fails, so a query its `Budget` stopped still shows what spent the budget. Asking for it costs time in proportion to the rules and literals a query runs. Not asking costs nothing measurable, which is why it's off by default.
+A query that answers nothing gets `Report.Empty` ([#343](https://github.com/panyam/jaala/issues/343)): the first literal, in the order the body ran, that passed no binding on, and the call that first matched nothing with the values the literals before it had bound, such as `edge(?x, "a") matched nothing (first called as edge("b", "a"))`. When that literal reads one of the program's own relations and none of its rules derived anything, `Because` says the same for each of those rules, down to the literal over your data that came up empty. A `not` that let nothing through, or a comparison that held for none, is named the same way. jaala names the call; saying which values your data does hold there is yours to add.
+
+The report is filled even when the `Eval` fails, so a query its `Budget` stopped still shows what spent the budget, and marks the literal it stopped in (`LiteralReport.Stopped`). Asking for it costs time in proportion to the rules and literals a query runs. Not asking costs nothing measurable, which is why it's off by default.
 
 ## Sharing a base
 
