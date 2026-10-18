@@ -17,6 +17,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/panyam/jaala/datalog"
 	"github.com/panyam/jaala/frontends/cypher"
@@ -60,6 +62,16 @@ type Options struct {
 	MaxWork int64
 	// Eval are further options every evaluation runs with.
 	Eval []datalog.Option
+	// Timeout is the longest a call may take, Prepare and Base included, after which it stops and
+	// answers a tool error saying so (#361); 0 is no limit. A Run's Timeout may shorten it.
+	Timeout time.Duration
+	// Vocabulary, given in place of New's vocabulary, resolves it on the first call that reads it
+	// (schema, ask and cypher), so a host whose vocabulary comes from its data answers initialize
+	// at once rather than after opening it (#361). It is called again after it fails, and the checks
+	// New would make of the pack (its examples, the card, the Cypher graph) run on the first
+	// vocabulary it returns, failing that call when they fail. query and explain read the Base and
+	// never wait for it.
+	Vocabulary func(ctx context.Context) (*ns.Vocabulary, error)
 }
 
 // An Answer is one page of an evaluated program, as Pack.Format receives it.
@@ -103,11 +115,15 @@ type Run struct {
 	// Name, Version, Instructions, and the About the tool descriptions are written from, went to the
 	// client when it connected, so a Run's aren't read.
 	Pack *Pack
+	// Timeout, when shorter than Options.Timeout (or that is 0), is the longest the rest of the call
+	// may take.
+	Timeout time.Duration
 }
 
 // New builds the server for v and p. It refuses a pack whose examples don't check against v
-// (nl.Pack.Validate) or options without a Base. It is NewWith with no host arguments, so its tools
-// too refuse an argument they don't name.
+// (nl.Pack.Validate) or options without a Base. v may be nil when Options.Vocabulary resolves it on
+// first use instead, and New refuses both or neither. It is NewWith with no host arguments, so its
+// tools too refuse an argument they don't name.
 func New(v *ns.Vocabulary, p Pack, o Options) (*server.Server, error) {
 	return NewWith(v, p, o, Extension[struct{}]{})
 }
@@ -120,11 +136,15 @@ func NewWith[A any](v *ns.Vocabulary, p Pack, o Options, x Extension[A]) (*serve
 	if o.Base == nil {
 		return nil, errors.New("mcp: Options.Base is required")
 	}
-	if err := p.Validate(v); err != nil {
-		return nil, err
+	if (v == nil) == (o.Vocabulary == nil) {
+		return nil, errors.New("mcp: give a vocabulary or Options.Vocabulary, one of the two")
 	}
-	if _, err := nl.Card(v); err != nil {
-		return nil, err
+	vocab := &vocabulary{resolve: o.Vocabulary, check: func(v *ns.Vocabulary) error { return checkVocabulary(v, p) }}
+	if v != nil {
+		if err := vocab.check(v); err != nil {
+			return nil, err
+		}
+		vocab.v = v
 	}
 	if o.Limit <= 0 {
 		o.Limit = 100
@@ -144,7 +164,7 @@ func NewWith[A any](v *ns.Vocabulary, p Pack, o Options, x Extension[A]) (*serve
 	if err != nil {
 		return nil, fmt.Errorf("mcp: the host's arguments: %w", err)
 	}
-	t := &tools{v: v, p: p, o: o}
+	t := &tools{vocab: vocab, p: p, o: o}
 	topic := topic(p.About)
 	query, qerr := tool(t, x, host, "query", fmt.Sprintf(queryDesc, topic), (*call).query)
 	schema, serr := tool(t, x, host, "schema", fmt.Sprintf(schemaDesc, topic), (*call).schema)
@@ -159,9 +179,6 @@ func NewWith[A any](v *ns.Vocabulary, p Pack, o Options, x Extension[A]) (*serve
 		srv.Register(ask)
 	}
 	if p.Cypher != nil {
-		if err := p.Cypher.Validate(v); err != nil {
-			return nil, fmt.Errorf("mcp: the pack's graph: %w", err)
-		}
 		cy, err := tool(t, x, host, "cypher", fmt.Sprintf(cypherDesc, topic, graphText(*p.Cypher)), (*call).cypher)
 		if err != nil {
 			return nil, err
@@ -169,6 +186,54 @@ func NewWith[A any](v *ns.Vocabulary, p Pack, o Options, x Extension[A]) (*serve
 		srv.Register(cy)
 	}
 	return srv, nil
+}
+
+// checkVocabulary is what New checks of a pack against its vocabulary: that its examples check
+// (nl.Pack.Validate), that the card can be written, and that its Cypher graph reads v's relations.
+func checkVocabulary(v *ns.Vocabulary, p Pack) error {
+	if err := p.Validate(v); err != nil {
+		return err
+	}
+	if _, err := nl.Card(v); err != nil {
+		return err
+	}
+	if p.Cypher != nil {
+		if err := p.Cypher.Validate(v); err != nil {
+			return fmt.Errorf("mcp: the pack's graph: %w", err)
+		}
+	}
+	return nil
+}
+
+// A vocabulary is the server's, given up front or resolved by Options.Vocabulary on the first call
+// that reads it, and checked once.
+type vocabulary struct {
+	mu      sync.Mutex
+	v       *ns.Vocabulary
+	resolve func(context.Context) (*ns.Vocabulary, error)
+	check   func(*ns.Vocabulary) error
+}
+
+// get is the vocabulary, resolving and checking it the first time; a failure isn't kept, so the next
+// call tries again.
+func (s *vocabulary) get(ctx context.Context) (*ns.Vocabulary, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.v != nil {
+		return s.v, nil
+	}
+	v, err := s.resolve(ctx)
+	if err == nil && v == nil {
+		err = errors.New("mcp: Options.Vocabulary returned no vocabulary")
+	}
+	if err == nil {
+		err = s.check(v)
+	}
+	if err != nil {
+		return nil, err
+	}
+	s.v = v
+	return v, nil
 }
 
 // Instructions are what New tells a client the server is for, when the pack doesn't replace them:

@@ -2,19 +2,27 @@ package mcp
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/panyam/mcpkit/core"
 )
 
-// A call is one tool call: the server's tools with the pack its Run gives, if any, and the Run.
+// A call is one tool call: the server's tools with the pack its Run gives, if any, the Run, and the
+// longest the call may take, 0 for no limit.
 type call struct {
 	tools
-	run Run
+	run     Run
+	timeout time.Duration
 }
+
+// readsVocabulary are the tools that read the vocabulary itself rather than a Base, which wait for
+// Options.Vocabulary on a server given none up front.
+var readsVocabulary = map[string]bool{"schema": true, "ask": true, "cypher": true}
 
 // tool is the tool name taking In's arguments and A's beside them, flat in one schema allowing no
 // others. Go can't embed a type parameter, so the handler reads the arguments twice, into In and
@@ -42,7 +50,12 @@ func tool[In, A any](t *tools, x Extension[A], host object, name, desc string, h
 		if err := json.Unmarshal(args, &a); err != nil {
 			return core.ErrorResult(fmt.Sprintf("invalid arguments: %v", err)), nil
 		}
-		c := &call{tools: *t}
+		c := &call{tools: *t, timeout: t.o.Timeout}
+		if c.timeout > 0 {
+			var cancel context.CancelFunc
+			ctx.Context, cancel = context.WithTimeout(ctx.Context, c.timeout)
+			defer cancel()
+		}
 		if x.Prepare != nil {
 			r, err := x.Prepare(ctx, name, a)
 			if err != nil {
@@ -52,6 +65,19 @@ func tool[In, A any](t *tools, x Extension[A], host object, name, desc string, h
 			if r.Pack != nil {
 				c.p = *r.Pack
 			}
+			if r.Timeout > 0 && (c.timeout == 0 || r.Timeout < c.timeout) {
+				var cancel context.CancelFunc
+				ctx.Context, cancel = context.WithTimeout(ctx.Context, r.Timeout)
+				defer cancel()
+				c.timeout = r.Timeout
+			}
+		}
+		if readsVocabulary[name] {
+			v, err := t.vocab.get(ctx)
+			if err != nil {
+				return core.ErrorResult(err.Error()), nil
+			}
+			c.v = v
 		}
 		res, err := handle(c, ctx, in)
 		return res, err

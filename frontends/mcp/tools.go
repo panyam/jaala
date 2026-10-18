@@ -15,9 +15,10 @@ import (
 )
 
 type tools struct {
-	v *ns.Vocabulary
-	p Pack
-	o Options
+	v     *ns.Vocabulary // the vocabulary, once a call has resolved it (see readsVocabulary)
+	vocab *vocabulary
+	p     Pack
+	o     Options
 }
 
 const queryDesc = `Run a Datalog program over %s and get its rows, each with the facts it was derived from. Read the schema first. Results are capped by limit (continue with page_token) and max_work; an error says what went wrong and often how to fix it, so fix the program and call again.`
@@ -41,7 +42,7 @@ func (c *call) query(ctx core.ToolContext, in queryInput) (core.ToolResult, erro
 	}
 	b, err := c.base(ctx)
 	if err != nil {
-		return core.ErrorResult(err.Error()), nil
+		return core.ErrorResult(err.Error() + c.budgetHint(err)), nil
 	}
 	tab, err := datalog.SemiNaive{}.EvalTable(ctx, q, b, c.evalOptions(in.MaxWork, datalog.Witnesses())...)
 	if err != nil {
@@ -93,13 +94,18 @@ func (c *call) evalOptions(asked int64, extra ...datalog.Option) []datalog.Optio
 }
 
 // refuse is err as a tool error an agent fixes the program from: nl.Explain's message, place and fix,
-// and for a budget, how far the server lets it go.
-func (t *tools) refuse(program string, err error) core.ToolResult {
-	return core.ErrorResult(nl.Explain(program, err) + t.budgetHint(err))
+// and for a budget or the call's time, how far the server lets it go.
+func (c *call) refuse(program string, err error) core.ToolResult {
+	return core.ErrorResult(nl.Explain(program, err) + c.budgetHint(err))
 }
 
-// budgetHint is, for a spent budget, what to do about it and how far the server lets max_work go.
-func (t *tools) budgetHint(err error) string {
+// budgetHint is, for a spent budget, what to do about it and how far the server lets max_work go,
+// and for a call stopped at its timeout (#361), how long the server gives one.
+func (c *call) budgetHint(err error) string {
+	if c.timeout > 0 && errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Sprintf("\nThis server stops a call after %s. Ask something narrower, bind more of its arguments, or add a limit.\n", c.timeout)
+	}
+	t := c.tools
 	var be *datalog.BudgetExceeded
 	if !errors.As(err, &be) {
 		return ""
@@ -335,7 +341,7 @@ func (c *call) explain(ctx core.ToolContext, in explainInput) (core.ToolResult, 
 	}
 	b, err := c.base(ctx)
 	if err != nil {
-		return core.ErrorResult(err.Error()), nil
+		return core.ErrorResult(err.Error() + c.budgetHint(err)), nil
 	}
 	var r datalog.Report
 	rows, err := datalog.SemiNaive{}.Eval(ctx, q, b, c.evalOptions(in.MaxWork, datalog.Explain(&r))...)
@@ -371,7 +377,7 @@ func (c *call) ask(ctx core.ToolContext, in askInput) (core.ToolResult, error) {
 	}
 	b, err := c.base(ctx)
 	if err != nil {
-		return core.ErrorResult(err.Error()), nil
+		return core.ErrorResult(err.Error() + c.budgetHint(err)), nil
 	}
 	p, tr, err := nl.Translate(ctx, in.Question, c.v, nil, model, nl.Options{
 		Fallback: fallback, Base: b, Eval: c.evalOptions(in.MaxWork), Pack: &c.p.Pack,

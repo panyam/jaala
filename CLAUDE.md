@@ -132,7 +132,12 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   fields are merged flat into each tool's schema (`args.go`, which reads the arguments twice, since
   Go can't embed a type parameter), a clash with a tool's own name is refused at startup, and every
   schema says `additionalProperties: false`, so mcpkit's argument validation fails a misspelled
-  call, plain `New`'s too. `Prepare` returns a `Run` per call (Base, Eval, and a whole Pack). Its
+  call, plain `New`'s too. `Prepare` returns a `Run` per call (Base, Eval, a whole Pack, and a
+  `Timeout` that shortens `Options.Timeout`, #361: the handler in `args.go` sets the deadline on
+  `ToolContext`'s embedded context before `Prepare`, and `budgetHint` names it). `Options.Vocabulary`
+  replaces `New`'s vocabulary (`New(nil, …)`; both or neither is refused) and is resolved under a lock
+  by the first call to a tool in `readsVocabulary` (schema, ask, cypher), running New's pack checks
+  (`checkVocabulary`) then; a failure isn't kept. Its
   tests are a toy host (`roads`) through mcpkit's `testutil` client. A pack with a `Cypher` graph
   (#366) adds a `cypher` tool: it compiles over the call's pack (so `Run.Pack` brings its own graph,
   and one without refuses), answers as `query` does with `ran:` and the program first, and names
@@ -201,6 +206,14 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   nothing: give each its own Base, or `LimitLookupCache(0)`. Anything that sizes
   a base relation (`fanOut`, `scanSize`) checks `looksUp` first and reports "unknown" rather than
   reading it. The corpus runs every program over a `looking` wrapper too (`agreeLookingUp`).
+- **A host's own work is charged through `ns.Allowance`** (`ns/allowance.go`, #361). The Eval's
+  run is the Allowance on the context every Source call and `Gen` gets (`ns.WithAllowance` in `eval`),
+  in `ns` because a host's fact layer may not import the engine. `Spend` adds to `run.spent`, which
+  `check` charges beside `used` and `read`, so, as reads, it is in `BudgetExceeded.Work` but not
+  `Work`, the baselines or Explain's literal `Work`: `Report.Spent` and `LiteralReport.Spent` show
+  it. A host returns `Spend`'s error as it is, and `readFailed`, `lookupErr` and `pushErr` unwrap it
+  (`spentAll`) so the Eval fails with the plain `BudgetExceeded`. `Spend` runs on the goroutine the
+  engine called the host on, as `emit` does, so `run`'s counters stay plain ints.
 - **A relation a `StreamSource` hands over is charged to the budget as it arrives** (#233,
   `readTuples`). Each tuple calls `evalRun.readOne`, which counts `run.read` beside `run.used`
   against the budget, so a budgeted query stops having held at most that many tuples. A read isn't

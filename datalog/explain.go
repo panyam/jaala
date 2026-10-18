@@ -43,6 +43,10 @@ type Report struct {
 	Lookups int64 `json:"lookups,omitempty"`
 	Batches int64 `json:"batches,omitempty"`
 	Fetched int64 `json:"fetched,omitempty"`
+	// Spent is what the Eval's Sources and generators charged for their own work (ns.Allowance,
+	// #361): it counts against the Budget beside Work, and isn't part of Work, which stays the
+	// engine's own.
+	Spent int64 `json:"spent,omitempty"`
 	// Pushes are the calls to the Source's Push (ns.PushSource, #237), each a conjunction of several
 	// relations and another round trip; Fetched counts the tuples of the rows they returned.
 	Pushes int64 `json:"pushes,omitempty"`
@@ -146,6 +150,9 @@ type LiteralReport struct {
 	Reached int64 `json:"reached"`
 	Passed  int64 `json:"passed"`
 	Work    int64 `json:"work"`
+	// Spent is what the Sources and generators it called charged for their own work (ns.Allowance,
+	// #361), apart from Work.
+	Spent int64 `json:"spent,omitempty"`
 	// Missed is the first call of it that passed nothing on, with the variables bound by then written
 	// as their values (for a `not`, the first binding it refused), or "" when every call passed one.
 	Missed string `json:"missed,omitempty"`
@@ -243,6 +250,13 @@ func newExplainer(r *Report, b *Base) *explainer {
 }
 
 // count attributes one unit of work to the body and literal being solved.
+// spend records n units a host charged while the current literal ran (#361).
+func (e *explainer) spend(n int64) {
+	if e.cur != nil {
+		e.cur.Spent += n
+	}
+}
+
 func (e *explainer) count() {
 	if e.cur != nil {
 		e.cur.Work++
@@ -367,7 +381,7 @@ func (e *explainer) finish(b *Base, rows int, err error, budget int64) {
 	r := e.report
 	r.Elapsed = time.Since(e.start)
 	if b.run != nil {
-		r.Work = b.run.used
+		r.Work, r.Spent = b.run.used, b.run.spent
 	}
 	r.Budget = budget
 	r.Rows = rows
@@ -704,6 +718,9 @@ func sortedKeys[V any](m map[string]V) []string {
 func (r *Report) String() string {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "work %d", r.Work)
+	if r.Spent > 0 {
+		fmt.Fprintf(&sb, ", spent %d by the source", r.Spent)
+	}
 	if r.Budget > 0 {
 		fmt.Fprintf(&sb, " of a budget of %d", r.Budget)
 	}
@@ -838,6 +855,9 @@ func (br *BodyReport) write(sb *strings.Builder) {
 	fmt.Fprintf(sb, ", work %d, %s\n", br.Work, br.Elapsed.Round(time.Microsecond))
 	for _, l := range br.Literals {
 		fmt.Fprintf(sb, "    %-40s reached %d, passed %d, work %d", l.Literal, l.Reached, l.Passed, l.Work)
+		if l.Spent > 0 {
+			fmt.Fprintf(sb, ", spent %d", l.Spent)
+		}
 		if len(l.Access) > 0 {
 			fmt.Fprintf(sb, ", %s", strings.Join(l.Access, " | "))
 		}

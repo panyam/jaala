@@ -264,6 +264,9 @@ func streamTuples(run *evalRun, ss ns.StreamSource, rel string, each func(ns.Tup
 
 // readFailed wraps a failed read of rel, as the context's end when that is why it failed.
 func readFailed(ctx context.Context, rel string, err error) error {
+	if be, ok := spentAll(err); ok {
+		return be
+	}
 	if ctx.Err() != nil {
 		return fmt.Errorf("query: evaluation stopped reading %s: %w", rel, ctx.Err())
 	}
@@ -343,6 +346,7 @@ func evaluate(ctx context.Context, q Query, b *Base, opts []Option, rewrite func
 	nb := *b
 	nb.run = &evalRun{ctx: ctx, budget: o.budget, witness: o.witness || o.canonical, canonical: o.canonical, lookGen: b.lookups.generation(),
 		gen: gen, version: version, versioned: versioned}
+	nb.run.ctx = ns.WithAllowance(ctx, nb.run) // what a host hands its own work to (#361)
 	if o.explain == nil {
 		tab, err := evaluateOn(&nb, gen, q, o, rewrite, fixpoint)
 		return tab, localFix(err, q.Rules)

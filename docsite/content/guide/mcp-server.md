@@ -20,6 +20,8 @@ The examples use the vocabulary from [Host options]({{.Site.PathPrefix}}/guide/h
 - `mcp.Pack` is an `nl.Pack` plus what only a server needs: `Name` and `Version`, which identify it to a client (`jaala` and `0.0.0` when empty), `Instructions`, and `Format` (below).
 - `Options.Base` is a func asked once per call, so a host can pick a workspace or a store per caller.
 - `Options.Limit` is the most rows a call returns (100 when 0) and `Options.MaxWork` caps every call's work (no cap when 0). A call may ask for less of either, never more.
+- `Options.Timeout` is the longest a call may take, `Prepare` and `Base` included ([#361](https://github.com/panyam/jaala/issues/361)). A call past it stops and answers a tool error saying how long the server gives one, and a `Run`'s `Timeout` may shorten it for one call but never lengthen it.
+- `Options.Vocabulary`, given in place of `New`'s vocabulary (`mcp.New(nil, pack, opts)`), resolves it on the first call that reads it (#361). A host whose vocabulary comes from its data, such as relations named after the edge kinds a workspace holds, answers `initialize` at once instead of opening the workspace first, which a cold cache can take longer than a client waits to connect. `schema`, `ask` and `cypher` wait for it, while `query` and `explain` read the `Base` and never do. A failed resolve is the call's tool error and is tried again on the next, and the checks `New` makes of the pack (its examples, the card, the Cypher graph) run on the first vocabulary it returns, so a broken pack fails that call rather than startup.
 - `Options.Eval` are options every evaluation runs with, such as `Witnesses()`.
 - `Options.Model` offers the `ask` tool, and `Options.Fallback` is the model it asks after `Model`, as in `nl.Options`.
 
