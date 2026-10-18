@@ -5,8 +5,7 @@ Maintained by /checkpoint: one thread per branch, pruned when the branch merges.
 
 ## At a glance
 
-- release/one-go — releases in one `make tag-push` again (mcpkit's bump-root); next: review and merge,
-  then `make bump-root V=v0.1.76` before the next tag.
+- No open branches. Next release goes in one go (#375): `make bump-root V=v0.1.76`, commit, `make tag-push`.
 - Mission #356 (`mission_cypher_frontend`) is active, 5/7; next ready #354 (`nl.Translate` writing
   Cypher, the 32B arm); consumer half declaire#248. Exercise logged at 8a49fb1 (`TestEval` 7/8).
 - Mission #322 (`mission_agent_frontend`) is active, 16/18; next ready #370 (P1), then #354, then
