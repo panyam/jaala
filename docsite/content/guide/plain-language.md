@@ -1,10 +1,13 @@
 ---
 title: "Asking through a model"
-description: "What a host hands a model so it can write a program from a question: the vocabulary as a card, a grammar that keeps its output parseable and to the vocabulary, errors that say where the program is wrong and how to fix it, the loop that retries until a program checks, and scoring it over questions with known answers."
+description: "What a host hands a model so it can write a program from a question: the vocabulary as a card, a grammar that keeps its output parseable and to the vocabulary, errors that say where the program is wrong and how to fix it, the loop that retries until a program checks, local models, a domain pack, and scoring it over questions with known answers."
 prev: {url: "/jaala/guide/versions/", title: "Versions"}
+next: {url: "/jaala/guide/mcp-server/", title: "Serving agents"}
 ---
 
 A host that lets someone ask in plain language puts a model in front of jaala: the model writes a program from the question, jaala checks it, and a program that doesn't check goes back to the model with its error. Package `nl` holds the parts of that every host would otherwise write alike ([#321](https://github.com/panyam/jaala/issues/321)). What the words mean, the model and the tool that serves it stay with the host. An engine-only host never imports `nl`.
+
+Each front end is a Go module of its own, so what one depends on reaches only the hosts that import it: `go get github.com/panyam/jaala/frontends/nl` for this page, `frontends/nlmodels` for the local model clients below, and `frontends/mcp` and `frontends/cypher` for the [next]({{.Site.PathPrefix}}/guide/mcp-server/) [two]({{.Site.PathPrefix}}/guide/cypher/) pages. They're tagged with jaala, `frontends/nl/v0.1.N` beside `v0.1.N`. Up to v0.1.71 `nl` was a package inside jaala's own module, so a host moving past that tag requires the new module in its place.
 
 The examples use the vocabulary from [Host options]({{.Site.PathPrefix}}/guide/host-options/): the `imports` and `pkg` relations, the standard predicates and the `deps` module.
 
@@ -44,11 +47,24 @@ A `Query` carries no positions: a host can build one in Go, and two parses of on
 
 Every prompt carries `GrammarFor(v)` as `Prompt.Grammar`, or the host's own with `Options.Grammar` (none with `Options.NoGrammar`), for a model whose decoder takes one. A model that can't use it ignores it, since every draft is checked anyway; the grammar only saves tries.
 
-jaala runs no model, but it ships clients for local ones already running, in a module of its own so no host takes them on unasked ([#330](https://github.com/panyam/jaala/issues/330)): `github.com/panyam/jaala/frontends/nlmodels/llamacpp` asks llama.cpp's `llama-server`, sending the prompt's grammar and keeping its prefix cached, and `frontends/nlmodels/ollama` asks an Ollama server, which takes no GBNF grammar, so its model writes freely. Otherwise a host implements `nl.Model`, a name and a `Complete` taking an `nl.Prompt`: a `Prefix` holding the card and a few lines of instructions, the same for every question over one vocabulary so a client can send it as a cached prefix, and the conversation so far as `Turns`. A host that can find the names in a question, as Declaire's `name.find` turns a short name into ranked ids, implements `nl.Grounder`, and the candidates go after the question with their values quoted, so the model copies a value rather than spelling it.
+A model is the host's: `Translate` calls an `nl.Model`, a name and a `Complete` taking an `nl.Prompt`, which is a `Prefix` holding the card and a few lines of instructions, the same for every question over one vocabulary so a client can send it as a cached prefix, and the conversation so far as `Turns`. The local model clients below are two such models. A host that can find the names in a question, as Declaire's `name.find` turns a short name into ranked ids, implements `nl.Grounder`, and the candidates go after the question with their values quoted, so the model copies a value rather than spelling it.
 
 `Options.Fallback` is a second model, usually a bigger one, asked once the first runs out of tries. It starts a fresh conversation with the question, since the first model's drafts would only cost it tokens. A model that sends back a draft it was already told is wrong has stopped reading the errors, so that try is refused unchecked and the question moves to the fallback, or `Translate` stops when there is none ([#340](https://github.com/panyam/jaala/issues/340)). With `Options.Base`, a program that checks is run too (with `Options.Eval`'s options, such as a `Budget`): an error is fed back like a check error, and a program answering nothing goes straight to the fallback, told that one did, or back to the same model when no fallback is left. That model is told which literal matched nothing and what it was first called with (`Report.Empty`, see [Host options](../host-options/), [#343](https://github.com/panyam/jaala/issues/343)), so it can change that call rather than guess, and whether the call matches anything by itself ([#348](https://github.com/panyam/jaala/issues/348)), which tells a wrong value from a wrong join. A `Complete` that fails moves to the fallback as well.
 
 `Translate` returns the accepted `nl.Program` (its text, `Query`, rows when it ran, and the model that wrote it) and an `nl.Trace` of every try, also when it fails: the model, the text, the error and its `Kind`, tokens in, out and cached, latency, and, for a draft run over `Options.Base`, the `datalog.Report` of that run. An empty answer's error is an `nl.EmptyAnswer`, whose `Why` is the run's `Report.Empty`. `Kind` is a `CheckError`'s kind, or `parse`, `eval`, `empty`, `repeat`, `answer` or `model`, so a host counts where its retries went without reading messages.
+
+## Local models
+
+jaala runs no model, but `github.com/panyam/jaala/frontends/nlmodels`, a module of its own, has clients for local ones already running, so no host takes on HTTP clients it doesn't use ([#330](https://github.com/panyam/jaala/issues/330)):
+
+- `llamacpp.New(url)` asks llama.cpp's `llama-server` at its OpenAI-style `/v1/chat/completions`. It sends the prefix as the system message, the prompt's grammar as `grammar`, so the model can only write text that parses, and `cache_prompt`, so the card is processed once. Its `Name` is `llama.cpp`, or `llama.cpp:` and `Model` when one is set.
+- `ollama.New(url, model)` asks an Ollama server for one model, named `ollama:` and the model. Ollama takes no GBNF grammar (its `format` is a JSON schema), so the model writes freely and costs more tries; a host wanting the grammar held runs the same weights under llama.cpp.
+
+Both reply with at most `MaxTokens` (512 by default) at `Temperature` 0, and take an `HTTP` client of the host's. The tokens a try reports are the server's own counts, with llama.cpp's cached prompt tokens. Here a stand-in for `llama-server` answers one program and prints what it was sent:
+
+```go
+{{ includeFileText "examples/guide/localmodel_test.go" }}
+```
 
 ## Domain packs
 
@@ -60,22 +76,15 @@ The card says what a program can call, but not what the data holds or what a que
 - `Grounder` grounds the question when `Translate` is given none.
 - `Check` judges an answer that checked and ran: an error refuses the draft as `answer` and goes back to the same model with its text, as a check error does. It's for what makes an answer suspect in the domain, such as every value absent, or a hundred rows for a question asking for one.
 
-The pack's part goes after the card and the instructions, `About` and the examples as comments, so the prefix is still the same for every question and stays cached. `Translate` checks every example against the vocabulary before asking a model, and fails naming the first that doesn't check, so a pack can't teach a model a relation the vocabulary lacks. A host's test can call `Pack.Validate` and `Pack.Prefix` itself.
+The pack's part goes after the card and the instructions, `About` and the examples as comments, so the prefix is still the same for every question and stays cached. `Translate` checks every example against the vocabulary before asking a model, and fails naming the first that doesn't check, so a pack can't teach a model a relation the vocabulary lacks. A host's test can call `Pack.Validate` and `Pack.Prefix` itself. Here `DataCard` writes the guide's data, and a pack whose `Check` expects one package refuses a first draft answering three:
+
+```go
+{{ includeFileText "examples/guide/pack_test.go" }}
+```
 
 ## Serving agents
 
-An agent with its own tools reaches for a graph tool only when it knows what the tool is for: Declaire's agent called Declaire's server on 1 of 42 questions until one sentence told it, and then on the hard ones ([declaire#288](https://github.com/panyam/declaire/issues/288)). `github.com/panyam/jaala/frontends/mcp`, a module of its own on [mcpkit](https://github.com/panyam/mcpkit), is an MCP server for any vocabulary whose instructions and tool descriptions are written from the host's pack ([#347](https://github.com/panyam/jaala/issues/347)), so wording that works for one host's agent works for every host's.
-
-`mcp.New(v, pack, opts)` takes the vocabulary, an `mcp.Pack` (an `nl.Pack` plus the server's name and version) and `mcp.Options`, whose `Base` func picks the Base for each call. It serves four tools:
-
-- `query` runs a program and answers a page of rows, each with the facts it was derived from, and a `page_token` for the next page. `limit` and `max_work` are capped by the server's `Options.Limit` and `Options.MaxWork`. A program that doesn't parse, check or finish within its budget is a tool error carrying `Explain`'s text, so the agent fixes it and calls again.
-- `schema` answers the card with no path, a module's members or a relation's signature, doc and rules with one, and the pack's `Card` at `data`.
-- `explain` runs a program and answers its `Report` instead of its rows: where the work went and, for an empty answer, the literal that matched nothing.
-- `ask`, offered only when `Options.Model` is set, translates a question through `Translate` with the pack and answers the program, its rows and each try. Its `mode` is `local` (the model alone), `frontier` (the fallback alone) or `both`.
-
-The instructions open with the pack's `About`, say how to write a program and to call `schema` first, and show the pack's first two examples; `mcp.Instructions` returns them, and `Pack.Instructions` replaces them word for word for a host trying wordings against its own agent. `mcp.AgentLine` is a sentence for the host's agent instructions, such as a CLAUDE.md. A host registers its own tools on the server `New` returns, and writes answers its own way with `Pack.Format`, which gets each page as an `mcp.Answer`.
-
-A host's own arguments go on jaala's tools through `mcp.NewWith(v, pack, opts, mcp.Extension[A]{Prepare: …})` ([#357](https://github.com/panyam/jaala/issues/357)). `A` is a plain struct tagged as a tool's input is (`json`, `jsonschema_description`), such as the repos a query reads or how many lines of code an answer shows, and its fields sit flat in every tool's schema beside the tool's own `program` or `limit`. On each call `Prepare` gets the tool's name and the decoded `A`, and returns an `mcp.Run`: the `Base` the call reads, more `Eval` options, and a `Pack` that replaces the server's for the call, so its `Card` is what `schema` says at `data`, its `Format` writes the answer and `ask` translates with it. A field left empty is the server's. `NewWith` refuses an `A` whose names clash with any tool's own, and every tool's schema allows only the arguments it names, so a misspelled argument is a tool error rather than ignored; `New` is `NewWith` with no host arguments, under the same rule.
+The same pack makes an MCP server, so an agent asks over the vocabulary with its own tools: [Serving agents]({{.Site.PathPrefix}}/guide/mcp-server/) covers `frontends/mcp`.
 
 ## Scoring a translator
 
@@ -83,4 +92,4 @@ A host's own arguments go on jaala's tools through `mcp.NewWith(v, pack, opts, m
 
 The model chooses the program's columns, so a row matches by its values whatever their names and order: `=> ?b, ?a` answers `{"app", "api"}` as well as `=> ?a, ?b` does. Rows match as a multiset, in order only when the case sets `Ordered`, and an absent value is written `absent`. The last example above scores three questions, two needing a second draft.
 
-The `nl.Report` holds each case's `Result` (the program, its trace, the rows it got and whether they passed) and the totals: passes on the first try and after retries, tries, tokens in, out and cached, latency, the refused tries by kind, and how many of the refused check errors carried a fix. That last pair says how often a model was told how to fix its mistake, and a retry spent on an error without one is where an error message could say more. `Report.String` writes it as the example does. When `Translate` ran the programs over a `Base`, it adds each case's work and the three costliest drafts with the literal that spent the most (`Report.Costliest`), ranked by work rather than time, so two runs rank them the same. jaala's own `go test ./frontends/nl -run TestEval -v` scores a scripted model and fallback the same way, over eight questions on this vocabulary.
+The `nl.Report` holds each case's `Result` (the program, its trace, the rows it got and whether they passed) and the totals: passes on the first try and after retries, tries, tokens in, out and cached, latency, the refused tries by kind, and how many of the refused check errors carried a fix. That last pair says how often a model was told how to fix its mistake, and a retry spent on an error without one is where an error message could say more. `Report.String` writes it as the example does. When `Translate` ran the programs over a `Base`, it adds each case's work and the three costliest drafts with the literal that spent the most (`Report.Costliest`), ranked by work rather than time, so two runs rank them the same. jaala's own `TestEval` (`cd frontends/nl && go test -run TestEval -v .`) scores a scripted model and fallback the same way, over eight questions on this vocabulary.

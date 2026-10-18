@@ -34,7 +34,7 @@ for mod in $MODS; do
     echo "==> $mod/go.mod: require github.com/panyam/jaala $V"
     (cd "$mod" && go mod edit "${edits[@]}" && go mod tidy)
 done
-# The docsite replaces jaala and frontends/nl with the checkout rather than requiring a tag, but its
+# The docsite replaces jaala and every front end with the checkout rather than requiring a tag, but its
 # go.mod still lists what they require, so a bump above leaves it stale and the docs workflow's go
 # test stops with "updates to go.mod needed" (v0.1.72's did).
 echo "==> docsite/go.mod: tidy"

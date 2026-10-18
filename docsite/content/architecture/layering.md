@@ -1,6 +1,6 @@
 ---
 title: "Layering"
-description: "The three packages, ns, stdlib and datalog, and why each imports only the one below it."
+description: "The three packages, ns, stdlib and datalog, and why each imports only the one below it; the front ends, each a module of its own above them."
 next: {url: "/jaala/architecture/evaluation/", title: "Evaluation"}
 ---
 
@@ -16,4 +16,8 @@ We keep the direction strict for a fairly practical reason. A host's fact layer,
 
 All three use only the Go standard library, and CI checks it on every change with `go list -deps`. Anything jaala imports, every host imports too, and agni runs jaala in the browser, where a dependency is download size. The same reason keeps everything building for `GOOS=js GOARCH=wasm`, which CI also checks, and which is how the examples on this site run in your browser.
 
-This documentation site is its own Go module under `docsite/`, so the site generator and its dependencies never reach jaala's.
+## Front ends
+
+What turns other text into a program sits above the three packages, under `frontends/`, and nothing in them imports it. Each front end is a Go module of its own, so its dependencies reach only its importers: `frontends/nl` (the plain-language front end) and `frontends/cypher` import `ns` and `datalog` and nothing beyond the standard library, `frontends/nlmodels` imports `nl` for the models it implements, and `frontends/mcp` takes on mcpkit for its server. `TestLayering` checks what `nl`, `cypher` and `nlmodels` import as it does the packages below, and a front end is tagged beside jaala at each release (`frontends/nl/v0.1.N` with `v0.1.N`).
+
+This documentation site is its own Go module under `docsite/`, so the site generator and its dependencies never reach jaala's. It replaces jaala and every front end with the checkout, so its examples run on the code beside them.
