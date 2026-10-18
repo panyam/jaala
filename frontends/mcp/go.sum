@@ -20,6 +20,8 @@ github.com/panyam/goutils v0.1.13 h1:V819IdZTEJ3rpu33ZqohC6O9ou7KOu6cxfigoYT12OQ
 github.com/panyam/goutils v0.1.13/go.mod h1:vd3iFcv1DjaeV6h8tslIJh9d09RLndg8UYNSGROBrM4=
 github.com/panyam/jaala v0.1.73 h1:iLOk3XIxp8SlNy0T9oCUPHRxeUFgSOaizdb1HIcGHJA=
 github.com/panyam/jaala v0.1.73/go.mod h1:A/dm6zBFvdjXavPfpGp0xP8BZAFHKMjQ5e3ASkzdaqE=
+github.com/panyam/jaala/frontends/cypher v0.1.74 h1:CxQ0qybogW3OuGd4foyri6SLpQjMnlXq859UL9gB7HQ=
+github.com/panyam/jaala/frontends/cypher v0.1.74/go.mod h1:XXpV7vW/3R54PylNmORF9cuFxuuJbBpxem0pWJuJCpk=
 github.com/panyam/jaala/frontends/nl v0.1.73 h1:zS8zBdGkjjRzAc+cbWdUl95AFlIKVfoVaD73XB8DERE=
 github.com/panyam/jaala/frontends/nl v0.1.73/go.mod h1:Bbb53dLggn9twGNyGlRm9e7sGGYfm7auXEFawDDEibU=
 github.com/panyam/mcpkit v0.8.2 h1:GdyeHiNNNk8xWGa6V85bGG+8xNGvRvnY4unkvmYw+SI=

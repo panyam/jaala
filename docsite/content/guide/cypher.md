@@ -1,6 +1,6 @@
 ---
 title: "Asking in Cypher"
-description: "Compiling Cypher into a jaala program over a host's graph view: what it compiles, where its answers differ from a Cypher engine's, and what it refuses with the issue that would let it."
+description: "Compiling Cypher into a jaala program over a host's graph view, or one a node, edge and attr store writes itself: what it compiles, where its answers differ from a Cypher engine's, and what it refuses with the issue that would let it."
 prev: {url: "/jaala/guide/mcp-server/", title: "Serving agents"}
 ---
 
@@ -19,6 +19,14 @@ A relation's schema doesn't say which of its arguments is an endpoint, so the ho
 - `Fixed` pins arguments to constants, for a store that keeps every label in one relation and tells them apart by a value (`node(id, "Function")`), and `Props` names a key-value relation, `attr(node, key, value)`, for a property no `Node` lists.
 
 `Graph.Validate(v)` checks each relation is a member of the vocabulary at an arity holding every argument named, and `Compile` checks it first.
+
+## A node, edge and attr store
+
+Declaire and Agni keep their graphs the same way, every node in `node(id, kind)`, every relationship in `edge(from, kind, to)`, and properties in `attr(id, key, value)`, and writing a `Node` and an `Edge` for each kind by hand gets old quickly. `cypher.Store` names the three relations and `Store.Graph(nodeKinds, edgeKinds)` writes the graph: a label per node kind, keyed by id with the kind fixed, a type per edge kind from its first argument to its third, and `attr` as the property relation ([#366](https://github.com/panyam/jaala/issues/366)). `Store.Kinds(ctx, base)` reads the kinds from the data, for a host whose kinds are its data, as the last example above does. It reads both relations whole, so a host asks once per data version.
+
+A kind becomes a label the way labels are usually written, `func` as `Func` and `http_route` as `HttpRoute` (`cypher.DefaultLabel`), and a type upper case with underscores, `dispatches_to` as `DISPATCHES_TO` (`cypher.DefaultType`). A host with other conventions sets `Store.Label` or `Store.Type`. Two kinds that come out as one label make a graph `Validate` refuses, since a label would mean two things.
+
+The graph is a description of the vocabulary rather than anything Cypher's, so it may move into jaala's core when a second reader arrives, such as a GQL front end or drawing a dataset as a graph.
 
 ## What it compiles
 

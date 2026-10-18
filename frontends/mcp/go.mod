@@ -4,6 +4,8 @@ go 1.26.9
 
 require github.com/panyam/jaala v0.1.73
 
+require github.com/panyam/jaala/frontends/cypher v0.1.74
+
 require (
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.6.1 // indirect

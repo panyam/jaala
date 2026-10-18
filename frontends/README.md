@@ -13,9 +13,11 @@ inside its directory.
   which takes the grammar, and Ollama, which can't. It imports `nl`.
 - `mcp/` (#347) is an MCP server for any vocabulary, on mcpkit: `query`, `schema`, `explain` and,
   with a model, `ask`, its instructions written from a host's `nl.Pack`, and a host's own arguments
-  on every tool (#357).
+  on every tool (#357). A pack mapping its graph (`Pack.Cypher`) adds a `cypher` tool (#366), so mcp
+  imports `cypher` too.
 - `cypher/` (standard library and jaala only) compiles Cypher into a
   program (#352, mission #356) over a `Graph`, a host's view of
-  its relations as nodes, relationships and properties. It refuses what a program can't express
+  its relations as nodes, relationships and properties, which `Store` writes for a node, edge and
+  attr store (#366). It refuses what a program can't express
   yet by the gap's issue (#279 to #289). It imports `ns` and `datalog`; its tests score it with
   `nl.Eval` on the guide's questions (`internal/guide`), the ones `nl`'s `TestEval` asks.

@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/panyam/jaala/datalog"
+	"github.com/panyam/jaala/frontends/cypher"
 	"github.com/panyam/jaala/frontends/nl"
 	"github.com/panyam/jaala/ns"
 	"github.com/panyam/mcpkit/core"
@@ -38,6 +39,11 @@ type Pack struct {
 	// Format, when set, writes a query's or an ask's answer instead of the default table, such as with
 	// a host's own links or code snippets for what the rows cite.
 	Format func(Answer) string
+	// Cypher, when set, is how the vocabulary reads as a property graph, and New offers the cypher
+	// tool, which compiles a Cypher query over it (frontends/cypher, #366). A Run's Pack may bring
+	// another graph for its call; one without a graph refuses the call. cypher.Store writes it for
+	// the node(id, kind), edge(from, kind, to), attr(id, key, value) shape.
+	Cypher *cypher.Graph
 }
 
 // Options configure New.
@@ -58,8 +64,13 @@ type Options struct {
 
 // An Answer is one page of an evaluated program, as Pack.Format receives it.
 type Answer struct {
-	// Program is the program's text.
+	// Program is the program's text: the program a query sent, or the one a Cypher query compiled to.
 	Program string
+	// Cypher is the Cypher text the cypher tool compiled Program from, "" for any other tool.
+	Cypher string
+	// Columns are the answer's columns as the caller named them: Cypher's names (an alias, or n.name)
+	// for the cypher tool, and the goal's variables otherwise.
+	Columns []string
 	// Table is the whole answer, every row with its witness.
 	Table *datalog.Table
 	// Offset and Len are the page's rows within Table.
@@ -147,12 +158,23 @@ func NewWith[A any](v *ns.Vocabulary, p Pack, o Options, x Extension[A]) (*serve
 	if o.Model != nil {
 		srv.Register(ask)
 	}
+	if p.Cypher != nil {
+		if err := p.Cypher.Validate(v); err != nil {
+			return nil, fmt.Errorf("mcp: the pack's graph: %w", err)
+		}
+		cy, err := tool(t, x, host, "cypher", fmt.Sprintf(cypherDesc, topic, graphText(*p.Cypher)), (*call).cypher)
+		if err != nil {
+			return nil, err
+		}
+		srv.Register(cy)
+	}
 	return srv, nil
 }
 
 // Instructions are what New tells a client the server is for, when the pack doesn't replace them:
 // the pack's About, how to write a program, the pack's first two examples, and which tools to call
-// first. ask is mentioned only when the server offers it, which takes a Model.
+// first. ask is mentioned only when the server offers it, which takes a Model, and cypher, with the
+// graph's labels and types, only when the pack has a graph.
 func Instructions(p Pack, ask bool) string { return instructions(p, ask) }
 
 func instructions(p Pack, ask bool) string {
@@ -172,6 +194,9 @@ func instructions(p Pack, ask bool) string {
 			fmt.Fprintf(&b, "  # %s\n  %s\n", e.Question, strings.Join(strings.Fields(e.Program), " "))
 		}
 	}
+	if p.Cypher != nil {
+		b.WriteString("\nOr ask in Cypher with the cypher tool: MATCH, WHERE and RETURN over this graph, and it answers with the program it ran. " + graphText(*p.Cypher) + "\n")
+	}
 	b.WriteString("\nThe explain tool says where a program's work went, and why its answer is empty.")
 	if ask {
 		b.WriteString(" The ask tool takes a question in plain language and writes the program itself.")
@@ -187,7 +212,11 @@ func AgentLine(p Pack) string {
 	if name == "" {
 		name = "jaala"
 	}
-	return fmt.Sprintf("For questions about %s, use the %s MCP server before searching files: it answers exactly from its graph. Call its schema tool, then query.", topic(p.About), name)
+	next := "query"
+	if p.Cypher != nil {
+		next = "query, or cypher to ask in Cypher"
+	}
+	return fmt.Sprintf("For questions about %s, use the %s MCP server before searching files: it answers exactly from its graph. Call its schema tool, then %s.", topic(p.About), name, next)
 }
 
 // topic is the first sentence of about without its full stop, lower-cased at the start, or "the

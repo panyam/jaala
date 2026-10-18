@@ -14,7 +14,8 @@ import (
 )
 
 // depsPack is the server's pack: what the data is about and a worked
-// example, which its instructions and tool descriptions are written from.
+// example, which its instructions and tool descriptions are written from,
+// and the graph a Cypher query reads (depsGraph, on the Cypher page).
 var depsPack = mcp.Pack{
 	Pack: nl.Pack{
 		About: "the packages of a Go service and what each imports",
@@ -22,7 +23,8 @@ var depsPack = mcp.Pack{
 			{Question: "what does api import?", Program: `imports("api", ?d) => ?d`},
 		},
 	},
-	Name: "deps",
+	Name:   "deps",
+	Cypher: &depsGraph,
 }
 
 // The instructions an agent reads when it connects, and the line for its
@@ -41,9 +43,11 @@ func Example_mcpInstructions() {
 	//   # what does api import?
 	//   imports("api", ?d) => ?d
 	//
+	// Or ask in Cypher with the cypher tool: MATCH, WHERE and RETURN over this graph, and it answers with the program it ran. Node labels: Package {license, name}. Relationship types: IMPORTS.
+	//
 	// The explain tool says where a program's work went, and why its answer is empty.
 	//
-	// For questions about the packages of a Go service and what each imports, use the deps MCP server before searching files: it answers exactly from its graph. Call its schema tool, then query.
+	// For questions about the packages of a Go service and what each imports, use the deps MCP server before searching files: it answers exactly from its graph. Call its schema tool, then query, or cypher to ask in Cypher.
 }
 
 // mcp.New builds an MCP server for the vocabulary; a host serves it over the
@@ -82,6 +86,8 @@ func Example_mcpServer() {
 	call("schema", map[string]any{"path": "deps"})
 	call("query", map[string]any{"program": `deps.depends_on("app", ?d) => ?d`})
 	call("query", map[string]any{"program": `depends_on("app", ?d) => ?d`})
+	call("cypher", map[string]any{"query": `MATCH (p:Package)-[:IMPORTS]->(:Package {name: $to}) RETURN p.name AS importer`,
+		"params": map[string]any{"to": "log"}})
 	// Output:
 	// schema:
 	// module deps
@@ -107,4 +113,12 @@ func Example_mcpServer() {
 	//   depends_on("app", ?d) => ?d
 	//   ^
 	// fix: did you mean "deps.depends_on"?
+	// cypher:
+	// ran: pkg(?p, _), pkg(?to, _), imports(?p, ?to) => ?p
+	// columns: importer
+	// 1. api
+	//    pkg("api", absent)
+	//    pkg("log", "")
+	//    imports("api", "log")
+	// 1 row
 }
