@@ -88,6 +88,10 @@ type Options struct {
 	// GrammarFor(v, GoalOnly()) for a small model. NoGrammar sends none.
 	Grammar   string
 	NoGrammar bool
+	// Pack, when set, is the host's domain (#344): its part of the prefix follows the card, its
+	// examples are checked before any model is asked, its Grounder grounds the question when
+	// Translate's is nil, and its Check judges each answer.
+	Pack *Pack
 }
 
 // A Program is what Translate accepted: its text, as the model wrote it less any Markdown fence, the
@@ -113,7 +117,7 @@ type Try struct {
 	// Kind sorts Err: a CheckError's Kind ("unknown", "arity", ...), or "parse" for a parse error,
 	// "eval" for an evaluation error that isn't a CheckError, "empty" for an answer with no rows,
 	// "repeat" for a draft the model already wrote in this conversation (Err wraps the first one's),
-	// and "model" for a Model that failed.
+	// "answer" for one the Pack's Check refused, and "model" for a Model that failed.
 	Kind                              string
 	TokensIn, TokensOut, TokensCached int
 	Latency                           time.Duration
@@ -129,6 +133,7 @@ const (
 	KindEmpty  = "empty"
 	KindRepeat = "repeat"
 	KindModel  = "model"
+	KindAnswer = "answer"
 )
 
 // instructions follow the card in every Prompt's Prefix.
@@ -143,13 +148,24 @@ const instructions = `
 // wrote is refused unchecked and ends its turn (#340: a small model resending one draft spent every
 // retry on it). With o.Base, a program that checks is evaluated too, and one answering nothing goes to
 // the fallback, or, when there is none left, back to the model to try other members or values. g,
-// when not nil, grounds the question's names first. The Trace holds every try, also when Translate fails, and the error
+// when not nil, grounds the question's names first, and o.Pack's Grounder does when g is nil. A pack
+// whose examples don't check fails Translate before any model is asked. The Trace holds every try, also when Translate fails, and the error
 // then wraps the last try's.
 func Translate(ctx context.Context, question string, v *ns.Vocabulary, g Grounder, m Model, o Options) (Program, Trace, error) {
 	var tr Trace
 	card, err := Card(v)
 	if err != nil {
 		return Program{}, tr, err
+	}
+	prefix := card + instructions
+	if o.Pack != nil {
+		if err := o.Pack.Validate(v); err != nil {
+			return Program{}, tr, err
+		}
+		prefix += o.Pack.Prefix()
+		if g == nil {
+			g = o.Pack.Grounder
+		}
 	}
 	ask := question
 	if g != nil {
@@ -163,7 +179,6 @@ func Translate(ctx context.Context, question string, v *ns.Vocabulary, g Grounde
 	if tries <= 0 {
 		tries = 3
 	}
-	prefix := card + instructions
 	grammar := o.Grammar
 	if o.NoGrammar {
 		grammar = ""
@@ -257,7 +272,7 @@ func draft(ctx context.Context, model Model, p Prompt, v *ns.Vocabulary, o Optio
 	}
 	prog := Program{Text: try.Text, Query: q, Model: try.Model}
 	if o.Base == nil {
-		return try, prog, nil
+		return judged(ctx, try, prog, o)
 	}
 	try.Report = &datalog.Report{}
 	rows, err := datalog.SemiNaive{}.Eval(ctx, q, o.Base, append(o.Eval[:len(o.Eval):len(o.Eval)], datalog.Explain(try.Report))...)
@@ -268,6 +283,18 @@ func draft(ctx context.Context, model Model, p Prompt, v *ns.Vocabulary, o Optio
 		return refuse(&EmptyAnswer{Why: try.Report.Empty}, KindEmpty)
 	}
 	prog.Rows = rows
+	return judged(ctx, try, prog, o)
+}
+
+// judged is try accepted, unless the Pack's Check refuses prog's answer.
+func judged(ctx context.Context, try Try, prog Program, o Options) (Try, Program, error) {
+	if o.Pack == nil || o.Pack.Check == nil {
+		return try, prog, nil
+	}
+	if err := o.Pack.Check(ctx, prog); err != nil {
+		try.Err, try.Kind = err, KindAnswer
+		return try, Program{}, err
+	}
 	return try, prog, nil
 }
 

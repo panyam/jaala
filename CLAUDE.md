@@ -71,6 +71,11 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   A draft run over the Base keeps its `datalog.Report` (`Try.Report`), and an empty answer's error
   is an `EmptyAnswer` carrying `Report.Empty`, whose text goes back to the model (#343);
   `nl.Report.Costliest` ranks drafts by work, and its work column shows only when one was evaluated.
+  A host's domain is an `nl.Pack` (`Options.Pack`, #344): `About`, `Card`, `Examples` (checked by
+  `Pack.Validate` before any model is asked), a `Grounder` used when Translate's is nil, and a `Check`
+  that refuses an answer as `answer`, back to the same model. Its `Prefix()` follows the card and the
+  instructions. `nl.DataCard(ctx, b)` writes the generic half of `Card` with one counting program per
+  argument (named variables, so `count` counts facts); #347's MCP server reads the same pack.
   `nl.Eval` (#326) scores a `translate` func over `Case`s, matching a row by its values as a multiset
   (the model picks the columns' names and order) and rows as a multiset unless `Ordered`. `TestEval`
   is #322's exercise until Declaire's arm runs: the guide's vocabulary, a scripted small model and
