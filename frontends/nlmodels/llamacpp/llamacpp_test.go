@@ -65,6 +65,14 @@ func TestCompleteSendsTheChatAndTheGrammar(t *testing.T) {
 	if req.Grammar != prompt.Grammar || !req.CachePrompt || req.Stream || req.MaxTokens != 512 || req.Temperature != 0 || req.Model != "qwen" {
 		t.Errorf("request %+v", req)
 	}
+	if req.Seed != 0 {
+		t.Errorf("seed %d for a prompt that isn't a vote's draft", req.Seed)
+	}
+	drawn := prompt
+	drawn.Draw = 2
+	if _, err := c.Complete(context.Background(), drawn); err != nil || (*got)[1].Seed != 2 {
+		t.Errorf("a vote's second draft was sent seed %d: %v", (*got)[1].Seed, err)
+	}
 	if c.Name() != "llama.cpp:qwen" || New("x").Name() != "llama.cpp" {
 		t.Errorf("names %q %q", c.Name(), New("x").Name())
 	}

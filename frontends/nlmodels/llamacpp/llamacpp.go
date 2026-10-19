@@ -26,7 +26,8 @@ type Client struct {
 	// MaxTokens caps a reply's length; a program rarely needs more than the default 512.
 	MaxTokens int
 	// Temperature is sent as is. The default 0 decodes greedily, so a prompt gets the same draft every
-	// time, which is what makes a Trace repeatable.
+	// time, which is what makes a Trace repeatable, and makes an nl.Vote's drafts agree by
+	// construction: a vote wants a temperature above 0, and each of its drafts is seeded by its Draw.
 	Temperature float64
 	// HTTP sends the requests; http.DefaultClient by default.
 	HTTP *http.Client
@@ -57,6 +58,7 @@ type request struct {
 	CachePrompt bool      `json:"cache_prompt"`
 	MaxTokens   int       `json:"max_tokens,omitempty"`
 	Temperature float64   `json:"temperature"`
+	Seed        int       `json:"seed,omitempty"`
 	Stream      bool      `json:"stream"`
 }
 
@@ -83,7 +85,7 @@ type response struct {
 // prompt tokens its cache answered (timings.cache_n). A reply with a status other than 200 is an
 // error carrying the start of the server's body, which says why (an unparseable grammar, say).
 func (c *Client) Complete(ctx context.Context, p nl.Prompt) (nl.Completion, error) {
-	req := request{Model: c.Model, Grammar: p.Grammar, CachePrompt: true, MaxTokens: c.MaxTokens, Temperature: c.Temperature}
+	req := request{Model: c.Model, Grammar: p.Grammar, CachePrompt: true, MaxTokens: c.MaxTokens, Temperature: c.Temperature, Seed: p.Draw}
 	if p.Prefix != "" {
 		req.Messages = append(req.Messages, message{"system", p.Prefix})
 	}

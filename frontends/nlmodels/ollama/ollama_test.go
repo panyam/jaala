@@ -41,6 +41,13 @@ func TestCompleteSendsTheChatWithoutTheGrammar(t *testing.T) {
 	if strings.Contains(string(mustJSON(raw)), "root ::=") || req.Model != "qwen2.5-coder:1.5b" || req.Stream || req.Options.NumPredict != 512 {
 		t.Errorf("request %s", mustJSON(raw))
 	}
+	if _, seeded := raw["options"].(map[string]any)["seed"]; seeded {
+		t.Errorf("a seed for a prompt that isn't a vote's draft: %s", mustJSON(raw))
+	}
+	p.Draw = 3
+	if _, err := c.Complete(context.Background(), p); err != nil || req.Options.Seed != 3 {
+		t.Errorf("a vote's third draft was sent seed %d: %v", req.Options.Seed, err)
+	}
 	if c.Name() != "ollama:qwen2.5-coder:1.5b" {
 		t.Errorf("name %q", c.Name())
 	}

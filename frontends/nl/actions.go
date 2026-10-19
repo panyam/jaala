@@ -21,6 +21,7 @@ import (
 //	values TARGET   up to Sample of the values an argument holds (pkg.license; Package.license)
 //	try             on its first line, then a draft: run with Sample rows at most, its rows or why
 //	                it answered none sent back
+//	find NAME       the values a name may stand for, from the Grounder, when Translate has one
 //
 // and any other reply is the answer, judged as a draft always is. The loop doesn't read the drafts'
 // language: try runs a draft through the front end as an answer is, and a front end that is a Prober
@@ -59,6 +60,7 @@ const (
 	ActionLook   = "look"
 	ActionValues = "values"
 	ActionTry    = "try"
+	ActionFind   = "find"
 )
 
 func (a *Actions) steps() int {
@@ -88,6 +90,11 @@ func readAction(text string) (action, arg string, ok bool) {
 	case ActionTry:
 		draft := strings.TrimSpace(strings.TrimSpace(inline) + "\n" + rest)
 		return word, draft, draft != ""
+	case ActionFind:
+		if rest != "" || strings.TrimSpace(inline) == "" {
+			return "", "", false
+		}
+		return word, strings.TrimSpace(inline), true
 	}
 	return "", "", false
 }
@@ -98,13 +105,28 @@ const actionInstructions = `
 #   look NAME       what a relation, module or label holds
 #   values TARGET   some values of one argument or property, such as %s
 #   try             on its own line, then a draft: it runs on a few rows, and says why when none come back
-# Any other reply is your answer.
+%s# Any other reply is your answer.
 `
+
+// findInstruction is actionInstructions' line for find, when Translate has a Grounder.
+const findInstruction = "#   find NAME       the ids or values a name from the question may stand for\n"
 
 // act runs a reply's action and writes what goes back to the model.
 func act(ctx context.Context, action, arg string, v *ns.Vocabulary, o Options) string {
 	prober, _ := o.FrontEnd.(Prober)
 	switch action {
+	case ActionFind:
+		if o.grounder == nil {
+			return "there is nothing to find names with here; look and values say what the data holds"
+		}
+		cands, err := o.grounder.Ground(ctx, arg)
+		if err != nil {
+			return err.Error()
+		}
+		if text := strings.TrimSpace(grounded(cands)); text != "" {
+			return text
+		}
+		return fmt.Sprintf("nothing found for %q", arg)
 	case ActionLook:
 		var text string
 		var err error
@@ -245,26 +267,37 @@ func valuesProgram(v *ns.Vocabulary, target string, limit int) (string, error) {
 var errAction = errors.New("an action, not an answer")
 
 // actionGrammar wraps a draft's grammar so a reply is an action or a draft: the draft grammar's root
-// becomes program, and a NAME or TARGET is a dotted name of nameMax characters at most, which look
-// and values check.
-func actionGrammar(grammar string) string {
+// becomes program, a NAME or TARGET is a dotted name of nameMax characters at most, which look and
+// values check, and with find a phrase of words, which the Grounder reads.
+func actionGrammar(grammar string, find bool) string {
 	if grammar == "" {
 		return ""
 	}
-	return gbnf.Render([]gbnf.Rule{
-		{Name: "root", E: gbnf.Alt{gbnf.Seq{gbnf.Lit("look "), gbnf.Ref("target")}, gbnf.Seq{gbnf.Lit("values "), gbnf.Ref("target")},
-			gbnf.Seq{gbnf.Lit("try\n"), gbnf.Ref("program")}, gbnf.Ref("program")}},
+	root := gbnf.Alt{gbnf.Seq{gbnf.Lit("look "), gbnf.Ref("target")}, gbnf.Seq{gbnf.Lit("values "), gbnf.Ref("target")},
+		gbnf.Seq{gbnf.Lit("try\n"), gbnf.Ref("program")}}
+	rules := []gbnf.Rule{
 		{Name: "target", E: gbnf.Seq{gbnf.Class{Spec: "A-Za-z_", Sample: "aPx_"}, gbnf.UpTo(gbnf.Class{Spec: "A-Za-z0-9_.", Sample: "ae1._"}, nameMax-1)}},
-	}) + rootRule.ReplaceAllString(grammar, "program ::=")
+	}
+	if find {
+		root = append(root, gbnf.Seq{gbnf.Lit("find "), gbnf.Ref("phrase")})
+		rules = append(rules, gbnf.Rule{Name: "phrase", E: gbnf.Seq{gbnf.Class{Spec: "A-Za-z0-9_", Sample: "aP1_"}, gbnf.UpTo(gbnf.Class{Spec: "A-Za-z0-9_. /-", Sample: "a1. /"}, 2*nameMax-1)}})
+	}
+	root = append(root, gbnf.Ref("program"))
+	return gbnf.Render(append([]gbnf.Rule{{Name: "root", E: root}}, rules...)) + rootRule.ReplaceAllString(grammar, "program ::=")
 }
 
 var rootRule = regexp.MustCompile(`(?m)^root ::=`)
 
-// actionsPrefix is actionInstructions with a values target written as the model's language writes one.
-func actionsPrefix(fe FrontEnd) string {
+// actionsPrefix is actionInstructions with a values target written as the model's language writes one,
+// and find's line when there is a Grounder to find with.
+func actionsPrefix(fe FrontEnd, find bool) string {
 	target := "relation.argument"
 	if p, ok := fe.(Prober); ok {
 		target = p.ValuesTarget()
 	}
-	return fmt.Sprintf(actionInstructions, target)
+	line := ""
+	if find {
+		line = findInstruction
+	}
+	return fmt.Sprintf(actionInstructions, target, line)
 }

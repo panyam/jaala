@@ -60,10 +60,21 @@ A model drafting blind guesses at what the data holds, and on Declaire's questio
 - `look NAME`: a relation's signature and whole doc, or a module's members.
 - `values TARGET`: up to `Actions.Sample` (10) of one argument's values, as `pkg.license` or `pkg.1`, run as `pkg(_, ?v) => ?v limit 10`.
 - `try` on its own line, then a draft: it runs with at most `Sample` rows, and sends back its rows, or why it answered none, as an empty answer is explained.
+- `find NAME`: the values a name may stand for, from the `Grounder`, when `Translate` has one. Grounding the question up front guesses which of its words are names, and this lets the model ask about the one it's stuck on. Without a Grounder the prompt and grammar don't offer it.
 
 Any other reply is the answer, judged as a draft always is. An action doesn't spend a try. `Actions.Steps` (6) caps them per model, a repeated one is answered with a note that it was asked already, and once they run out the next reply must be the answer, under the answer's grammar. The grammar sent wraps the draft's, so a model under GBNF writes only a well-formed action or a draft. `Trace.Steps` records each action with what went back and what it cost, and `Report` counts steps and their tokens beside the tries, so the first-try rate still counts answers.
 
 The loop doesn't read the drafts' language: a `try` goes through the front end as an answer does, and a front end that implements `nl.Prober` answers `look` and `values` in its own terms. Cypher's does, so a model writing Cypher asks `values Package.license` and the probe runs as `MATCH (n:Package) RETURN DISTINCT n.license LIMIT 10`.
+
+## Voting, escalation and a budget
+
+One answer from a small model is one guess. `Options.Vote` draws more once a model has answered (`Vote.Drafts`, 3 in all by default, at once with `Vote.Parallel` for a model safe to call concurrently), judges each as an answer, and keeps the one whose rows most of them answer, the first among equals ([#393](https://github.com/panyam/jaala/issues/393)). Drafts agree when their rows match by value as a multiset, whatever their variables are called, and without a `Base` when they compile to the same program. A refused draft agrees with nothing. Each draft is asked with `Prompt.Draw` set, and nlmodels' clients send it as the seed, but the drafts only differ when the model samples: at temperature 0 a vote agrees with itself every time.
+
+`Program.Confidence` carries what `Translate` knows about an answer: how many drafts agreed out of how many, whether it ran and answered rows, whether the pack's `Check` passed it, and how many actions came first. `Options.Escalate` moves an answer whose drafts agree less than that share on to the `Fallback`, recorded in `Trace.Escalations`, and when the fallback answers nothing better, the first such answer comes back rather than an error. A host whose fallback is a frontier model or agent pays for it only on the questions the small model was unsure of.
+
+`Options.Budget` caps the tokens (prompt and reply, every call together) and the time `Translate` spends, across actions, tries and votes. It stops before the call that would pass it, with a `*nl.BudgetSpent`. A vote the budget leaves no room for draws fewer drafts.
+
+`Try.Class` sorts a refused try by what went wrong. `grounding` is a draft that ran and answered nothing, and `construct` one that didn't parse, compile or check. `semantics` is one the pack's `Check` refused, and `budget` one an evaluation budget stopped. `Result.Class` does the same for a case `Eval` scored, with a case that answered the wrong rows as `semantics`. `Report.Failures` counts the failed cases by class, and the report's summary counts votes and escalations.
 
 ## Front ends
 
