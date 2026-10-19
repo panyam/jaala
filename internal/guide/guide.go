@@ -16,6 +16,17 @@ import (
 // absent, log's empty), and the deps module reaching through imports.
 func Deps(t testing.TB) (*ns.Vocabulary, *datalog.Base) {
 	t.Helper()
+	src := Source()
+	v := Vocabulary(t, src)
+	b, err := datalog.NewBase(v, src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return v, b
+}
+
+// Source is Deps' facts.
+func Source() *ns.MemSource {
 	src := ns.NewMemSource().
 		DeclareSchema("imports", ns.Schema{Arity: 2, Labels: []string{"from", "to"}, Doc: "A package importing another."}).
 		DeclareSchema("pkg", ns.Schema{Arity: 2, Labels: []string{"name", "license"}, Doc: "Every package and its license."})
@@ -26,6 +37,13 @@ func Deps(t testing.TB) (*ns.Vocabulary, *datalog.Base) {
 	src.Add("pkg", ns.Tuple{Vals: []ns.Value{ns.S("api"), ns.Absent()}})
 	src.Add("pkg", ns.Tuple{Vals: []ns.Value{ns.S("log"), ns.S("")}})
 	src.Add("pkg", ns.Tuple{Vals: []ns.Value{ns.S("util"), ns.S("Apache-2.0")}})
+	return src
+}
+
+// Vocabulary is Deps' vocabulary over src, which serves Source's relations: stdlib and the deps
+// module, so a store holding the same facts answers the guide's questions too.
+func Vocabulary(t testing.TB, src ns.Source) *ns.Vocabulary {
+	t.Helper()
 	v, err := ns.NewVocabulary(src)
 	if err != nil {
 		t.Fatal(err)
@@ -43,11 +61,7 @@ _step(?a, ?b) :- imports(?a, ?b);
 `, ""); err != nil {
 		t.Fatal(err)
 	}
-	b, err := datalog.NewBase(v, src)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return v, b
+	return v
 }
 
 // A Case is a question and the rows a right program answers, as nl.Case holds them.

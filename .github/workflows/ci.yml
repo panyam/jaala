@@ -119,6 +119,55 @@ jobs:
           extra=$(go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./... | grep -v '^github.com/panyam/jaala' || true)
           if [ -n "$extra" ]; then echo "dependencies outside jaala:"; echo "$extra"; exit 1; fi
 
+  # stores/bolt is a module of its own (#411), so the Neo4j driver reaches only its importers, and
+  # the root's ./... doesn't reach it. Its tests run against both servers, which JAALA_BOLT_REQUIRE
+  # makes them fail rather than skip without.
+  bolt:
+    runs-on: ubuntu-latest
+    services:
+      neo4j:
+        image: neo4j:5.26
+        env:
+          NEO4J_AUTH: none
+        ports:
+          - 7474:7474
+          - 7687:7687
+      memgraph:
+        image: memgraph/memgraph:3.6.0
+        ports:
+          - 7688:7687
+    defaults:
+      run:
+        working-directory: stores/bolt
+    env:
+      JAALA_BOLT_NEO4J: bolt://127.0.0.1:7687
+      JAALA_BOLT_MEMGRAPH: bolt://127.0.0.1:7688
+      JAALA_BOLT_REQUIRE: "1"
+      JAALA_BOLT_SEEDS: "300"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: stores/bolt/go.mod
+      - name: gofmt
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then echo "gofmt needed:"; echo "$out"; exit 1; fi
+      - name: vet
+        run: go vet ./...
+      - name: wait for the servers
+        run: |
+          for _ in $(seq 1 120); do curl -fs http://127.0.0.1:7474 >/dev/null && break; sleep 1; done
+          for _ in $(seq 1 120); do (echo > /dev/tcp/127.0.0.1/7688) 2>/dev/null && break; sleep 1; done
+      - name: test
+        run: go test -race -count=1 -timeout 20m ./...
+      - name: wasm build
+        run: GOOS=js GOARCH=wasm go build ./...
+      - name: jaala and the Neo4j driver only
+        run: |
+          extra=$(go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./... | grep -v '^github.com/panyam/jaala' | grep -v '^github.com/neo4j/neo4j-go-driver/v5' || true)
+          if [ -n "$extra" ]; then echo "dependencies outside jaala and the driver:"; echo "$extra"; exit 1; fi
+
   # The MCP server is a module of its own (#347), so mcpkit and its dependencies reach no host that
   # doesn't import it, and the root's ./... doesn't reach it.
   mcp:
