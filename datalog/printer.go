@@ -35,8 +35,8 @@ func (a Atom) String() string {
 		args[i] = t.String()
 	}
 	rel := a.Relation
-	if isClosure(rel) {
-		rel = closureName // its relation is its first argument
+	if isWalk(rel) {
+		rel = walkName(rel) // its relation is its first argument
 	}
 	s := rel + "(" + strings.Join(args, ", ") + ")"
 	if a.Fact != "" {

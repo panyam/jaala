@@ -36,8 +36,8 @@ func checkModesFrom(b *Base, where string, body Body, inputs map[Var][]ns.Value)
 		}
 		if bi, ok := predicateIn(b.reg, a.Relation); ok && bi.IsGenerator() && !bi.Satisfied(boundFlags(a, bound)) {
 			rel := a.Relation
-			if isClosure(rel) {
-				rel = closureName
+			if isWalk(rel) {
+				rel = walkName(rel)
 			}
 			return checkErr(KindUnbound, fmt.Sprintf("query: %s calls %s, and nothing binds what %s needs first: it needs %s",
 				where, a, rel, modesText(bi, a))).call(rel, len(a.Args)).
@@ -503,8 +503,8 @@ func checkReady(lit Literal, bound map[Var]bool) bool {
 // on what is bound, run once for constants but once per row of whatever bound a variable (#304:
 // agni's net.reaches(?n, ?rn, ?h) with ?rn bound walked 2,250 steps for each of 220 pins).
 func generatorBound(bi ns.Builtin, a *Atom, flags []bool) int {
-	if isClosure(a.Relation) {
-		// its relation and bounds are always given: only an end says where it walks from (#281)
+	if isWalk(a.Relation) {
+		// its relation, bounds (and mode) are always given: only an end says where it walks from (#281)
 		return count(flags[1:3])
 	}
 	for _, m := range bi.Modes {

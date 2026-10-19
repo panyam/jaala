@@ -1,0 +1,2 @@
+go test fuzz v1
+string("0():-weight(?00,0),graph.closure(\"edge\",?00,?00,0,0,00);r0(?x8,?x8):-edge(\"00\",?x8);00(000):-weight(?6,?000),weight(?0,?000),graph.closure(\"r0\",0,00,0,?0,00);node(00)=>?0")

@@ -176,7 +176,7 @@ func resolveAll(v *ns.Vocabulary) (*resolution, error) {
 		for i, rules := range perModule {
 			for _, rule := range rules {
 				for _, a := range ruleAtoms(rule.Body) {
-					if !privates[a.Relation] && !isAggHelper(a.Relation) && !isFact(a.Relation) && !isClosure(a.Relation) && !v.Has(a.Relation) {
+					if !privates[a.Relation] && !isAggHelper(a.Relation) && !isFact(a.Relation) && !isWalk(a.Relation) && !v.Has(a.Relation) {
 						return nil, fail(i, checkErr(KindUnknown, fmt.Sprintf("query: module %q rule %q reads %s", mods[i].Path, displayName(rule.Head.Relation), v.Unknown(a.Relation))))
 					}
 				}
@@ -275,10 +275,10 @@ func resolveRule(v *ns.Vocabulary, path string, privates map[string]bool, id int
 }
 
 func renameAtom(a Atom, name func(string) string) Atom {
-	if step, ok := stepOf(a.Relation); ok {
+	if w, step, ok := walkOf(a.Relation); ok {
 		// the step's written name is the first argument too, which a printed rule reads
 		step = name(step)
-		a.Relation = closureRelation(step)
+		a.Relation = w.prefix + step
 		a.Args = append([]Term{{Const: &ns.Value{S: step}}}, a.Args[1:]...)
 		return a
 	}

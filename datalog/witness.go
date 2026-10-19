@@ -107,8 +107,8 @@ func tagBody(b Body) Body {
 // shownName is a relation's name as the program wrote it, without the spellings rewrites give it: an
 // adorned or delta relation's suffix, or a private member's module scope.
 func shownName(rel string) string {
-	if isClosure(rel) {
-		return closureName
+	if isWalk(rel) {
+		return walkName(rel)
 	}
 	if base, ok := factOf(rel); ok {
 		rel = base

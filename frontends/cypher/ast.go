@@ -3,6 +3,8 @@ package cypher
 // statement is one Cypher query: its UNION parts, each a chain of stages.
 type statement struct {
 	parts []query
+	// edgePaths are the path variables relationships() reads, which walk a relation naming its edges.
+	edgePaths map[string]bool
 }
 
 // A query is one UNION part: its stages, each closed by a WITH but the last, closed by RETURN.
@@ -50,6 +52,11 @@ type pattern struct {
 	// refused is set for a pattern holding what parse refused (a quantified path, shortestPath), so
 	// it is read as a pattern though its nodes and rels don't say all of it.
 	refused bool
+	// path is the variable p = (...) binds the pattern's path to (#280), and selector what a path
+	// selector or shortestPath chose: "", "shortest", or what the compiler refuses ("all shortest").
+	path     string
+	pathPos  Pos
+	selector string
 }
 
 type nodePat struct {
@@ -69,6 +76,11 @@ type relPat struct {
 	varLen   bool
 	min, max int  // with varLen: max -1 is unbounded
 	where    expr // a WHERE inside the relationship, as a node's
+	// path is the path variable the relationship's walk binds, with its pattern's selector, and edges
+	// whether relationships() reads it (#280).
+	path     string
+	selector string
+	edges    bool
 }
 
 type propEntry struct {

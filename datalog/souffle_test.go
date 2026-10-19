@@ -157,6 +157,9 @@ func souffleClosures(q Query) (Query, error) {
 				if l.Neg != nil && l.Neg.Relation == closureName {
 					err = unsupported("a negated closure")
 				}
+				if a != nil && a.Relation == pathsName || l.Neg != nil && l.Neg.Relation == pathsName {
+					err = unsupported("graph.paths, whose paths Soufflé can't list")
+				}
 				continue
 			}
 			if len(a.Args) != 6 || a.Args[0].Const == nil || a.Args[3].Const == nil || a.Args[4].Const == nil {

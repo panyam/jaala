@@ -1,0 +1,3 @@
+fixture: deps
+query: graph.paths("imports", "db", "util", "acyclic", 1, 0, ?p) => ?p
+expect: [['["db","config","cache","log","util"]'], ['["db","log","util"]']]

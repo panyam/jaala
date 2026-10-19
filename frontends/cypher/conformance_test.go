@@ -102,7 +102,7 @@ func TestAMistakeAfterAGapIsReportedFirst(t *testing.T) {
 		{`OPTIONAL MATCH (a:Package) RETURN a.name AS`, "expected a column name after AS"},
 		{`MATCH (a:Package) UNWIND [1, 2] AS x RETURN x x`, `unexpected "x" after RETURN`},
 		{`MATCH (a:Package) RETURN CASE WHEN a.name THEN 1 END, a.`, "expected a property name after ."},
-		{`MATCH p = (a)-[:IMPORTS]->(b RETURN p`, "expected ) to end the node"},
+		{`MATCH ((a)-[:IMPORTS]->(b)){1,3} RETURN b AS`, "expected a column name after AS"},
 	} {
 		_, err := cypher.Compile(v, depsGraph, c.cypher)
 		var ce *cypher.Error
@@ -112,7 +112,7 @@ func TestAMistakeAfterAGapIsReportedFirst(t *testing.T) {
 	}
 	// control: the same queries without the mistake are refused for their gap
 	for _, q := range []string{`OPTIONAL MATCH (a:Package) RETURN a.name AS n`, `MATCH (a:Package) UNWIND [1, 2] AS x RETURN x`,
-		`MATCH (a:Package) RETURN CASE WHEN a.name THEN 1 END, a.name`, `MATCH p = (a)-[:IMPORTS]->(b) RETURN p`} {
+		`MATCH (a:Package) RETURN CASE WHEN a.name THEN 1 END, a.name`, `MATCH ((a)-[:IMPORTS]->(b)){1,3} RETURN b AS c`} {
 		_, err := cypher.Compile(v, depsGraph, q)
 		var ce *cypher.Error
 		if !errors.As(err, &ce) || ce.Gap == 0 {

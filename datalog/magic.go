@@ -216,7 +216,7 @@ func withoutOrphans(rules []Rule) []Rule {
 		for _, r := range rules {
 			orphan := false
 			for _, l := range r.Body.Literals {
-				if l.Pos != nil && strings.Contains(l.Pos.Relation, "\x00") && !isFact(l.Pos.Relation) && !isClosure(l.Pos.Relation) && !defined[l.Pos.Relation] {
+				if l.Pos != nil && strings.Contains(l.Pos.Relation, "\x00") && !isFact(l.Pos.Relation) && !isWalk(l.Pos.Relation) && !defined[l.Pos.Relation] {
 					orphan = true
 					break
 				}

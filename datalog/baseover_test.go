@@ -41,7 +41,7 @@ func vocabulary(t *testing.T) *ns.Vocabulary {
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.AddModule("path", LanguageName, reachModule, ""); err != nil {
+	if err := r.AddModule("hop", LanguageName, reachModule, ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.Check(); err != nil {
@@ -76,12 +76,12 @@ func TestOneVocabularyAnswersOverManySourcesAndResolvesOnce(t *testing.T) {
 		b         *Base
 		from, got string
 	}{{first, "a", "b,c,d"}, {second, "x", "y,z"}, {second, "a", ""}} {
-		rows, err := Naive{}.Eval(bg, mustParse(t, `path.reach("`+c.from+`", ?n) => ?n`), c.b)
+		rows, err := Naive{}.Eval(bg, mustParse(t, `hop.reach("`+c.from+`", ?n) => ?n`), c.b)
 		if err != nil || col(rows, "n") != c.got {
 			t.Errorf("reach from %s = %v, %v; want %q", c.from, rows, err, c.got)
 		}
 	}
-	if _, err := r.Lookup("path.reach"); err != nil {
+	if _, err := r.Lookup("hop.reach"); err != nil {
 		t.Fatal(err)
 	}
 	if n := resolutions.Load() - before; n != 1 {
@@ -125,7 +125,7 @@ func TestBasesOverDifferentSourcesEvaluateConcurrently(t *testing.T) {
 	r := vocabulary(t)
 	bases := []*Base{over(t, r, graph()), over(t, r, another())}
 	want := []string{"b,c,d", ""}
-	q := mustParse(t, `path.reach("a", ?n) => ?n`)
+	q := mustParse(t, `hop.reach("a", ?n) => ?n`)
 	errs := make(chan error, 8)
 	for i := 0; i < 8; i++ {
 		go func(i int) {

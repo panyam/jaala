@@ -73,6 +73,18 @@ func walkable(members []callee) []string {
 	return out
 }
 
+// pathable are the relations graph.paths can walk (#280): every relation of two arguments or three
+// (from, edge, to), base or derived.
+func pathable(members []callee) []string {
+	var out []string
+	for _, m := range members {
+		if m.kind != ns.EntryPredicate && len(m.arities) == 1 && (m.arities[0] == 2 || m.arities[0] == 3) {
+			out = append(out, m.path)
+		}
+	}
+	return out
+}
+
 func vocabRules(v *ns.Vocabulary, o grammarOpts) ([]rule, error) {
 	members, roots, err := callees(v)
 	if err != nil {
@@ -110,6 +122,14 @@ func vocabRules(v *ns.Vocabulary, o grammarOpts) ([]rule, error) {
 		}
 		extra = append(extra, rule{"walked", names})
 		atoms = append(atoms, seq{lit("graph.closure("), ref("walked"), lit(", "), ref("term"), lit(", "), ref("term"), lit(", "), ref("term"), lit(", "), ref("term"), lit(", "), ref("term"), lit(")")})
+	}
+	if rels := pathable(members); len(rels) > 0 {
+		var names alt
+		for _, r := range rels {
+			names = append(names, lit(`"`+r+`"`))
+		}
+		extra = append(extra, rule{"pathed", names}, rule{"pathmode", alt{lit(`"trail"`), lit(`"acyclic"`), lit(`"simple"`), lit(`"shortest"`), lit(`"walk"`)}})
+		atoms = append(atoms, seq{lit("graph.paths("), ref("pathed"), lit(", "), ref("term"), lit(", "), ref("term"), lit(", "), ref("pathmode"), lit(", "), ref("term"), lit(", "), ref("term"), lit(", "), ref("term"), lit(")")})
 	}
 	if !o.goalOnly {
 		local := seq{ref("local"), lit("(")}

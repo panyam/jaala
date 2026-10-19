@@ -7,6 +7,7 @@ edge(from: node, to: node) # A directed edge between two nodes.
 node(name: node) # Every node.
 weight(node: node, w: number)
 graph.closure(relation, from, to, min: number, max: number, hops: number) needs relation+min+max # to is reachable from from in min to max steps of the two-argument relation named in quotes (max 0: no bound), hops the fewest
+graph.paths(relation, from, to, mode, min: number, max: number, path) needs relation+mode+min+max # each path in min to max steps of the relation named in quotes, mode "trail", "acyclic", "simple", "shortest" or "walk"
 
 module graph
 graph.heavy(n: ~node, w: ~number, in min) # heavy is a node weighing more than min.
@@ -23,6 +24,14 @@ num.neg(a: number, b: number) needs a or b # b = -a, run from either; the unit c
 num.sub(a: number, b: number, c: number) needs a+b or a+c or b+c # c = a - b, run from any two of the three; units follow the vocabulary's table
 num.unit(number: number, unit: string) needs number # binds the number's unit ("V", "A"), or absent for a number without one; the number must be bound
 num.value(number: number, value: number) needs number # binds the number without its unit, so 5 V and 5 A both bind 5; the number must be bound
+
+module path
+path.edge(path: string, index: number, edge) needs path # binds each edge of a path over a relation of three arguments, index from 0
+path.edges(path: string, edges: string) needs path # binds the path's edges as a list
+path.length(path: string, steps: number) needs path # binds how many steps the path takes
+path.node(path: string, index: number, node) needs path # binds each node of the path, index from 0
+path.nodes(path: string, nodes: string) needs path # binds the path's nodes as a list
+path.step(path: string, index: number, from, to) needs path # binds each step of the path, index from 0
 
 module str
 str.capitalize(string: string, capitalized: string) needs string # binds the string with its first character in upper case and the rest as written

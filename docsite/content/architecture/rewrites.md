@@ -19,7 +19,7 @@ Before that, a goal's equality between a variable and text binds the variable fi
 
 ## Inlining
 
-A [`graph.closure`]({{.Site.PathPrefix}}/guide/syntax/#walking-a-relation) over a relation whose rules each read one base relation, as the Cypher compiler's `cypher_step1(?x, ?y) :- edge(?x, "CALLS", ?y)` does, walks those atoms instead of deriving the relation, so it reads only the facts its walk reaches ([#281](https://github.com/panyam/jaala/issues/281)). Witnessed, it walks the relation, whose node a witness shows.
+A [`graph.closure`]({{.Site.PathPrefix}}/guide/syntax/#walking-a-relation) or [`graph.paths`]({{.Site.PathPrefix}}/guide/syntax/#every-path) over a relation whose rules each read one base relation, as the Cypher compiler's `cypher_step1(?x, ?y) :- edge(?x, "CALLS", ?y)` does, walks those atoms instead of deriving the relation, so it reads only the facts its walk reaches ([#281](https://github.com/panyam/jaala/issues/281)). Witnessed, it walks the relation, whose node a witness shows.
 
 A call to a relation with one rule, not recursive, is replaced by that rule's body, so a constant at the call reaches the literals inside, where the planner can use it. It stands aside:
 

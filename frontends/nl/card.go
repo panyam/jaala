@@ -74,6 +74,7 @@ func cardModule(b *strings.Builder, v *ns.Vocabulary, module string) error {
 	}
 	if module == "" {
 		b.WriteString(closureLine(v))
+		b.WriteString(pathsLine(v))
 	}
 	for _, s := range subs {
 		if err := cardModule(b, v, s); err != nil {
@@ -91,6 +92,15 @@ func closureLine(v *ns.Vocabulary) string {
 		return ""
 	}
 	return `graph.closure(relation, from, to, min: number, max: number, hops: number) needs relation+min+max # to is reachable from from in min to max steps of the two-argument relation named in quotes (max 0: no bound), hops the fewest` + "\n"
+}
+
+// pathsLine is the card's line for graph.paths (#280), when the vocabulary holds a relation it can walk.
+func pathsLine(v *ns.Vocabulary) string {
+	members, _, err := callees(v)
+	if err != nil || len(pathable(members)) == 0 {
+		return ""
+	}
+	return `graph.paths(relation, from, to, mode, min: number, max: number, path) needs relation+mode+min+max # each path in min to max steps of the relation named in quotes, mode "trail", "acyclic", "simple", "shortest" or "walk"` + "\n"
 }
 
 func cardLine(v *ns.Vocabulary, m ns.Entry) string {

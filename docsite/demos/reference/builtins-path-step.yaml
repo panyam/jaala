@@ -1,0 +1,3 @@
+fixture: deps
+query: graph.paths("imports", "db", "util", "shortest", 1, 0, ?p), path.step(?p, ?i, ?from, ?to) => ?i, ?from, ?to
+expect: [["0", db, log], ["1", log, util]]

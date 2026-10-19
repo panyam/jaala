@@ -395,6 +395,10 @@ A `not` with the wrong number of arguments. Over a rewritten relation it can nam
 
 A closure walks a relation's facts from their first argument to their second. To walk a wider relation, such as `edge(from, kind, to)`, write a rule of two arguments reading it, `calls(?a, ?b) :- edge(?a, "CALLS", ?b)`, and walk that. A relation it can't name at all is reported as `query: graph.closure over unknown relation …`.
 
+`query: graph.paths needs a relation of 2 args, from and to, or 3, from, edge and to; … takes …`
+
+`graph.paths` walks a relation of two arguments, or of three when the middle one names the edge ([#280](https://github.com/panyam/jaala/issues/280)). Its other refusals read as `graph.closure`'s do, with its own name: `graph.paths takes 7 args`, a relation that isn't a text constant, an unknown relation, a predicate, or one taking an argument from its caller.
+
 ## Rules
 
 Rules are checked as a whole before any of them runs.
@@ -551,7 +555,15 @@ A module member declares a type its rules can't produce. Raised by `Check`.
 
 `query: graph.closure's min must be a whole number of steps, 0 or more, not …`, `query: graph.closure's max must be a whole number of steps, 0 for no bound or at least min, not …`
 
-A closure's bounds count steps. Min 0 lets `?from` reach itself in none, and max 0 means no bound.
+A closure's bounds count steps. Min 0 lets `?from` reach itself in none, when the relation holds it, and max 0 means no bound. `graph.paths` reads its bounds the same way and says so in its own name.
+
+`query: graph.paths's mode must be one of walk, trail, acyclic, simple, shortest, not …`, `query: graph.paths in mode walk needs a max: around a cycle its paths never end`
+
+A paths call's fourth argument says how a path may repeat, and a walk may repeat anything, so with no max a cycle would give paths without end. Write a max, or walk as a trail or acyclic.
+
+`query: a paths call's mode must be one of walk, trail, acyclic, simple, shortest, not …`, `query: a paths call in mode walk needs a within: around a cycle its paths never end`, `query: a paths call's within must be a whole number of steps, 0 for no bound`, `query: a paths call needs its mode and within bound`
+
+The same for a host's predicate built with `stdlib.Paths` or `stdlib.EdgePaths`, whose `?within` is the max.
 
 `query: a reach's within must be a whole number of steps, at least 1`, `query: a reach's within needs a number bound (the most steps a path may take)`
 
@@ -635,9 +647,13 @@ The `DerivedStore` given to `Base.KeepDerivedIn` refused to keep a relation `Mat
 
 An evaluator running the body as written reached a closure whose bounds are variables nothing has bound yet. The planned evaluator moves it after them.
 
+`query: graph.paths needs its mode, min and max bound (a variable must appear in a relation before graph.paths reads it)`
+
+The same for a paths call, whose mode must be bound too.
+
 `query: graph.closure isn't evaluated across versions: ask each version with At`
 
-A shortest path can hold in no one version though each of its steps holds in some, so a closure isn't answered under `Across`. Ask `At` each version you need.
+A shortest path can hold in no one version though each of its steps holds in some, so a closure isn't answered under `Across`, and for the same reason neither is `graph.paths`. Ask `At` each version you need.
 
 ## Grouping and ordering
 
@@ -869,7 +885,7 @@ Two members serve one relation with different arities, labels or types. The engi
 
 `query: … is the engine's own, which a query calls whatever the vocabulary holds: register yours under another name`
 
-`graph.closure` is answered by the engine before the vocabulary is asked, so a predicate registered under that name would never be called.
+`graph.closure` and `graph.paths` are answered by the engine before the vocabulary is asked, so a predicate registered under either name would never be called.
 
 ## Internal
 
@@ -887,6 +903,6 @@ A host generator emitted a row with the wrong number of values.
 
 Used inside the engine to stop a generator early. It never reaches a host.
 
-`query: closure found its target`, `query: internal: graph.closure is run by the engine`, `query: internal: graph.closure found no path from … to …`
+`query: closure found its target`, `query: closure found a fact`, `query: internal: an engine walk is run by the engine`, `query: internal: graph.closure found no path from … to …`
 
-Used inside the engine while a closure walks: the first stops a walk at a bound target, and the others mean a bug in jaala.
+Used inside the engine while a closure or a paths call walks: the first two stop a walk at a bound target and a read at its first fact, and the others mean a bug in jaala.

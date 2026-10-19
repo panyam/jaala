@@ -74,8 +74,8 @@ func TestARelationReadingARedefinedOneIsDerivedAgain(t *testing.T) {
 // A library member is held like a query's own rule, which is what a host answering many queries over
 // one Base calls most.
 func TestAModuleMemberIsHeld(t *testing.T) {
-	b := baseFor(withModules(t, "path", reachModule))
-	const q = `path.reach(?a, ?b) => ?a, ?b`
+	b := baseFor(withModules(t, "hop", reachModule))
+	const q = `hop.reach(?a, ?b) => ?a, ?b`
 	first, w1 := answer(t, b, SemiNaive{}, q)
 	second, w2 := answer(t, b, SemiNaive{}, q)
 	if !sameBinds(first, second) || w2 >= w1 {

@@ -181,9 +181,9 @@ func (v *Vocabulary) admits(path string, m member) error {
 	return nil
 }
 
-// reserved are the names the engine answers itself, before the vocabulary: graph.closure walks a
-// relation (jaala#281). A member registered under one would never be called.
-var reserved = map[string]bool{"graph.closure": true}
+// reserved are the names the engine answers itself, before the vocabulary: graph.closure (jaala#281)
+// and graph.paths (jaala#280) walk a relation. A member registered under one would never be called.
+var reserved = map[string]bool{"graph.closure": true, "graph.paths": true}
 
 // put places m at path, which admits has accepted, and drops every cached result.
 func (v *Vocabulary) put(path string, m member) {

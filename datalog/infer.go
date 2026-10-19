@@ -108,12 +108,12 @@ func (t *typer) argTypes(rel string, seen map[string]bool) ([]string, []ns.ArgTy
 	if s, ok := schemaIn(t.reg, rel); ok {
 		return s.Labels, s.Types, true
 	}
-	if step, ok := stepOf(rel); ok {
-		types := slices.Clone(closureBuiltin.Types)
-		if _, st, ok := t.argTypes(step, seen); ok && len(st) == 2 {
-			types[1], types[2] = st[0], st[1]
+	if w, step, ok := walkOf(rel); ok {
+		types := slices.Clone(w.builtin.Types)
+		if _, st, ok := t.argTypes(step, seen); ok && slices.Contains(w.arities, len(st)) {
+			types[1], types[2] = st[0], st[len(st)-1]
 		}
-		return closureBuiltin.Labels, types, true
+		return w.builtin.Labels, types, true
 	}
 	if b, ok := predicateIn(t.reg, rel); ok {
 		return b.Labels, b.Types, true
@@ -430,7 +430,10 @@ type ColumnKind struct {
 // query's rules and the modules it links. An aggregate is a number whatever it reduces: count(?ref)
 // counts parts, it does not name one.
 func ColumnKinds(q Query, reg *ns.Vocabulary) ([]ColumnKind, error) {
-	q, err := Link(q, reg)
+	q, err := lowerClosures(q) // an engine walk is typed by the relation it walks (#280)
+	if err == nil {
+		q, err = Link(q, reg)
+	}
 	if err == nil {
 		q, err = foldUnits(q, reg)
 	}
