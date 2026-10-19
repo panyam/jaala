@@ -46,6 +46,12 @@ type Pack struct {
 	// another graph for its call; one without a graph refuses the call. cypher.Store writes it for
 	// the node(id, kind), edge(from, kind, to), attr(id, key, value) shape.
 	Cypher *cypher.Graph
+	// AskLanguage is the language the ask tool's model writes when a call doesn't say: "datalog" (or
+	// "") or "cypher", which takes a Cypher graph (#386). CypherExamples are the questions with the
+	// Cypher answering them that a model writing Cypher is shown, in place of the pack's Examples,
+	// which are jaala's; each must compile over the graph.
+	AskLanguage    string
+	CypherExamples []nl.Example
 }
 
 // Options configure New.
@@ -202,6 +208,17 @@ func checkVocabulary(v *ns.Vocabulary, p Pack) error {
 			return fmt.Errorf("mcp: the pack's graph: %w", err)
 		}
 	}
+	switch {
+	case p.AskLanguage != "" && p.AskLanguage != "datalog" && p.AskLanguage != "cypher":
+		return fmt.Errorf("mcp: AskLanguage %q: want datalog or cypher", p.AskLanguage)
+	case p.Cypher == nil && (p.AskLanguage == "cypher" || len(p.CypherExamples) > 0):
+		return errors.New("mcp: the pack asks in Cypher but has no Cypher graph")
+	}
+	for i, e := range p.CypherExamples {
+		if _, err := cypher.Compile(v, *p.Cypher, e.Program); err != nil {
+			return fmt.Errorf("mcp: the pack's Cypher example %d (%q): %w", i+1, e.Question, err)
+		}
+	}
 	return nil
 }
 
@@ -265,6 +282,9 @@ func instructions(p Pack, ask bool) string {
 	b.WriteString("\nThe explain tool says where a program's work went, and why its answer is empty.")
 	if ask {
 		b.WriteString(" The ask tool takes a question in plain language and writes the program itself.")
+		if p.Cypher != nil {
+			b.WriteString(" With language cypher, its model writes Cypher instead.")
+		}
 	}
 	return b.String() + "\n"
 }

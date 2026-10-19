@@ -6,25 +6,54 @@ import (
 	"strings"
 
 	"github.com/panyam/jaala/datalog"
+	"github.com/panyam/jaala/frontends/nl"
 )
 
 // Locate is where in the Cypher text an error is about (#353): a compile *Error's own position, or,
 // for an error checking or parsing the program p compiled to (a *datalog.CheckError or
 // *datalog.ParseError), the Cypher that the failing piece of the program was written for: the node
-// pattern, relationship, WHERE condition, property or RETURN item. It reports false for an error with
-// no place, such as a spent budget, and for one in a piece of the program no Cypher wrote.
+// pattern, relationship, WHERE condition, property or RETURN item. For an *nl.EmptyAnswer it is the
+// Cypher that wrote the literal its report ends at, the one nearest the data that matched nothing
+// (#386). It reports false for an error with no place, such as a spent budget, and for one in a piece
+// of the program no Cypher wrote.
 func (p Program) Locate(err error) (Pos, bool) {
 	var ce *Error
 	if errors.As(err, &ce) {
 		return ce.Pos, true
 	}
+	var empty *nl.EmptyAnswer
+	if errors.As(err, &empty) {
+		return p.locateEmpty(empty.Why)
+	}
 	at, ok := datalog.Locate(p.Text, err)
 	if !ok {
 		return Pos{}, false
 	}
+	return p.at(at.Offset)
+}
+
+// locateEmpty places the deepest literal of why's trail that the program's text holds as written: a
+// rewrite may have renamed the ones above it.
+func (p Program) locateEmpty(why *datalog.EmptyReport) (Pos, bool) {
+	if why == nil {
+		return Pos{}, false
+	}
+	for _, because := range why.Because {
+		if pos, ok := p.locateEmpty(because); ok {
+			return pos, true
+		}
+	}
+	if i := strings.Index(p.Text, why.Literal); i >= 0 {
+		return p.at(i)
+	}
+	return Pos{}, false
+}
+
+// at is the Cypher that wrote the program's text at offset: the narrowest span holding it.
+func (p Program) at(offset int) (Pos, bool) {
 	best := -1
 	for i, s := range p.spans {
-		if s.start <= at.Offset && at.Offset < s.end && (best < 0 || s.end-s.start < p.spans[best].end-p.spans[best].start) {
+		if s.start <= offset && offset < s.end && (best < 0 || s.end-s.start < p.spans[best].end-p.spans[best].start) {
 			best = i
 		}
 	}

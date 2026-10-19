@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/panyam/jaala/datalog"
+	"github.com/panyam/jaala/frontends/cypher"
 	"github.com/panyam/jaala/frontends/nl"
 	"github.com/panyam/jaala/ns"
 	"github.com/panyam/mcpkit/core"
@@ -351,11 +352,12 @@ func (c *call) explain(ctx core.ToolContext, in explainInput) (core.ToolResult, 
 	return core.TextResult(rowCount(len(rows)) + "\n" + r.String()), nil
 }
 
-const askDesc = `Ask a question about %s in plain language: the server writes a Datalog program, checks and runs it, and answers with the program, its rows and each try it took. mode picks the models: local (the small one alone), frontier (the large one alone) or both (the small one, then the large one when it fails). Prefer query when you can write the program.`
+const askDesc = `Ask a question about %s in plain language: the server writes a Datalog program (or, with language cypher, a Cypher query), checks and runs it, and answers with the program, its rows and each try it took. mode picks the models: local (the small one alone), frontier (the large one alone) or both (the small one, then the large one when it fails). Prefer query when you can write the program.`
 
 type askInput struct {
 	Question string `json:"question" jsonschema:"required" jsonschema_description:"The question, in plain language."`
 	Mode     string `json:"mode,omitempty" jsonschema_description:"local, frontier or both (the default)."`
+	Language string `json:"language,omitempty" jsonschema_description:"What the model writes: datalog, or cypher when the server reads a Cypher graph. The server picks when empty."`
 	MaxWork  int64  `json:"max_work,omitempty" jsonschema_description:"Stop each draft past this much work; the server caps it too."`
 	Limit    int    `json:"limit,omitempty" jsonschema_description:"The most rows to return; the server caps it too."`
 	JSON     bool   `json:"json,omitempty" jsonschema_description:"Answer with the columns, rows and witnesses as JSON instead of text."`
@@ -375,12 +377,27 @@ func (c *call) ask(ctx core.ToolContext, in askInput) (core.ToolResult, error) {
 	default:
 		return core.ErrorResult(fmt.Sprintf("mode %q: want local, frontier or both", in.Mode)), nil
 	}
+	lang := in.Language
+	if lang == "" {
+		lang = c.p.AskLanguage
+	}
+	var fe nl.FrontEnd
+	switch lang {
+	case "", "datalog":
+	case "cypher":
+		if c.p.Cypher == nil {
+			return core.ErrorResult("this call reads no Cypher graph; ask in datalog"), nil
+		}
+		fe = cypher.NewFrontEnd(*c.p.Cypher, c.p.CypherExamples...)
+	default:
+		return core.ErrorResult(fmt.Sprintf("language %q: want datalog or cypher", lang)), nil
+	}
 	b, err := c.base(ctx)
 	if err != nil {
 		return core.ErrorResult(err.Error() + c.budgetHint(err)), nil
 	}
 	p, tr, err := nl.Translate(ctx, in.Question, c.v, nil, model, nl.Options{
-		Fallback: fallback, Base: b, Eval: c.evalOptions(in.MaxWork), Pack: &c.p.Pack,
+		Fallback: fallback, Base: b, Eval: c.evalOptions(in.MaxWork), Pack: &c.p.Pack, FrontEnd: fe,
 	})
 	if err != nil {
 		return core.ErrorResult(fmt.Sprintf("no program answered it: %v\n%s", err, traceText(tr))), nil
@@ -389,11 +406,20 @@ func (c *call) ask(ctx core.ToolContext, in askInput) (core.ToolResult, error) {
 	if err != nil {
 		return c.refuse(p.Text, err), nil
 	}
-	res, err := c.answer(page(p.Text, tab, 0, c.limit(in.Limit)), in.JSON)
+	a := page(p.Text, tab, 0, c.limit(in.Limit))
+	head := "program"
+	if fe != nil {
+		// as the cypher tool answers: the Cypher, the program it ran, and Cypher's column names
+		head, a.Cypher, a.Program = "cypher", p.Text, p.Compiled
+		if q, err := cypher.Compile(c.v, *c.p.Cypher, p.Text); err == nil && len(q.Columns) == len(a.Columns) {
+			a.Columns = q.Columns
+		}
+	}
+	res, err := c.answer(a, in.JSON)
 	if err != nil || in.JSON {
 		return res, err
 	}
-	return core.TextResult(fmt.Sprintf("program:\n  %s\n%s%s", p.Text, res.Content[0].Text, traceText(tr))), nil
+	return core.TextResult(fmt.Sprintf("%s:\n  %s\n%s%s", head, p.Text, res.Content[0].Text, traceText(tr))), nil
 }
 
 // traceText is a line per try: the model, why it was refused, and its tokens.

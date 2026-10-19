@@ -287,3 +287,60 @@ func TestACypherCheckErrorPointsIntoTheQuery(t *testing.T) {
 		}
 	}
 }
+
+// prompted replies with one text, recording each prompt it was sent.
+type prompted struct {
+	reply string
+	asked []nl.Prompt
+}
+
+func (m *prompted) Name() string { return "small" }
+
+func (m *prompted) Complete(_ context.Context, p nl.Prompt) (nl.Completion, error) {
+	m.asked = append(m.asked, p)
+	return nl.Completion{Text: m.reply}, nil
+}
+
+// ask translates into Cypher when the call or the pack says so (#386): the model sees the graph and
+// the pack's Cypher examples, and the answer is the cypher tool's, the query, the program it ran and
+// Cypher's column names. control: the same reply asked in datalog doesn't parse.
+func TestAskTranslatesIntoCypher(t *testing.T) {
+	p := codePack(codeGraph("Func"))
+	p.AskLanguage = "cypher"
+	p.CypherExamples = []nl.Example{{Question: "what does lex call?", Program: `MATCH (:Func {name: 'lex'})-[:CALLS]->(b:Func) RETURN b`}}
+	m := &prompted{reply: `MATCH (a:Func {name: 'main'})-[:CALLS]->(b:Func) RETURN b.name AS callee ORDER BY callee`}
+	c := dialCode(t, p, mcp.Options{Model: m})
+	text := c.ToolCall("ask", map[string]any{"question": "what does main call?"})
+	for _, want := range []string{"cypher:\n  MATCH (a:Func", "ran: ", "columns: callee\n", "1. help\n", "2. parse\n", "1. small: accepted"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("ask lacks %q:\n%s", want, text)
+		}
+	}
+	if prefix := m.asked[0].Prefix; !strings.Contains(prefix, "(:Func") || !strings.Contains(prefix, "what does lex call?") {
+		t.Errorf("the model wasn't shown the graph and the Cypher example:\n%s", prefix)
+	}
+	res := call(t, c, "ask", map[string]any{"question": "what does main call?", "language": "datalog"})
+	if !res.IsError || !strings.Contains(res.Content[0].Text, "small: parse") {
+		t.Errorf("control: asked in datalog, %+v", res.Content)
+	}
+	if !strings.Contains(mcp.Instructions(p, true), "With language cypher") {
+		t.Errorf("the instructions don't say ask writes Cypher")
+	}
+
+	plain := codePack(nil)
+	c = dialCode(t, plain, mcp.Options{Model: m})
+	if res := call(t, c, "ask", map[string]any{"question": "what does main call?", "language": "cypher"}); !res.IsError || !strings.Contains(res.Content[0].Text, "no Cypher graph") {
+		t.Errorf("a pack without a graph translated into Cypher: %+v", res.Content)
+	}
+	v, b := code(t)
+	base := func(context.Context) (*datalog.Base, error) { return b, nil }
+	for _, broken := range []mcp.Pack{
+		{AskLanguage: "cypher"},
+		{AskLanguage: "gql", Cypher: codeGraph("Func")},
+		{Cypher: codeGraph("Func"), CypherExamples: []nl.Example{{Question: "q", Program: `MATCH (a:Nope) RETURN a`}}},
+	} {
+		if _, err := mcp.New(v, broken, mcp.Options{Base: base}); err == nil {
+			t.Errorf("New took a pack asking in %q with examples %v", broken.AskLanguage, broken.CypherExamples)
+		}
+	}
+}
