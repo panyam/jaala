@@ -19,7 +19,10 @@ type cypherInput struct {
 	Limit     int            `json:"limit,omitempty" jsonschema_description:"The most rows to return; the server caps it too."`
 	PageToken string         `json:"page_token,omitempty" jsonschema_description:"The page_token the last answer gave, to continue it."`
 	MaxWork   int64          `json:"max_work,omitempty" jsonschema_description:"Stop past this much work; the server caps it too."`
+	Sample    int            `json:"sample,omitempty" jsonschema_description:"Try the query on this many rows: it stops after them, and when none come back the answer points at the pattern that matched nothing."`
 	JSON      bool           `json:"json,omitempty" jsonschema_description:"Answer with the columns, rows, witnesses and the program it ran as JSON instead of text."`
+
+	bare bool // no witnesses, for the values tool
 }
 
 // cypher compiles the query over the call's graph and answers the program as query does, naming the
@@ -40,7 +43,15 @@ func (c *call) cypher(ctx core.ToolContext, in cypherInput) (core.ToolResult, er
 	if err != nil {
 		return core.ErrorResult(err.Error()), nil
 	}
-	extra := []datalog.Option{datalog.Witnesses()}
+	var extra []datalog.Option
+	if !in.bare {
+		extra = append(extra, datalog.Witnesses())
+	}
+	var r *datalog.Report
+	if in.Sample > 0 {
+		r = &datalog.Report{}
+		extra = append(extra, datalog.Explain(r))
+	}
 	if len(values) > 0 {
 		bind, err := p.Bind(values)
 		if err != nil {
@@ -52,7 +63,7 @@ func (c *call) cypher(ctx core.ToolContext, in cypherInput) (core.ToolResult, er
 	if err != nil {
 		return core.ErrorResult(err.Error() + c.budgetHint(err)), nil
 	}
-	tab, err := datalog.SemiNaive{}.EvalTable(ctx, p.Query, b, c.evalOptions(in.MaxWork, extra...)...)
+	tab, err := datalog.SemiNaive{}.EvalTable(ctx, sampled(p.Query, in.Sample), b, c.evalOptions(in.MaxWork, extra...)...)
 	if err != nil {
 		// Said in the query's terms, at its place in the query, with the program it ran for reference.
 		text := cypher.Explain(in.Query, p, err) + c.budgetHint(err)
@@ -60,6 +71,7 @@ func (c *call) cypher(ctx core.ToolContext, in cypherInput) (core.ToolResult, er
 	}
 	a := page(p.Text, tab, offset, c.limit(in.Limit))
 	a.Cypher = in.Query
+	a.Why = whyEmpty(tab.Len(), r, func(err error) string { return cypher.Explain(in.Query, p, err) })
 	if len(p.Columns) == len(a.Columns) {
 		a.Columns = p.Columns
 	}

@@ -162,7 +162,11 @@ GOARCH=wasm go test ./ns` (#417 ran `ns` that way).
   schema says `additionalProperties: false`, so mcpkit's argument validation fails a misspelled
   call, plain `New`'s too. `Prepare` returns a `Run` per call (Base, Eval, a whole Pack, and a
   `Timeout` that shortens `Options.Timeout`, #361: the handler in `args.go` sets the deadline on
-  `ToolContext`'s embedded context before `Prepare`, and `budgetHint` names it). `Options.Vocabulary`
+  `ToolContext`'s embedded context before `Prepare`, and `budgetHint` names it). `look`, `values` and
+  `find` (`actions.go`, #393) are nl's actions as tools, through the exported `nl.Look` and `nl.Probe`,
+  with `language` datalog or cypher; `find` is registered only for a pack with a Grounder. `sample` on
+  `query` and `cypher` lowers the program's own limit and, when nothing comes back, sets `Answer.Why`
+  from an Explain report (`whyEmpty`). `Options.Vocabulary`
   replaces `New`'s vocabulary (`New(nil, …)`; both or neither is refused) and is resolved under a lock
   by the first call to a tool in `readsVocabulary` (schema, ask, cypher), running New's pack checks
   (`checkVocabulary`) then; a failure isn't kept. Its

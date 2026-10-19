@@ -22,7 +22,7 @@ type call struct {
 
 // readsVocabulary are the tools that read the vocabulary itself rather than a Base, which wait for
 // Options.Vocabulary on a server given none up front.
-var readsVocabulary = map[string]bool{"schema": true, "ask": true, "cypher": true}
+var readsVocabulary = map[string]bool{"schema": true, "ask": true, "cypher": true, "look": true, "values": true}
 
 // tool is the tool name taking In's arguments and A's beside them, flat in one schema allowing no
 // others. Go can't embed a type parameter, so the handler reads the arguments twice, into In and

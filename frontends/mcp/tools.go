@@ -29,7 +29,10 @@ type queryInput struct {
 	Limit     int    `json:"limit,omitempty" jsonschema_description:"The most rows to return; the server caps it too."`
 	PageToken string `json:"page_token,omitempty" jsonschema_description:"The page_token the last answer gave, to continue it."`
 	MaxWork   int64  `json:"max_work,omitempty" jsonschema_description:"Stop past this much work; the server caps it too."`
+	Sample    int    `json:"sample,omitempty" jsonschema_description:"Try the program on this many rows: it stops after them, and when none come back the answer says which part matched nothing."`
 	JSON      bool   `json:"json,omitempty" jsonschema_description:"Answer with the columns, rows and witnesses as JSON instead of text."`
+
+	bare bool // no witnesses, for the values tool
 }
 
 func (c *call) query(ctx core.ToolContext, in queryInput) (core.ToolResult, error) {
@@ -45,11 +48,22 @@ func (c *call) query(ctx core.ToolContext, in queryInput) (core.ToolResult, erro
 	if err != nil {
 		return core.ErrorResult(err.Error() + c.budgetHint(err)), nil
 	}
-	tab, err := datalog.SemiNaive{}.EvalTable(ctx, q, b, c.evalOptions(in.MaxWork, datalog.Witnesses())...)
+	var r *datalog.Report
+	var extra []datalog.Option
+	if !in.bare {
+		extra = append(extra, datalog.Witnesses())
+	}
+	if in.Sample > 0 {
+		r = &datalog.Report{}
+		extra = append(extra, datalog.Explain(r))
+	}
+	tab, err := datalog.SemiNaive{}.EvalTable(ctx, sampled(q, in.Sample), b, c.evalOptions(in.MaxWork, extra...)...)
 	if err != nil {
 		return c.refuse(in.Program, err), nil
 	}
-	return c.answer(page(in.Program, tab, offset, c.limit(in.Limit)), in.JSON)
+	a := page(in.Program, tab, offset, c.limit(in.Limit))
+	a.Why = whyEmpty(tab.Len(), r, func(err error) string { return nl.Explain(in.Program, err) })
+	return c.answer(a, in.JSON)
 }
 
 // page is the rows of tab from offset, at most limit of them.
@@ -161,7 +175,7 @@ func formatAnswer(a Answer) string {
 	}
 	switch {
 	case a.Table.Len() == 0:
-		b.WriteString("no rows\n")
+		b.WriteString("no rows\n" + a.Why)
 	case a.Next != "":
 		fmt.Fprintf(&b, "rows %d to %d of %d; continue with page_token %q\n", a.Offset+1, a.Offset+a.Len, a.Table.Len(), a.Next)
 	default:
@@ -206,10 +220,11 @@ type pageJSON struct {
 	Witness   [][]witnessJSON `json:"witness,omitempty"`
 	Total     int             `json:"total"`
 	PageToken string          `json:"page_token,omitempty"`
+	Why       string          `json:"why,omitempty"`
 }
 
 func answerJSON(a Answer) pageJSON {
-	out := pageJSON{Rows: [][]string{}, Columns: a.Columns, Total: a.Table.Len(), PageToken: a.Next}
+	out := pageJSON{Rows: [][]string{}, Columns: a.Columns, Total: a.Table.Len(), PageToken: a.Next, Why: a.Why}
 	if a.Cypher != "" {
 		out.Cypher, out.Program = a.Cypher, a.Program
 	}

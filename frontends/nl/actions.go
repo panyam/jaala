@@ -113,7 +113,6 @@ const findInstruction = "#   find NAME       the ids or values a name from the q
 
 // act runs a reply's action and writes what goes back to the model.
 func act(ctx context.Context, action, arg string, v *ns.Vocabulary, o Options) string {
-	prober, _ := o.FrontEnd.(Prober)
 	switch action {
 	case ActionFind:
 		if o.grounder == nil {
@@ -128,25 +127,13 @@ func act(ctx context.Context, action, arg string, v *ns.Vocabulary, o Options) s
 		}
 		return fmt.Sprintf("nothing found for %q", arg)
 	case ActionLook:
-		var text string
-		var err error
-		if prober != nil {
-			text, err = prober.Look(v, arg)
-		} else {
-			text, err = look(v, arg)
-		}
+		text, err := Look(v, o.FrontEnd, arg)
 		if err != nil {
 			return err.Error()
 		}
 		return text
 	case ActionValues:
-		var probe string
-		var err error
-		if prober != nil {
-			probe, err = prober.Probe(v, arg, o.Actions.sample())
-		} else {
-			probe, err = valuesProgram(v, arg, o.Actions.sample())
-		}
+		probe, err := Probe(v, o.FrontEnd, arg, o.Actions.sample())
 		if err != nil {
 			return err.Error()
 		}
@@ -201,6 +188,25 @@ func quotedValue(v ns.Value) string {
 		return v.S
 	}
 	return strconv.Quote(v.S)
+}
+
+// Look is the look action outside Translate, for a tool an agent calls (frontends/mcp, #393): name
+// described in fe's terms when fe is a Prober, and otherwise as jaala's card describes it, whole. fe
+// may be nil.
+func Look(v *ns.Vocabulary, fe FrontEnd, name string) (string, error) {
+	if p, ok := fe.(Prober); ok {
+		return p.Look(v, name)
+	}
+	return look(v, name)
+}
+
+// Probe is the values action's draft outside Translate: a program, in fe's language when fe is a
+// Prober and jaala's otherwise, answering up to limit of target's distinct values. fe may be nil.
+func Probe(v *ns.Vocabulary, fe FrontEnd, target string, limit int) (string, error) {
+	if p, ok := fe.(Prober); ok {
+		return p.Probe(v, target, limit)
+	}
+	return valuesProgram(v, target, limit)
 }
 
 // look is jaala's look: a member's card line with its whole doc, or a module's members.
