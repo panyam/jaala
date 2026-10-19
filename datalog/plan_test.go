@@ -483,3 +483,68 @@ func TestADerivedCallSeededByConstantsRunsBeforeABucket(t *testing.T) {
 		}
 	}
 }
+
+// A generator bound only by a constant waits, once something is bound, for a literal that joins it
+// (#402: Declaire's x05 ran loc.home(?c, "goapplib") and then loc.home(?f, "oneauth"), a cross product
+// of two repos' homes, before the calls edge between them). The first pick still goes by constants,
+// and with nothing joining the second generator, both still run by repo. control: the written order
+// is the cross product, the second generator called by repo once per home of the first.
+func TestAGeneratorWithAConstantWaitsForTheLiteralThatJoinsIt(t *testing.T) {
+	src := ns.NewMemSource().Declare("homes", "id", "repo").Declare("calls", "src", "dst")
+	for i := 0; i < 20; i++ {
+		src.Add("homes", ns.Tuple{Vals: []ns.Value{ns.S(fmt.Sprintf("a.F%d", i)), ns.S("a")}})
+		src.Add("homes", ns.Tuple{Vals: []ns.Value{ns.S(fmt.Sprintf("b.G%d", i)), ns.S("b")}})
+	}
+	src.Add("calls", ns.Tuple{Vals: []ns.Value{ns.S("a.F0"), ns.S("b.G0")}})
+	run := func(ev Evaluator, text string) (rows []Row, byRepo, byID int, work int64) {
+		t.Helper()
+		v := std(src)
+		err := v.AddPredicate("home", ns.Builtin{Arity: 2, Modes: [][]bool{{true, false}, {false, true}}, Gen: func(_ context.Context, src ns.Source, args []ns.Arg, emit func([]ns.Value, []string) error) error {
+			if args[0].Bound {
+				byID++
+			} else {
+				byRepo++
+			}
+			for _, h := range src.Tuples("homes") {
+				if (!args[0].Bound || h.Vals[0].S == args[0].Value.S) && (!args[1].Bound || h.Vals[1].S == args[1].Value.S) {
+					if err := emit(h.Vals, nil); err != nil {
+						return err
+					}
+				}
+			}
+			return nil
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		b := baseFor(v)
+		if ev == nil {
+			rows, err = both(mustParse(t, text), b)
+		} else {
+			rows, err = ev.Eval(bg, mustParse(t, text), b)
+		}
+		if err != nil {
+			t.Fatalf("%s: %v", text, err)
+		}
+		return rows, byRepo, byID, b.Work()
+	}
+	const crossed = `home(?c, "a"), home(?f, "b"), calls(?c, ?f) => ?f, ?c`
+	for _, text := range []string{crossed, `calls(?c, ?f), home(?c, "a"), home(?f, "b") => ?f, ?c`} {
+		if rows, _, _, _ := run(nil, text); len(rows) != 1 || col(rows, "f") != "b.G0" || col(rows, "c") != "a.F0" {
+			t.Fatalf("%s = %v, want b.G0, a.F0", text, rows)
+		}
+		_, byRepo, byID, work := run(SemiNaive{}, text)
+		if byRepo != 1 || byID != 1 {
+			t.Errorf("%s: home called %d times by repo and %d by id, want one each", text, byRepo, byID)
+		}
+		if work > 200 {
+			t.Errorf("%s: work %d, want at most 200 (no cross product)", text, work)
+		}
+	}
+	if _, byRepo, _, work := run(SemiNaive{WrittenOrder: true}, crossed); byRepo != 21 || work < 400 {
+		t.Errorf("control: written order called home %d times by repo, work %d; want 21 (once, then once per a home) and the cross product's 400 or more", byRepo, work)
+	}
+	if rows, byRepo, byID, _ := run(SemiNaive{}, `home(?c, "a"), home(?f, "b") => ?c, ?f`); len(rows) != 400 || byRepo != 21 || byID != 0 {
+		t.Errorf("nothing joining: %d rows, home called %d times by repo and %d by id; want 400, 21, 0", len(rows), byRepo, byID)
+	}
+}

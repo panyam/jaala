@@ -210,7 +210,9 @@ func bindOne(a *Atom, ones map[Var]bool) {
 // only by constants is a scan that costs a cheap comparison per row. A call with nothing bound lists
 // every value, so it ranks after a relation the engine derives or holds, which costs no more read
 // whole (#293: Declaire's loc.home listed 136,181 homes ahead of http.pattern's 100), and still ahead
-// of one the Source looks up, a whole read from the store. Failing that, the relation with the most bound
+// of one the Source looks up, a whole read from the store. Once something is bound, a generator
+// sharing no variable with it waits while a literal that does could run (joinedLater, #402), since
+// running it then is a cross product. Failing that, the relation with the most bound
 // arguments (a call the Source looks up on a pattern it has no index for counting as none bound,
 // #154), since it fans out least and binds the most for what follows; on a tie with something
 // bound, a derived call its constants seed (see planPick), then the base relation estimated to yield
@@ -298,7 +300,7 @@ func planPick(b *Base, pos, waitOn []Literal, bound, ones map[Var]bool) int {
 			if lit.computed && awaitsOperand(lit, waitOn, bound, b.reg) {
 				continue
 			}
-			if bi, ok := predicateIn(b.reg, lit.Pos.Relation); ok && bi.IsGenerator() && bi.Satisfied(flags) && (generatorBound(bi, lit.Pos, flags) > 0 || !slices.ContainsFunc(pos, b.readsWhole) && !b.walksStore(lit.Pos)) {
+			if bi, ok := predicateIn(b.reg, lit.Pos.Relation); ok && bi.IsGenerator() && bi.Satisfied(flags) && (generatorBound(bi, lit.Pos, flags) > 0 || !slices.ContainsFunc(pos, b.readsWhole) && !b.walksStore(lit.Pos)) && !b.joinedLater(lit, pos, waitOn, bound) {
 				pick = i
 				break
 			}
@@ -349,6 +351,33 @@ func planPick(b *Base, pos, waitOn []Literal, bound, ones map[Var]bool) int {
 		}
 	}
 	return pick
+}
+
+// joinedLater reports whether lit, a generator, shares no variable with bound while another literal of
+// pos that could run does (#402): run first, it is a cross product with what is bound, which the
+// literal joining them would have filtered. Declaire's x05 ran loc.home(?f, "oneauth") for every
+// loc.home(?c, "goapplib") before calls(?c, ?f). With nothing bound, no literal joins, so constants
+// still decide which generator goes first.
+func (b *Base) joinedLater(lit Literal, pos, waitOn []Literal, bound map[Var]bool) bool {
+	if joins(lit.Pos, bound) {
+		return false
+	}
+	for _, other := range couldRun(b, pos, bound) {
+		if other.Pos != lit.Pos && joins(other.Pos, bound) && !(other.computed && awaitsOperand(other, waitOn, bound, b.reg)) {
+			return true
+		}
+	}
+	return false
+}
+
+// joins reports whether a reads a variable bound holds.
+func joins(a *Atom, bound map[Var]bool) bool {
+	for _, t := range a.Args {
+		if t.Var != "" && t.Var != "_" && bound[t.Var] {
+			return true
+		}
+	}
+	return false
 }
 
 // bindsFor reports whether a would bind a variable of b that bound doesn't hold, so b runs once per
