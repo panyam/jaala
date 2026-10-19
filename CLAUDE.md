@@ -437,7 +437,10 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   `?to` is bound, so every plan picks the same one). `stepsFrom` reads a node's steps once per call,
   dedups a fact served twice, and the walk counts a unit per step it tries. A `path.*` function gives
   no row for a value that isn't a path, never an error: the 3000-seed corpus found the demand rewrite
-  handing `path.length` a caller's `"v8"` that Naive never passed. `stdlib.PathValues` registers
+  handing `path.length` a caller's `"v8"` that Naive never passed. Likewise a mode or bound that comes from data walks
+  nothing (a constant one is refused at check): FuzzEval found Naive erring on a closure's max of
+  `"v0"` in a rule the planned evaluator dropped. Cypher refuses `relationships(p)` over a type the
+  vocabulary derives, whose relationships have no fact ids (FuzzCompile). `stdlib.PathValues` registers
   them under `path` (in `Register`), so a host's own module named `path` resolves a bare `edge` to
   `path.edge`; jaala's fixtures' module became `hop`. `ColumnKinds` lowers the walks first, so a
   closure's or a path's ends are typed by the step there too (#281's weren't). The corpus draws paths

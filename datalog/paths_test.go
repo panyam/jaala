@@ -312,10 +312,17 @@ func TestPathsRefuseWhatTheyCantWalk(t *testing.T) {
 			t.Errorf("%s: %T is no CheckError", c.q, err)
 		}
 	}
-	// a mode only known when the walk runs is refused then
-	err := evalErr(src, `mode("cycle") :- node("a"); mode(?m), graph.paths("edge", "a", ?y, ?m, 1, 2, ?p)`)
-	if err == nil || !strings.Contains(err.Error(), "mode must be one of") {
-		t.Errorf("a bound bad mode: %v", err)
+	// A mode or bound that comes from data, known only when the walk runs, walks nothing: which data
+	// reaches a call depends on the plan, so an error there failed one evaluator and not another.
+	for _, q := range []string{
+		`mode("cycle") :- node("a"); mode(?m), graph.paths("edge", "a", ?y, ?m, 1, 2, ?p) => ?p`,
+		`mode("walk") :- node("a"); mode(?m), graph.paths("edge", "a", ?y, ?m, 1, 0, ?p) => ?p`,
+		`node(?m), graph.paths("edge", "a", ?y, "trail", 1, ?m, ?p) => ?p`,
+		`node(?m), graph.closure("edge", "a", ?y, 1, ?m, _) => ?y`,
+	} {
+		if rows := eval(t, src, q); len(rows) != 0 {
+			t.Errorf("%s: %v", q, rows)
+		}
 	}
 }
 

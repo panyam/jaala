@@ -320,7 +320,10 @@ func (b *Base) extendClosure(atom *Atom, bnd *binding, yield func(*binding) erro
 	}
 	lo, hi, err := closureBounds(&vals[3], &vals[4])
 	if err != nil {
-		return err
+		// A constant bound was refused when the program was checked, so this one came from data, and
+		// which data reaches a call depends on the plan: an error here failed Naive where the planned
+		// evaluator, which never ran the rule, answered (FuzzEval). A bound that isn't one walks nothing.
+		return nil
 	}
 	if !bound[1] && !bound[2] {
 		// from every value a step leads from, and with min 0 every value one leads to as well

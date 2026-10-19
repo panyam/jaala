@@ -82,16 +82,15 @@ func (b *Base) extendPaths(atom *Atom, bnd *binding, yield func(*binding) error)
 	if !bound[3] || !bound[4] || !bound[5] {
 		return checkErr(KindUnbound, fmt.Sprintf("query: %s needs its mode, min and max bound (a variable must appear in a relation before %s reads it)", pathsName, pathsName)).call(pathsName, len(atom.Args))
 	}
+	// A constant mode or bound was refused when the program was checked, so a bad one came from data,
+	// which reaches a call or not by the plan, and walks nothing rather than failing one evaluator.
 	mode, err := pathMode(vals[3])
 	if err != nil {
-		return err
+		return nil
 	}
 	lo, hi, err := pathsWalk.bounds(&vals[4], &vals[5])
-	if err != nil {
-		return err
-	}
-	if mode == "walk" && hi == 0 {
-		return errWalkUnbounded()
+	if err != nil || mode == "walk" && hi == 0 {
+		return nil
 	}
 	arity := b.stepArity(step)
 	if !bound[1] && !bound[2] {

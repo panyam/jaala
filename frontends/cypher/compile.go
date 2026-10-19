@@ -903,6 +903,12 @@ func (c *compiler) relLiteral(r relPat, from, to *nodeVar) (frag, *Error) {
 	walked := helper
 	switch e := es[0]; {
 	case r.edges:
+		for _, e := range es {
+			// a fact's id names an edge, and a relation the vocabulary derives holds no facts (#279)
+			if en, err := c.v.Lookup(e.Relation); err != nil || en.Kind != ns.EntryBase {
+				return nil, errAt(r.pos, "relationships(%s) reads each relationship's id, and %s is derived, so its relationships have none: read nodes(%s)", r.path, e.Type, r.path)
+			}
+		}
 		walked = c.helper("wire")
 		for i, e := range es {
 			c.addRule(rule{head: frag{walked + "(?x, ?r, ?y)"}, body: []frag{append(edgeAtom(e, argss[i], "?x", "?y"), " as ?r")}})

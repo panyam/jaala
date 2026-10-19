@@ -367,6 +367,7 @@ func TestMistakesSayWhatTheGraphHolds(t *testing.T) {
 		{`MATCH (a:Package) WHERE a.license = true RETURN a`, "no booleans", "true"},
 		{`MATCH (a:Package RETURN a`, "expected ) to end the node", "RETURN"},
 		{`MATCH (a)-[:IMPORTS]->(b) RETURN length(a)`, "length() reads a path variable, bound by p = (...)", "length"},
+		{`MATCH p = (a)-[:DEPENDS_ON]->(b) RETURN relationships(p)`, "relationships(p) reads each relationship's id, and DEPENDS_ON is derived", "-[:DEPENDS_ON]"},
 		{`MATCH (a)-[:IMPORTS]->(b) WHERE 'x' IN nodes(a) RETURN b`, "nodes() reads a path variable", "IN nodes"},
 		{`MATCH (a:Package) RETURN 'x'`, "RETURN of a constant", "'x'"},
 		{`MATCH (a:Package) RETURN a extra`, `unexpected "extra"`, "extra"},
