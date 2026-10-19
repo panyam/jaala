@@ -158,8 +158,8 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   `Try.Language`, `Program.Language`/`Compiled` and `Report.Language()` ("passed n/m in cypher")
   record it. The interface is nl's and `frontends/cypher` implements it (`NewFrontEnd`), so cypher
   imports nl and never the other way. `cypher.Grammar(g)` is the subset as a gbnf table narrowed
-  to g's labels, types and keys, without XOR (#377's blow-up hangs the sampler), CALL or
-  `$parameters`; its test holds every sample to parsing, not compiling (a random query names
+  to g's labels, types and keys, without CALL or `$parameters` (XOR came back once #377 made a
+  chain of them compile in linear time); its test holds every sample to parsing, not compiling (a random query names
   variables nothing matched), and requires the guide's real answers to be accepted instead.
 - **`frontends/cypher` compiles Cypher to jaala text over a host's `Graph`** (#352, mission #356):
   `Node` and `Edge` name the relation holding a label or a type, its key or endpoints, `Fixed`

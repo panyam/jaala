@@ -9,9 +9,10 @@ import (
 // Grammar is the Cypher this package compiles as a GBNF grammar narrowed to g (#354), for a model
 // decoding under it to write only queries that parse and name g's labels, relationship types and
 // properties: MATCH, WHERE, WITH, UNION, EXISTS { }, and RETURN with its aggregates, ORDER BY, SKIP and
-// LIMIT, in one spelling (keywords upper case, one space between tokens). It leaves out what a model
-// translating a question has no use for and what compiles to no program yet: XOR (#377), CALL, a
-// $parameter, a regex, and every construct Compile refuses as a gap.
+// LIMIT, with OR, XOR, AND and NOT in openCypher's precedence, in one spelling (keywords upper case,
+// one space between tokens). It leaves out what a model translating a question has no use for and
+// what compiles to no program yet: CALL, a $parameter, a regex, and every construct Compile refuses
+// as a gap.
 //
 // Every text it accepts parses. Not every one compiles: a variable RETURN reads that nothing matched,
 // SKIP with no ORDER BY, or an aggregate in WHERE is a mistake only Compile can see, as Validate's
@@ -76,7 +77,8 @@ func grammarRules(g Graph) []gbnf.Rule {
 		{Name: "ritem", E: seq{alt{ref("expr"), ref("aggregate")}, opt(seq{lit(" AS "), ref("var")})}},
 		{Name: "aggregate", E: alt{lit("count(*)"), seq{ref("aggfn"), lit("("), opt(lit("DISTINCT ")), ref("expr"), lit(")")}}},
 		{Name: "aggfn", E: alt{lit("count"), lit("min"), lit("max"), lit("sum"), lit("collect")}},
-		{Name: "expr", E: list(ref("conj"), " OR ")},
+		{Name: "expr", E: list(ref("excl"), " OR ")},
+		{Name: "excl", E: list(ref("conj"), " XOR ")},
 		{Name: "conj", E: list(ref("neg"), " AND ")},
 		{Name: "neg", E: seq{opt(lit("NOT ")), ref("cmp")}},
 		{Name: "cmp", E: seq{ref("sum"), opt(alt{
