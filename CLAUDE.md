@@ -529,6 +529,9 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   against several tests runs each by its own `-run` (#227: one run reported only the first). A
   planner change that `deferComparisons` redoes at solve time can't be seen by any answer; a
   mutation that reverts it and stays green says so (#227's `planBody` hold, dropped).
+- **Measure a ticket's proposed control on `main` before building on it.** #392's control, the same
+  walk asked once per id with the key bound, cost 465,530 work against the `IN` form's 53,580: it
+  shared the bug (a plan tie, not the compiler), and testing against it would have passed a half fix.
 - **Give a test a control that proves its fixture can tell the cases apart.** Most surviving
   mutations here were fixtures that could not: a recursion guard tested only with two-rule
   relations, a column-order test whose sort orders coincided, a "free" call the planner bound, a
