@@ -177,12 +177,21 @@ func planGoal(b *Base, goal Body) Body {
 	if n == 0 {
 		return planBody(b, goal, nil)
 	}
-	entry := map[Var]bool{}
+	entry, ones := map[Var]bool{}, map[Var]bool{}
 	for _, l := range lits[:n] {
 		bindAll(l.Pos, entry)
+		bindOne(l.Pos, ones)
 	}
-	rest := planBody(b, Body{Literals: lits[n:]}, entry)
+	rest := planBodyFrom(b, Body{Literals: lits[n:]}, entry, ones)
 	return Body{Literals: append(append([]Literal(nil), lits[:n]...), rest.Literals...)}
+}
+
+// bindOne adds to ones the variable a relation of bindEqualities binds, which holds one value, so a
+// call bound by it is seeded from a constant as one written in place is (see planPick).
+func bindOne(a *Atom, ones map[Var]bool) {
+	if a != nil && strings.HasPrefix(a.Relation, bindPrefix+"=") && len(a.Args) == 1 && a.Args[0].Var != "" {
+		ones[a.Args[0].Var] = true
+	}
 }
 
 // planBody orders a body greedily. At each step it takes the first check whose arguments are all
@@ -197,25 +206,34 @@ func planGoal(b *Base, goal Body) Body {
 // of one the Source looks up, a whole read from the store. Failing that, the relation with the most bound
 // arguments (a call the Source looks up on a pattern it has no index for counting as none bound,
 // #154), since it fans out least and binds the most for what follows; on a tie with something
-// bound, the base relation estimated to yield fewer tuples per call (see fanOut), else the earliest
-// written. A literal nothing can make runnable keeps its written
+// bound, a derived call its constants seed (see planPick), then the base relation estimated to yield
+// fewer tuples per call (see fanOut), else the earliest written. A literal nothing can make runnable keeps its written
 // place at the end, where solving reports it as it always has. bound is what is bound on entry, such
 // as a rule head's demanded arguments (see magic); it is not changed.
 func planBody(b *Base, body Body, entry map[Var]bool) Body {
+	return planBodyFrom(b, body, entry, nil)
+}
+
+// planBodyFrom is planBody with ones, the bound variables that hold one value (bindOne).
+func planBodyFrom(b *Base, body Body, entry, ones map[Var]bool) Body {
 	pos, negs := splitNegations(body.Literals)
 	bound := map[Var]bool{}
 	for v := range entry {
 		bound[v] = true
 	}
+	one := map[Var]bool{}
+	for v := range ones {
+		one[v] = true
+	}
 	var out []Literal
 	for len(pos) > 0 {
-		pick := planPick(b, pos, pos, bound)
+		pick := planPick(b, pos, pos, bound, one)
 		if pick < 0 {
 			// Every call left waits on another: r0(0 * ?0, 0) lowers to num.mul(0, ?0, ?e) and
 			// r0(?e, 0, ?r), each binding what the other would solve for. As deferComparisons does, a
 			// waiting call then waits only on what could run now (#374), or the written order decides,
 			// and the demand rewrite stores a prefix that can't run.
-			pick = planPick(b, pos, couldRun(b, pos, bound), bound)
+			pick = planPick(b, pos, couldRun(b, pos, bound), bound, one)
 		}
 		if pick < 0 {
 			out = append(out, pos...)
@@ -225,6 +243,7 @@ func planBody(b *Base, body Body, entry map[Var]bool) Body {
 		out = append(out, lit)
 		if lit.Pos != nil {
 			bindAll(lit.Pos, bound)
+			bindOne(lit.Pos, one)
 		}
 		pos = append(pos[:pick:pick], pos[pick+1:]...)
 	}
@@ -248,8 +267,14 @@ func couldRun(b *Base, pos []Literal, bound map[Var]bool) []Literal {
 }
 
 // planPick is the literal of pos planBody takes next with bound, -1 for none, a computed call
-// waiting while any of waitOn binds what it would solve for (awaitsOperand).
-func planPick(b *Base, pos, waitOn []Literal, bound map[Var]bool) int {
+// waiting while any of waitOn binds what it would solve for (awaitsOperand). Among relations with as
+// many arguments bound, a derived call bound only by constants and one-value variables (seeded) goes
+// ahead of one that would bind one of its variables, unless that one's bucket holds at most a tuple
+// (#392): the demand rewrite
+// then starts the call from its constants alone, a walk back from one value, where after a base
+// relation bound by a constant, `node(?t, "Func"), reach(?t, "m1")`, it was demanded once per row of
+// the base relation's whole bucket.
+func planPick(b *Base, pos, waitOn []Literal, bound, ones map[Var]bool) int {
 	pick := -1
 	for i, lit := range pos {
 		if (isCheck(b, lit) || isProbe(b, lit)) && checkReady(lit, bound) {
@@ -273,7 +298,8 @@ func planPick(b *Base, pos, waitOn []Literal, bound map[Var]bool) int {
 		}
 	}
 	if pick < 0 {
-		best, bestSize, bestGen := -1, -1, false
+		best, bestSize, bestGen, bestSeeded := -1, -1, false, false
+		var bestAtom *Atom
 		for i, lit := range pos {
 			if isCheck(b, lit) || lit.computed && awaitsOperand(lit, waitOn, bound, b.reg) {
 				continue
@@ -297,12 +323,55 @@ func planPick(b *Base, pos, waitOn []Literal, bound map[Var]bool) int {
 			if n > 0 {
 				size = fanOut(b, lit.Pos, flags)
 			}
-			if n > best || (size >= 0 && bestSize >= 0 && size < bestSize) || (n == best && bestGen && b.readsWhole(lit)) {
-				pick, best, bestSize, bestGen = i, n, size, gen
+			seed := n > 0 && !gen && b.seeded(lit.Pos, flags, ones)
+			tiny := func(size int) bool { return size >= 0 && size <= 1 }
+			var take bool
+			switch {
+			case n > best:
+				take = true
+			case seed != bestSeeded && seed:
+				take = !tiny(bestSize) && bindsFor(bestAtom, lit.Pos, bound)
+			case seed != bestSeeded:
+				take = tiny(size) || !bindsFor(lit.Pos, bestAtom, bound)
+			default:
+				take = size >= 0 && bestSize >= 0 && size < bestSize || n == best && bestGen && b.readsWhole(lit)
+			}
+			if take {
+				pick, best, bestSize, bestGen, bestSeeded, bestAtom = i, n, size, gen, seed, lit.Pos
 			}
 		}
 	}
 	return pick
+}
+
+// bindsFor reports whether a would bind a variable of b that bound doesn't hold, so b runs once per
+// value a binds when it follows a.
+func bindsFor(a, b *Atom, bound map[Var]bool) bool {
+	for _, t := range a.Args {
+		if t.Var == "" || t.Var == "_" || bound[t.Var] {
+			continue
+		}
+		for _, u := range b.Args {
+			if u.Var == t.Var {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// seeded reports whether a, with flags bound, calls a derived relation with every bound argument a
+// constant or a variable of ones, which the demand rewrite seeds from those values alone.
+func (b *Base) seeded(a *Atom, flags []bool, ones map[Var]bool) bool {
+	if _, base := b.schemaOf(a.Relation); base {
+		return false
+	}
+	for i, f := range flags {
+		if f && a.Args[i].Const == nil && !ones[a.Args[i].Var] {
+			return false
+		}
+	}
+	return true
 }
 
 // readsWhole reports whether lit calls a relation the engine derives or holds, which a call with

@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -18,7 +19,8 @@ type world struct {
 	paramVals map[string]ns.Value
 	helpers   map[string]bool
 	rules     []rule
-	inRule    bool // rendering a rule, where a parameter can't go (datalog.Bind binds the goal)
+	inRule    bool              // rendering a rule, where a parameter can't go (datalog.Bind binds the goal)
+	fixed     map[*nodeVar]frag // the rule being rendered's node keys an alternative's equality fixes
 	err       *Error
 	// cur is where in the Cypher the literals being compiled come from, for the rules a helper writes;
 	// origins are the places render has marked, by the index its markers carry (#353).
@@ -391,8 +393,17 @@ func (c *compiler) compileStage(in *stageIn, s stage, where expr) (projected, *E
 	if derr != nil {
 		return projected{}, derr
 	}
+	settled := map[*nodeVar]bool{}
+	for _, p := range eqs {
+		settled[p.n] = true
+	}
 	bodies := make([][]frag, len(disjuncts))
+	fixes := make([]map[*nodeVar]fixedKey, len(disjuncts))
 	for i, d := range disjuncts {
+		var fix map[*nodeVar]fixedKey
+		if len(disjuncts) > 1 {
+			fix = c.keysFixed(d, settled)
+		}
 		var lits []frag
 		c.scope = &lits
 		for _, cd := range d {
@@ -406,8 +417,16 @@ func (c *compiler) compileStage(in *stageIn, s stage, where expr) (projected, *E
 			for i := from; i < len(lits); i++ {
 				lits[i] = at(startOf(cd.e), lits[i])
 			}
+			for n, k := range fix {
+				if k.e == cd.e {
+					k.lits = append([]frag(nil), lits[from:]...)
+					lits = lits[:from]
+					fix[n] = k
+				}
+			}
 		}
 		bodies[i] = lits
+		fixes[i] = fix
 	}
 	c.scope = &c.shared
 
@@ -440,8 +459,37 @@ func (c *compiler) compileStage(in *stageIn, s stage, where expr) (projected, *E
 		}
 	}
 	head := name + "(" + strings.Join(vars, ", ") + ")"
-	for _, body := range bodies {
-		c.rules = append(c.rules, rule{head: frag{head}, body: append(append([]frag{}, c.shared...), body...)})
+	keys := map[string]*nodeVar{}
+	for _, n := range c.order {
+		keys["?"+n.jv] = n
+	}
+	written := frag{name + "("}
+	for i, v := range vars {
+		if i > 0 {
+			written = append(written, ", ")
+		}
+		if n := keys[v]; n != nil {
+			written = append(written, keyVal{n})
+		} else {
+			written = append(written, v)
+		}
+	}
+	written = append(written, ")")
+	for i, body := range bodies {
+		lits := append(append([]frag{}, c.shared...), body...)
+		var fixed map[*nodeVar]frag
+		for _, n := range sortedFixes(fixes[i]) {
+			k := fixes[i][n]
+			if readsKey(lits, n) {
+				lits = append(lits, k.lits...)
+				continue
+			}
+			if fixed == nil {
+				fixed = map[*nodeVar]frag{}
+			}
+			fixed[n] = k.val
+		}
+		c.rules = append(c.rules, rule{head: written, body: lits, fixed: fixed})
 	}
 	out.lits = []frag{{head}}
 	return out, nil
@@ -591,13 +639,13 @@ func (w *world) write(goal projected) (Program, *Error) {
 	}
 	var b strings.Builder
 	for _, r := range w.rules {
-		w.inRule = true
+		w.inRule, w.fixed = true, r.fixed
 		text := w.render(r.head) + " :- " + w.joinLits(r.body)
 		if r.at.Line > 0 {
 			text = w.mark(r.at, text)
 		}
 		b.WriteString(text + ";\n")
-		w.inRule = false
+		w.inRule, w.fixed = false, nil
 	}
 	cols := make([]string, len(goal.cols))
 	for i, col := range goal.cols {
@@ -635,4 +683,105 @@ func (w *world) joinLits(lits []frag) string {
 		}
 	}
 	return strings.Join(parts, ", ")
+}
+
+// A fixedKey is a node key one alternative's equality holds to a text constant: the constant, and the
+// literals the equality compiled to, which the rule keeps when something in it reads the key's value.
+type fixedKey struct {
+	e    expr
+	val  frag
+	lits []frag
+}
+
+// keysFixed finds the node keys alternative d equates with one text constant, `h.id = "x"` from an
+// IN or an OR, so its rule writes the constant in the key's place (#392): written as a comparison
+// after the atoms, nothing bound a variable-length match's end, and its reach was derived over the
+// whole graph. A node an equality every row holds settled already, one two equalities name, and a
+// stand-in for an outer node are left as written.
+func (c *compiler) keysFixed(d []cond, settled map[*nodeVar]bool) map[*nodeVar]fixedKey {
+	var out map[*nodeVar]fixedKey
+	twice := map[*nodeVar]bool{}
+	for _, cd := range d {
+		b, ok := cd.e.(binary)
+		if cd.neg || !ok || b.op != "=" {
+			continue
+		}
+		ref, val := b.l, b.r
+		if _, ok := val.(strLit); !ok {
+			ref, val = b.r, b.l
+		}
+		lit, ok := val.(strLit)
+		if !ok {
+			continue
+		}
+		var n *nodeVar
+		switch r := ref.(type) {
+		case varRef:
+			n = c.nodes[r.name]
+		case propRef:
+			m := c.nodes[r.v]
+			if m == nil {
+				continue
+			}
+			if _, identity, _, err := c.resolveProp(m, r); err == nil && identity {
+				n = m
+			}
+		}
+		if n == nil || settled[n] || n.subst != nil || n.of != nil || twice[n] {
+			continue
+		}
+		if _, ok := out[n]; ok {
+			delete(out, n)
+			twice[n] = true
+			continue
+		}
+		vf, err := c.value(lit)
+		if err != nil {
+			continue
+		}
+		if out == nil {
+			out = map[*nodeVar]fixedKey{}
+		}
+		out[n] = fixedKey{e: cd.e, val: at(startOf(b), vf)}
+	}
+	return out
+}
+
+// sortedFixes is fix's nodes in the order the stage matched them, so a rule is written the same way
+// every time.
+func sortedFixes(fix map[*nodeVar]fixedKey) []*nodeVar {
+	var out []*nodeVar
+	for n := range fix {
+		out = append(out, n)
+	}
+	slices.SortFunc(out, func(a, b *nodeVar) int { return strings.Compare(a.jv, b.jv) })
+	return out
+}
+
+// readsKey reports whether any of lits reads n's key as a value (a comparison or a call's
+// argument), which a constant in its place would turn into a test of constants alone.
+func readsKey(lits []frag, n *nodeVar) bool {
+	for _, f := range lits {
+		for _, el := range f {
+			switch el := el.(type) {
+			case keyVal:
+				if el.n == n {
+					return true
+				}
+			case frag:
+				if readsKey([]frag{el}, n) {
+					return true
+				}
+			case origin:
+				if readsKey([]frag{el.f}, n) {
+					return true
+				}
+			case braces:
+				if readsKey(el.lits, n) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }

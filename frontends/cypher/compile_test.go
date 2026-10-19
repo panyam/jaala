@@ -1,6 +1,8 @@
 package cypher_test
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -75,9 +77,22 @@ var depsCases = []compileCase{
 			`cypher_match1(?p) => ?p`, [][]string{{"app"}, {"util"}}},
 	{`MATCH (p:Package) WHERE NOT (p.name = 'app' OR p.license IS NULL) RETURN p`,
 		`pkg(?p, ?p_license), ?p != "app", not absent(?p_license) => ?p`, [][]string{{"log"}, {"util"}}},
+	// Each alternative's equality is written in the key's place, its head too, so demand starts there
+	// (#392).
 	{`MATCH (p:Package) WHERE p.name IN ['app', 'log'] RETURN p`,
-		"cypher_match1(?p) :- pkg(?p, _), ?p = \"app\";\ncypher_match1(?p) :- pkg(?p, _), ?p = \"log\";\n" +
+		"cypher_match1(\"app\") :- pkg(\"app\", _);\ncypher_match1(\"log\") :- pkg(\"log\", _);\n" +
 			`cypher_match1(?p) => ?p`, [][]string{{"app"}, {"log"}}},
+	{`MATCH (a:Package)-[:IMPORTS*]->(d) WHERE d.name IN ['log', 'util'] RETURN a, d.name`,
+		"cypher_reach1(?x, ?y) :- imports(?x, ?y);\ncypher_reach1(?x, ?y) :- cypher_reach1(?x, ?z), imports(?z, ?y);\n" +
+			"cypher_match1(?a, \"log\") :- pkg(?a, _), cypher_reach1(?a, \"log\");\ncypher_match1(?a, \"util\") :- pkg(?a, _), cypher_reach1(?a, \"util\");\n" +
+			`cypher_match1(?a, ?d) => ?a, ?d`, [][]string{{"api", "log"}, {"api", "util"}, {"app", "log"}, {"app", "util"}, {"log", "util"}}},
+	// A key the alternative reads again stays a variable, and so does one it equates twice.
+	{`MATCH (p:Package) WHERE p.name = 'app' AND p.name STARTS WITH 'a' OR p.name = 'log' RETURN p`,
+		"cypher_match1(?p) :- pkg(?p, _), str.prefix(?p, \"a\"), ?p = \"app\";\ncypher_match1(\"log\") :- pkg(\"log\", _);\n" +
+			`cypher_match1(?p) => ?p`, [][]string{{"app"}, {"log"}}},
+	{`MATCH (p:Package) WHERE p.name = 'app' AND p.name = 'log' OR p.name = 'util' RETURN p`,
+		"cypher_match1(?p) :- pkg(?p, _), ?p = \"app\", ?p = \"log\";\ncypher_match1(\"util\") :- pkg(\"util\", _);\n" +
+			`cypher_match1(?p) => ?p`, [][]string{{"util"}}},
 	{`MATCH (p:Package) WHERE p.name =~ 'a.*' AND NOT p.name ENDS WITH 'i' RETURN p`,
 		`pkg(?p, _), str.match(?p, "^(?:a.*)$"), not str.suffix(?p, "i") => ?p`, [][]string{{"app"}}},
 	{`MATCH (p:Package) WHERE p.name CONTAINS 'o' XOR p.name STARTS WITH 'u' RETURN p`,
@@ -493,5 +508,110 @@ func TestAWhereOfTooManyAlternativesIsRefusedQuickly(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "expands to more than 16 alternatives") {
 			t.Errorf("%s: want the alternatives refusal, got %v", q, err)
 		}
+	}
+}
+
+// calls is x10b's shape (#392): 300 chains of ten functions, each chain's last calling one of a
+// hundred methods, over Declaire's node, edge and attr with every node's id a property.
+func calls(t *testing.T) (*ns.Vocabulary, *datalog.Base, cypher.Graph) {
+	t.Helper()
+	src := ns.NewMemSource().
+		DeclareSchema("node", ns.Schema{Arity: 2, Labels: []string{"id", "kind"}}).
+		DeclareSchema("edge", ns.Schema{Arity: 3, Labels: []string{"from", "kind", "to"}}).
+		DeclareSchema("attr", ns.Schema{Arity: 3, Labels: []string{"id", "key", "value"}})
+	add := func(rel string, vals ...string) {
+		tu := ns.Tuple{}
+		for _, v := range vals {
+			tu.Vals = append(tu.Vals, ns.S(v))
+		}
+		src.Add(rel, tu)
+	}
+	for m := 0; m < 100; m++ {
+		add("node", fmt.Sprintf("m%d", m), "Method")
+	}
+	for c := 0; c < 300; c++ {
+		for i := 0; i < 10; i++ {
+			f := fmt.Sprintf("f%d_%d", c, i)
+			add("node", f, "Func")
+			if i < 9 {
+				add("edge", f, "CALLS", fmt.Sprintf("f%d_%d", c, i+1))
+			} else {
+				add("edge", f, "CALLS", fmt.Sprintf("m%d", c%100))
+			}
+		}
+	}
+	v, err := ns.NewVocabulary(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stdlib.Register(v); err != nil {
+		t.Fatal(err)
+	}
+	b, err := datalog.NewBase(v, src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := cypher.Store{Node: "node", Edge: "edge", Attr: "attr"}.Graph([]string{"Func", "Method"}, []string{"CALLS"})
+	for i := range g.Nodes {
+		g.Nodes[i].Props = map[string]int{"id": 0}
+	}
+	return v, b, g
+}
+
+// A variable-length match to an IN list walks back from the listed nodes, as one to each node does
+// (#392), where it derived the reach over the whole graph: Declaire's x10b ran into its ten-minute cap.
+// The rows are the union of the per-node questions', and each of them is asked under the same budget.
+// control: the walk to every method doesn't fit the budget.
+func TestAWalkToAnINListStartsFromTheList(t *testing.T) {
+	const budget = 3000
+	v, _, g := calls(t)
+	run := func(text string, opts ...datalog.Option) ([][]string, error) {
+		t.Helper()
+		p, err := cypher.Compile(v, g, text)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, b, _ := calls(t)
+		return rowsOf(t, p, b, opts...)
+	}
+	planned := func(text string) error {
+		t.Helper()
+		p, err := cypher.Compile(v, g, text)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, b, _ := calls(t)
+		_, err = datalog.SemiNaive{}.Eval(context.Background(), p.Query, b, datalog.Budget(budget))
+		return err
+	}
+	for _, hops := range []string{"*1..6", "*"} {
+		in := fmt.Sprintf(`MATCH (t:Func)-[:CALLS%s]->(h:Method) WHERE h.id IN ['m1', 'm2', 'm3'] RETURN t, h ORDER BY t`, hops)
+		want, err := run(in)
+		if err != nil || len(want) == 0 {
+			t.Fatalf("%s: %d rows, %v", in, len(want), err)
+		}
+		var union [][]string
+		for _, id := range []string{"m1", "m2", "m3"} {
+			one := fmt.Sprintf(`MATCH (t:Func)-[:CALLS%s]->(h:Method {id: '%s'}) RETURN t, h`, hops, id)
+			rows, err := run(one)
+			if err != nil {
+				t.Fatalf("%s: %v", one, err)
+			}
+			union = append(union, rows...)
+			if err := planned(one); err != nil {
+				t.Errorf("%s: %v", one, err)
+			}
+		}
+		slices.SortFunc(union, func(a, b []string) int { return strings.Compare(a[0], b[0]) })
+		if fmt.Sprint(union) != fmt.Sprint(want) {
+			t.Errorf("%s answered %v, want the per-node questions' %v", in, want, union)
+		}
+		if err := planned(in); err != nil {
+			t.Errorf("%s: %v", in, err)
+		}
+	}
+	var stopped *datalog.BudgetExceeded
+	if err := planned(`MATCH (t:Func)-[:CALLS*]->(h:Method) RETURN t, h`); !errors.As(err, &stopped) {
+		t.Errorf("control: the walk to every method answered under a budget of %d (%v), so the budget can't tell", budget, err)
 	}
 }

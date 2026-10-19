@@ -9,7 +9,9 @@
 // Explain and Locate read it as they read any program. Helper relations Compile writes start with
 // cypher_: a variable-length step (step, reach), a WITH stage (with, its head what the stage hands
 // on), a pattern test or EXISTS (exists), the alternatives of an OR (match), and a UNION (union, with
-// a part rule for a part that aggregates).
+// a part rule for a part that aggregates). An alternative that equates a node with a text, as each of
+// an IN's does, writes the text in the node's place in its rule, so demand starts a variable-length
+// match from it (#392).
 //
 // It compiles the part of Cypher a program expresses today: MATCH over node and relationship
 // patterns (labels, inline properties, either direction, several types, variable length as recursion

@@ -442,3 +442,44 @@ func TestABodyPlannedFromItsHeadRanksTheSameWay(t *testing.T) {
 		t.Errorf("?t bound on entry: %s runs first, want the probe blocked", got)
 	}
 }
+
+// A derived call bound only by constants runs ahead of a base relation tied with it, bound by a
+// constant too, since the demand rewrite then starts the call from its constants alone (#392): after
+// kind(?a, "f"), reach was demanded once per function and walked forward from each. A variable an
+// equality binds to one value (#370) counts as its constant. A literal binding nothing the call reads
+// keeps its place, as the guide's pkg("app", _) did. control: a bucket of one tuple still goes first,
+// binding the call's other end once.
+func TestADerivedCallSeededByConstantsRunsBeforeABucket(t *testing.T) {
+	src := line(60).Declare("kind", "name", "kind")
+	for i := 0; i < 60; i++ {
+		k := "f"
+		if i == 3 {
+			k = "g"
+		}
+		src.Add("kind", ns.Tuple{Vals: []ns.Value{ns.S(fmt.Sprintf("v%d", i)), ns.S(k)}})
+	}
+	v := std(src)
+	const reach = `reach(?a, ?b) :- edge(?a, ?b); reach(?a, ?c) :- reach(?a, ?b), edge(?b, ?c); `
+	first := func(goal string) string {
+		q := mustParse(t, goal)
+		return planBody(baseFor(v), q.Goal, nil).Literals[0].Pos.Relation
+	}
+	if got := first(`kind(?a, "f"), reach(?a, "v40")`); got != "reach" {
+		t.Errorf("%s runs first, want reach", got)
+	}
+	if got := first(`kind(?a, "g"), reach(?a, "v40")`); got != "kind" {
+		t.Errorf("control: %s runs first, want kind, whose bucket holds one tuple", got)
+	}
+	if got := first(`kind(_, "f"), reach(?a, "v40")`); got != "kind" {
+		t.Errorf("%s runs first, want kind, which binds nothing reach reads, so runs once either way", got)
+	}
+	for _, goal := range []string{`kind(?a, "f"), reach(?a, "v40") => ?a`, `kind(?a, "f"), reach(?a, ?b), ?b = "v40" => ?a, ?b`} {
+		q := mustParse(t, reach+goal)
+		if rows, err := both(q, baseFor(v)); err != nil || len(rows) != 39 {
+			t.Fatalf("%s: %d rows, %v; want 39", goal, len(rows), err)
+		}
+		if _, work := fresh(t, v, SemiNaive{}, reach+goal); work > 400 {
+			t.Errorf("%s: work %d, want at most 400 (a walk back from v40)", goal, work)
+		}
+	}
+}

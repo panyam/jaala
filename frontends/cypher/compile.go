@@ -133,6 +133,9 @@ type rule struct {
 	head frag
 	body []frag
 	at   Pos // the Cypher a helper rule was written for, when it has no origin of its own
+	// fixed are node keys this rule alone holds equal to a constant: an alternative's, written in
+	// the key's place in its atoms and its head, so demand starts from the constant (#392).
+	fixed map[*nodeVar]frag
 }
 
 // addRule adds helper rules written for the Cypher being compiled (the world's cur).
@@ -269,7 +272,11 @@ func (c *world) render(f frag) string {
 		case keyArg:
 			b.WriteString(c.key(el.n))
 		case keyVal:
-			b.WriteString("?" + el.n.jv)
+			if f, ok := c.fixed[el.n]; ok {
+				b.WriteString(c.render(f))
+			} else {
+				b.WriteString("?" + el.n.jv)
+			}
 		case nodeAtm:
 			if el.lazy && !slotsRead(el.n, el.label) {
 				continue
@@ -311,6 +318,9 @@ func slotsRead(n *nodeVar, label string) bool {
 func (c *world) key(n *nodeVar) string {
 	if n.of != nil {
 		return c.key(n.of)
+	}
+	if f, ok := c.fixed[n]; ok {
+		return c.render(f)
 	}
 	if n.subst != nil && !n.valued {
 		return c.render(n.subst)
