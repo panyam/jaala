@@ -29,7 +29,8 @@ stores, which is why it was split (#320).
 `./selfcheck.sh` runs the host-free checks at full size: the generated corpus at 5000 seeds, the
 work baselines, fuzzing, the same 5000 seeds against Soufflé when `souffle` is on PATH, and a real
 `llama-server` under nl's grammar when `make llama` has fetched it (each prints "could not run"
-otherwise). `make setup` installs both. Every Makefile recipe is a one-line call into `scripts/`
+otherwise). The corpus step takes about 5.5 minutes alone and runs under `-timeout 30m`, as the
+Soufflé step does (#381: under a load near 28 it passed go test's default 10 and failed). `make setup` installs both. Every Makefile recipe is a one-line call into `scripts/`
 (after mcpkit's): put a new target's shell there, never in the recipe. CI (`.github/workflows/ci.yml`) runs the set below, and a
 separate `souffle` job installs Soufflé 2.5's release `.deb` and compares 1000 seeds; all must pass:
 
