@@ -7,6 +7,7 @@
 #   SEEDS   the corpus's and Soufflé's seeds (selfcheck's JAALA_GEN_SEEDS, default 5000)
 #   FUZZ    the query text's fuzzing time per target (JAALA_FUZZ_TIME, default 30s)
 #   CYPHER_FUZZ  the Cypher compiler's (JAALA_CYPHER_FUZZ_TIME, default 2m)
+#   STORES  the graph servers stores/bolt runs over (default neo4j,memgraph; scripts/bolt-servers.sh)
 #   NOPUSH  set to keep the note local instead of pushing refs/notes/selfcheck to origin
 #
 # The log goes to ~/.cache/jaala/selfcheck/<sha>-<time>.log as well as the terminal. A run that
@@ -36,7 +37,7 @@ start=$(date +%s)
 (
 	cd "$wt" &&
 		env ${SEEDS:+JAALA_GEN_SEEDS="$SEEDS"} ${FUZZ:+JAALA_FUZZ_TIME="$FUZZ"} \
-			${CYPHER_FUZZ:+JAALA_CYPHER_FUZZ_TIME="$CYPHER_FUZZ"} ./selfcheck.sh
+			${CYPHER_FUZZ:+JAALA_CYPHER_FUZZ_TIME="$CYPHER_FUZZ"} ${STORES:+STORES="$STORES"} ./selfcheck.sh
 ) 2>&1 | tee "$log"
 status=${PIPESTATUS[0]}
 secs=$(($(date +%s) - start))
@@ -46,7 +47,7 @@ result=$(grep '^selfcheck: ' "$log" | tail -n 1)
 note=$(
 	printf '%s\n' "$result"
 	printf 'ran: %s, %dm%02ds on %s, %s\n' "$stamp" $((secs / 60)) $((secs % 60)) "$(uname -sm)" "$(go version | awk '{print $3}')"
-	printf 'seeds: %s, fuzz: %s, cypher fuzz: %s\n' "${SEEDS:-5000}" "${FUZZ:-30s}" "${CYPHER_FUZZ:-2m}"
+	printf 'seeds: %s, fuzz: %s, cypher fuzz: %s, stores: %s\n' "${SEEDS:-5000}" "${FUZZ:-30s}" "${CYPHER_FUZZ:-2m}" "${STORES:-neo4j,memgraph}"
 	printf 'log: %s\n' "$log"
 	grep -E '^== |could not run|^(--- FAIL|FAIL)' "$log" | grep -v '^== waiting'
 )

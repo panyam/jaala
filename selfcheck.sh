@@ -2,9 +2,11 @@
 # selfcheck runs jaala's checks that need no host: every evaluator against Naive on generated
 # programs (#87) and the grammar against them (#323), work against baselines (#88), fuzzed query text
 # (#89), answers against Soufflé (#23), when souffle is on PATH, and llama.cpp decoding under nl's
-# grammar (#330), when `make llama` has fetched it. See #86. JAALA_GEN_SEEDS overrides the seed count,
+# grammar (#330), when `make llama` has fetched it, and stores/bolt over Neo4j and Memgraph (#411),
+# when a server is running or Docker can start one (STORES picks which). See #86. JAALA_GEN_SEEDS overrides the seed count,
 # for the corpus and for Soufflé, JAALA_FUZZ_TIME the query text's fuzzing time per target, and
-# JAALA_CYPHER_FUZZ_TIME the Cypher compiler's.
+# JAALA_CYPHER_FUZZ_TIME the Cypher compiler's, and JAALA_BOLT_SEEDS the corpus's seeds over a graph
+# server (1000).
 set -u
 cd "$(dirname "$0")"
 
@@ -111,6 +113,19 @@ else
 	echo "  could not run: souffle is not on PATH (make setup installs it)"
 fi
 
+boltseeds=${JAALA_BOLT_SEEDS:-1000}
+echo "== graph servers: stores/bolt over ${STORES:-neo4j,memgraph}, $boltseeds seeds"
+bolt_ran=yes
+# The corpus, a session's commit and the exercise over each server scripts/bolt-servers.sh can use
+# or start (#411): one already running by its JAALA_BOLT_* URL, or a Docker container.
+JAALA_BOLT_SEEDS=$boltseeds ./scripts/bolt-servers.sh sh -c 'cd stores/bolt && go test -count=1 -timeout 30m . -v' >"$out" 2>&1
+case $? in
+0) ;;
+3) bolt_ran=no ;;
+*) status=1 ;;
+esac
+tr -d '\000' <"$out" | grep -E '^== |could not run|seeds:|seeds,|seed [0-9]+|DIFFERS|^(--- |ok|FAIL)'
+
 echo "== llama.cpp keeps a model to nl's grammar"
 llama_ran=yes
 model=${JAALA_LLAMA_MODEL:-${XDG_CACHE_HOME:-$HOME/.cache}/jaala/stories260K.gguf}
@@ -140,6 +155,7 @@ fi
 missing=""
 [ $souffle_ran = no ] && missing="Soufflé"
 [ $llama_ran = no ] && missing="${missing:+$missing and }llama.cpp"
+[ $bolt_ran = no ] && missing="${missing:+$missing and }the graph servers"
 if [ $status -ne 0 ]; then
 	echo "selfcheck: FAIL"
 elif [ -n "$missing" ]; then

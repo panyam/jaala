@@ -11,7 +11,8 @@ an MCP server for any vocabulary in another (#347); and `frontends/cypher`, whic
 into a program (#352), in a third. Every front end is a module of its own, `frontends/nl` included
 since #359, so no core package can import one and what one depends on reaches only its importers;
 the root's `./...` stops at each, so run a front end's tests from inside it. They moved there in #337, after v0.1.65 had shipped
-`nl` and `nlmodels` at the root. jaala is a Datalog engine, not a graph library: a host's fast
+`nl` and `nlmodels` at the root. `stores/` holds sources a host can use as is, each a module of its own
+the same way: `stores/bolt` (#411), a Source over Neo4j and Memgraph. jaala is a Datalog engine, not a graph library: a host's fast
 path is a generator (its own Go running inside a query), not a jaala function called around the
 engine (#41).
 
@@ -179,6 +180,27 @@ GOARCH=wasm go test ./ns` (#417 ran `ns` that way).
   to g's labels, types and keys, without CALL or `$parameters` (XOR came back once #377 made a
   chain of them compile in linear time); its test holds every sample to parsing, not compiling (a random query names
   variables nothing matched), and requires the guide's real answers to be accepted instead.
+- **`stores/bolt` is a Source over a graph server that speaks Bolt** (#411, mission #420), Neo4j's
+  protocol, which Neo4j and Memgraph serve: a module of its own on `neo4j-go-driver` (no third-party
+  module beyond it, and it builds for wasm), laid out by a `cypher.Graph` so a host describes its graph
+  once. A label's relation is nodes with that label keyed by `id`, a type's relation relationships, the
+  Props relation the nodes' other properties, and every node also carries `JaalaNode`, indexed on `id`
+  (Memgraph only takes the index in an auto-commit run, and names itself "Neo4j/v5.11.0 compatible ...
+  Memgraph"). It streams a whole read, looks up and batches (`UNWIND $vals`, one query per label or
+  type) by key, endpoint, Props key or text property, never by a number (the engine folds units), and
+  says a key or endpoint lookup is indexed. `Apply` writes an `ns.Changes` in one transaction, removals,
+  then checks, then additions; a value keeps kind, unit and spelling (`_unit.p`, `_text.p`), a fact
+  its id and citations (`_id:L`, `_cites:L` on a label's node, `_id`/`_cites` on a relationship, `_id.k`
+  for a Props key) and its values' key (`_key…`), which a relationship MERGEs on. It refuses a key that
+  isn't text, a second fact per node in a label's relation or per Props key, an unplaced argument and a
+  reserved property (`id`, `_…`), and holds each fact once, as a change set does. Its tests need a
+  server (`JAALA_BOLT_NEO4J`, `JAALA_BOLT_MEMGRAPH`, skipped without unless `JAALA_BOLT_REQUIRE`):
+  CI's `bolt` job runs both as service containers, the corpus at 300 seeds (`JAALA_BOLT_SEEDS`) through
+  `internal/corpus` against each seed's MemSource, values and, under `CanonicalCites`, citations and
+  witnesses (a dropped edge id survived a values-only compare). `scripts/bolt-servers.sh` runs a command
+  against the servers `STORES` names, using a URL or starting a Docker container, exit 3 for "could not
+  run"; `make exercise-graph-server` and selfcheck's graph-server step (1000 seeds) go through it.
+  Joins, walks, counts and pages as Cypher are #412.
 - **`frontends/cypher` compiles Cypher to jaala text over a host's `Graph`** (#352, mission #356):
   `Node` and `Edge` name the relation holding a label or a type, its key or endpoints, `Fixed`
   constants (Declaire's `node(id, "Function")`) and property columns, `Props` a key-value
@@ -1151,7 +1173,11 @@ run on `main` (now every five merged PRs, `make selfcheck-status`); `mission_doc
 with every example run by the engine; `mission_aggregate_answers` (#172, at v0.1.42) left Soufflé
 checking every aggregate program but `list`; and `mission_browser_memory` (#193, closed with agni
 #896) left the `Memory` benchmark's peak heap in use (not `B/op`, which the join's short-lived
-bindings dominate) as the measure of what a query holds. Several missions can be active at once (`queue.sh` prints them). A new issue gets a
+bindings dominate) as the measure of what a query holds. Several missions can be active at once (`queue.sh` prints them). `mission_graph_server_stores` (#420,
+started 2026-10-19) is worked in its own worktree and isn't `mission:active`: a host answers over a graph
+kept in Neo4j or Memgraph as it would in memory, with the server doing the joins. Its exercise is `make
+exercise-graph-server`; its tickets are #411 (`stores/bolt`), #412 (pushdown as Cypher, profiles), #413
+(checking a Cypher database against jaala), declaire#339 and agni#1073. A new issue gets a
 priority and a mission link when filed, or `waiting` with the trigger that would unpark it.
 
 Create the branch before the first commit (`git branch --show-current` says so). #200's work was
