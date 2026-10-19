@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/panyam/jaala/datalog"
 	"github.com/panyam/jaala/frontends/cypher"
@@ -458,5 +459,39 @@ func TestPlusJoinsTextAndAddsNumbers(t *testing.T) {
 		{`MATCH (f:File) RETURN toUpper(f.path) + f.ext AS name`, `file(?f, ?f_ext, _), ?_c = str.concat(str.upper(?f), ?f_ext) => ?_c`, [][]string{{"MAIN.go"}}},
 	} {
 		check(t, v, b, g, c)
+	}
+}
+
+// A WHERE whose alternatives pass maxDisjuncts is refused when a part of it does, not after the
+// whole disjunction is built: a chain of XORs doubled it per XOR and never finished (#377).
+func TestAWhereOfTooManyAlternativesIsRefusedQuickly(t *testing.T) {
+	v, _ := guide.Deps(t)
+	compile := func(q string) error {
+		done := make(chan error, 1)
+		go func() {
+			_, err := cypher.Compile(v, depsGraph, q)
+			done <- err
+		}()
+		select {
+		case err := <-done:
+			return err
+		case <-time.After(10 * time.Second):
+			t.Fatalf("%s: still compiling after 10s", q)
+			return nil
+		}
+	}
+	control := `MATCH (a:Package) WHERE a.license = 'x' XOR a.license = 'y' XOR a.name = 'z' RETURN a`
+	if err := compile(control); err != nil {
+		t.Fatalf("control: %s: %v", control, err)
+	}
+	for _, q := range []string{
+		"MATCH (a:Package) WHERE a.license = 'x'" + strings.Repeat(" XOR a.license = 'y'", 64) + " RETURN a",
+		"MATCH (a:Package) WHERE a.name = 'q'" + strings.Repeat(" AND (a.license = 'x' OR a.name = 'y')", 20) + " RETURN a",
+		`MATCH(a)WHERE()--()XOR(0)XOR(0)XOR 0XOR 0XOR 0XOR[]XOR []XOR 0RETURN a`,
+	} {
+		err := compile(q)
+		if err == nil || !strings.Contains(err.Error(), "expands to more than 16 alternatives") {
+			t.Errorf("%s: want the alternatives refusal, got %v", q, err)
+		}
 	}
 }

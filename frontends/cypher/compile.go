@@ -1433,6 +1433,9 @@ func (c *compiler) dnf(es []expr) ([][]cond, *Error) {
 	out := [][]cond{{}}
 	for _, e := range es {
 		d, err := c.dnfOf(e, false)
+		if err == errTooManyDisjuncts {
+			return nil, errAt(e.at(), "this WHERE expands to more than %d alternatives", maxDisjuncts)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -1450,16 +1453,29 @@ func (c *compiler) dnf(es []expr) ([][]cond, *Error) {
 	return out, nil
 }
 
+// errTooManyDisjuncts stops dnfOf as soon as a part of the expression passes maxDisjuncts, which
+// dnf reports at the WHERE: built whole first, a chain of n XORs took 2^n alternatives to refuse
+// (#377).
+var errTooManyDisjuncts = &Error{Msg: "too many alternatives"}
+
 func (c *compiler) dnfOf(e expr, neg bool) ([][]cond, *Error) {
-	or := func(a, b [][]cond) [][]cond { return append(append([][]cond{}, a...), b...) }
-	and := func(a, b [][]cond) [][]cond {
+	or := func(a, b [][]cond) ([][]cond, *Error) {
+		if len(a)+len(b) > maxDisjuncts {
+			return nil, errTooManyDisjuncts
+		}
+		return append(append([][]cond{}, a...), b...), nil
+	}
+	and := func(a, b [][]cond) ([][]cond, *Error) {
+		if len(a)*len(b) > maxDisjuncts {
+			return nil, errTooManyDisjuncts
+		}
 		var out [][]cond
 		for _, x := range a {
 			for _, y := range b {
 				out = append(out, append(append([]cond{}, x...), y...))
 			}
 		}
-		return out
+		return out, nil
 	}
 	switch e := e.(type) {
 	case negate:
@@ -1476,9 +1492,9 @@ func (c *compiler) dnfOf(e expr, neg bool) ([][]cond, *Error) {
 				return nil, err
 			}
 			if (e.op == "AND") != neg {
-				return and(l, r), nil
+				return and(l, r)
 			}
-			return or(l, r), nil
+			return or(l, r)
 		case "XOR":
 			x := binary{pos: e.pos, op: "OR",
 				l: binary{pos: e.pos, op: "AND", l: e.l, r: negate{pos: e.pos, e: e.r}},
