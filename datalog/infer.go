@@ -227,7 +227,7 @@ func (t *typer) ofHead(rel string, j int, seen map[string]bool) ns.ArgType {
 func aggregateType(a Aggregate, vt varType) ns.ArgType {
 	switch a.Func {
 	case "list":
-		return ns.ArgType{Type: ns.TypeString}
+		return ns.ArgType{Type: ns.TypeList}
 	case "sum", "avg", "min", "max":
 		if vt.Type == ns.TypeNumber {
 			return ns.ArgType{Type: ns.TypeNumber, Unit: vt.Unit}

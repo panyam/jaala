@@ -1069,7 +1069,29 @@ func (c *compiler) value(e expr) (frag, *Error) {
 				return frag{pathFuncs[strings.ToLower(e.name)] + "(?" + p + ")"}, nil
 			}
 			return nil, errAt(e.pos, "%s() reads a path variable, bound by p = (...)", e.name)
-		case "labels", "keys", "properties", "range", "size", "head", "last", "tail":
+		case "size", "head", "last", listIndex:
+			// a list's length and values (#283), read by stdlib's list.*
+			if want := 1; e.name != listIndex && len(e.args) != want {
+				return nil, errAt(e.pos, "%s() takes one argument", e.name)
+			}
+			l, err := c.value(e.args[0])
+			if err != nil {
+				return nil, err
+			}
+			switch strings.ToLower(e.name) {
+			case "size":
+				return frag{"list.length(", l, ")"}, nil
+			case "head":
+				return frag{"list.at(", l, ", 0)"}, nil
+			case "last":
+				return frag{"list.at(", l, ", -1)"}, nil
+			}
+			i, err := c.value(e.args[1])
+			if err != nil {
+				return nil, err
+			}
+			return frag{"list.at(", l, ", ", i, ")"}, nil
+		case "labels", "keys", "properties", "range", "tail":
 			return nil, gapLists.at(e.pos, "%s()", e.name)
 		}
 		if aggregates[strings.ToLower(e.name)] {
@@ -1077,7 +1099,7 @@ func (c *compiler) value(e expr) (frag, *Error) {
 		}
 		return nil, gapFunctions.at(e.pos, "%s()", e.name)
 	case listLit:
-		return nil, gapLists.at(e.pos, "a list")
+		return c.listConst(e)
 	case unsupported:
 		return nil, e.err
 	}
@@ -1205,16 +1227,28 @@ func (c *compiler) condition(e expr, neg bool) (frag, *Error) {
 			pred := map[string]string{"STARTS WITH": "str.prefix", "ENDS WITH": "str.suffix", "CONTAINS": "str.contains"}[e.op]
 			return append(frag{not + pred + "(", l, ", ", r, ")"}, c.guards(e.op, e.l, e.r, l, r)...), nil
 		case "IN":
-			// x IN nodes(p): the path passes through x
-			p, ok := c.pathArg(e.r.(call))
-			if !ok {
-				return nil, errAt(e.pos, "nodes() reads a path variable, bound by p = (...)")
-			}
 			x, err := c.term(e.l)
 			if err != nil {
 				return nil, err
 			}
-			return frag{not + "path.node(?" + p + ", _, ", x, ")"}, nil
+			var g frag
+			if neg && c.nullable(e.l) && isVar(x) {
+				g = frag{", not absent(", x, ")"} // null IN a list is unknown, which NOT keeps unknown
+			}
+			if f, ok := e.r.(call); ok && strings.EqualFold(f.name, "nodes") {
+				// x IN nodes(p): the path passes through x
+				p, ok := c.pathArg(f)
+				if !ok {
+					return nil, errAt(e.pos, "nodes() reads a path variable, bound by p = (...)")
+				}
+				return append(frag{not + "path.node(?" + p + ", _, ", x, ")"}, g...), nil
+			}
+			// x IN l, a list a value, a property or a parameter holds (#283)
+			l, err := c.value(e.r)
+			if err != nil {
+				return nil, err
+			}
+			return append(frag{not + "list.member(", l, ", _, ", x, ")"}, g...), nil
 		case "=~":
 			s, ok := e.r.(strLit)
 			if !ok {
@@ -1582,12 +1616,9 @@ func (c *compiler) dnfOf(e expr, neg bool) ([][]cond, *Error) {
 				r: binary{pos: e.pos, op: "AND", l: negate{pos: e.pos, e: e.l}, r: e.r}}
 			return c.dnfOf(x, neg)
 		case "IN":
-			if f, ok := e.r.(call); ok && strings.EqualFold(f.name, "nodes") {
-				return [][]cond{{{e: e, neg: neg}}}, nil // a test of its own, path.node
-			}
 			list, ok := e.r.(listLit)
 			if !ok {
-				return nil, gapLists.at(e.pos, "IN over anything but a list written in the query")
+				return [][]cond{{{e: e, neg: neg}}}, nil // a test of its own: path.node, or list.member (#283)
 			}
 			if len(list.items) == 0 {
 				return nil, errAt(e.pos, "IN [] holds for nothing")
@@ -1794,6 +1825,30 @@ func (c *compiler) guards(op string, l, r expr, lf, rf frag) frag {
 		guard(r, rf)
 	}
 	return g
+}
+
+// listConst is a list written in the query as a value: its constants as a list's text (ns.ListText),
+// written as a jaala string, whose quotes stay escaped in its value and list.* reads unescaped (#283).
+func (c *compiler) listConst(l listLit) (frag, *Error) {
+	vals := make([]ns.Value, 0, len(l.items))
+	for _, it := range l.items {
+		switch it := it.(type) {
+		case strLit:
+			if strings.ContainsAny(it.s, `"\`) {
+				return nil, errAt(it.pos, "a string in a list holding a double quote or a backslash can't be written in jaala")
+			}
+			vals = append(vals, ns.S(it.s))
+		case numLit:
+			f, err := strconv.ParseFloat(it.text, 64)
+			if err != nil {
+				return nil, errAt(it.pos, "%s isn't a number jaala reads", it.text)
+			}
+			vals = append(vals, ns.N(f))
+		default:
+			return nil, gapLists.at(it.at(), "a list of anything but numbers and strings written in the query")
+		}
+	}
+	return frag{quote(strings.ReplaceAll(ns.ListText(vals), `"`, `\"`))}, nil
 }
 
 func isVar(f frag) bool {

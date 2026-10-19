@@ -154,7 +154,7 @@ func coerceValue(v ns.Value, at ns.ArgType) (ns.Value, bool) {
 			return v, false
 		}
 		return ns.Value{S: v.S, Num: &f, BaseUnit: v.BaseUnit}, true
-	case at.Type == ns.TypeString || at.Kind != "" || at.KindFrom != "":
+	case at.Type == ns.TypeString || at.Type == ns.TypeList || at.Kind != "" || at.KindFrom != "":
 		return ns.Value{S: v.S}, true
 	}
 	return v, true

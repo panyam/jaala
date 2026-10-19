@@ -64,7 +64,10 @@ func grammarRules(g Graph) []gbnf.Rule {
 			star(seq{lit(" WITH "), list(ref("witem"), ", "), opt(seq{lit(" WHERE "), ref("expr")}), star(seq{lit(" "), ref("omatch")})}),
 			lit(" "), ref("return")}},
 		// an OPTIONAL MATCH after a match (#282), which keeps the row with absent where it fails
-		{Name: "omatch", E: alt{ref("match"), seq{lit("OPTIONAL "), ref("match")}}},
+		{Name: "omatch", E: alt{ref("match"), seq{lit("OPTIONAL "), ref("match")}, ref("unwind")}},
+		// UNWIND a list, written or carried by a WITH, into a row per value (#283)
+		{Name: "unwind", E: seq{lit("UNWIND "), alt{ref("var"), ref("listlit")}, lit(" AS "), ref("var")}},
+		{Name: "listlit", E: seq{lit("["), list(ref("literal"), ", "), lit("]")}},
 		{Name: "match", E: seq{lit("MATCH "), list(alt{ref("pattern"), seq{lit("shortestPath("), ref("pattern"), lit(")")}, ref("path")}, ", "), opt(seq{lit(" WHERE "), ref("expr")})}},
 		{Name: "pattern", E: seq{ref("node"), gbnf.UpTo(seq{ref("rel"), ref("node")}, 3)}},
 		// a path variable binds a path of one relationship, which may have a variable length (#280)
@@ -93,6 +96,7 @@ func grammarRules(g Graph) []gbnf.Rule {
 			lit(" IS NULL"), lit(" IS NOT NULL"),
 			seq{lit(" IN ["), list(ref("literal"), ", "), lit("]")},
 			seq{lit(" IN nodes("), ref("var"), lit(")")},
+			seq{lit(" IN "), ref("var")},
 		})}},
 		{Name: "cmpop", E: alt{lit(" = "), lit(" <> "), lit(" < "), lit(" <= "), lit(" > "), lit(" >= ")}},
 		{Name: "sum", E: seq{ref("product"), star(seq{alt{lit(" + "), lit(" - ")}, ref("product")})}},
@@ -111,7 +115,8 @@ func grammarRules(g Graph) []gbnf.Rule {
 			seq{alt{lit("toLower("), lit("toUpper(")}, ref("expr"), lit(")")},
 			seq{lit("replace("), ref("expr"), lit(", "), ref("expr"), lit(", "), ref("expr"), lit(")")},
 			seq{lit("split("), ref("expr"), lit(", "), ref("expr"), lit(")["), cls("0-9", "01"), lit("]")},
-			seq{alt{lit("length("), lit("nodes("), lit("relationships(")}, ref("var"), lit(")")},
+			seq{alt{lit("length("), lit("nodes("), lit("relationships("), lit("size("), lit("head("), lit("last(")}, ref("var"), lit(")")},
+			seq{ref("var"), lit("["), cls("0-9", "01"), lit("]")},
 		}},
 		{Name: "literal", E: alt{ref("string"), ref("number"), lit("true"), lit("false")}},
 		{Name: "string", E: seq{lit("'"), gbnf.UpTo(cls(`^'\\\x00-\x1F`, "ab c-1"), 40), lit("'")}},

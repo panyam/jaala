@@ -18,7 +18,7 @@ func TestAPathReadsBackAsWritten(t *testing.T) {
 		{Path{Nodes: []Value{N(1), {S: "01", Num: ptr(1)}, N(-2.5), Absent()}}, `[1,1,-2.5,null]`},
 		{Path{Nodes: []Value{S("a"), S("b")}, Edges: []Value{S("e1")}, HasEdges: true}, `{"nodes":["a","b"],"edges":["e1"]}`},
 		{Path{Nodes: []Value{S("a")}, Edges: []Value{}, HasEdges: true}, `{"nodes":["a"],"edges":[]}`},
-		{Path{Nodes: []Value{{S: "3V", Num: ptr(3), BaseUnit: "V"}, N(math.Inf(1))}}, `["3V","+Inf"]`},
+		{Path{Nodes: []Value{{S: "3V", Num: ptr(3), BaseUnit: "V"}, N(math.Inf(1))}}, `[{"num":3,"unit":"V"},"+Inf"]`},
 	} {
 		if got := c.p.Text(); got != c.text {
 			t.Errorf("%v: text %s, want %s", c.p, got, c.text)

@@ -163,7 +163,7 @@ func Example_cypherGap() {
 	if err != nil {
 		panic(err)
 	}
-	q := `MATCH (p:Package) UNWIND [1, 2] AS x RETURN p, x`
+	q := `MATCH (p:Package) SET p.license = 'MIT' RETURN p`
 	p, err := cypher.Compile(v, depsGraph, q)
 	var ce *cypher.Error
 	if errors.As(err, &ce) {
@@ -171,10 +171,10 @@ func Example_cypherGap() {
 	}
 	fmt.Print(cypher.Explain(q, p, err))
 	// Output:
-	// gap #283
-	// cypher: not supported yet: lists and maps as values (jaala#283): UNWIND
+	// gap #287
+	// cypher: not supported yet: writing to the graph (jaala#287): SET
 	// line 1, column 19:
-	//   MATCH (p:Package) UNWIND [1, 2] AS x RETURN p, x
+	//   MATCH (p:Package) SET p.license = 'MIT' RETURN p
 	//                     ^
 	// Write the query without it.
 }

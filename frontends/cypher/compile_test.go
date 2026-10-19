@@ -128,6 +128,25 @@ var depsCases = []compileCase{
 		[][]string{{"app", "app"}, {"log", "log"}, {"util", "util"}}},
 	{`MATCH (a:Package) WHERE a.license <> 'MIT' RETURN a`,
 		`pkg(?a, ?a_license), ?a_license != "MIT", not absent(?a_license) => ?a`, [][]string{{"log"}, {"util"}}},
+	// A list is a value (#283): collect builds one, a WITH carries it, and size, head, last, [i], IN and
+	// UNWIND read it through stdlib's list.*.
+	{`MATCH (a:Package)-[:IMPORTS*]->(b) WITH a, collect(b) AS bs WHERE size(bs) > 1 UNWIND bs AS b RETURN a, b`,
+		"cypher_with1(?a, list(?b)) :- pkg(?a, _), graph.closure(\"imports\", ?a, ?b, 1, 0, _);\n" +
+			`cypher_with1(?a, ?bs), list.member(?bs, _, ?b), list.length(?bs) > 1 => ?a, ?b`,
+		[][]string{{"api", "log"}, {"api", "util"}, {"app", "api"}, {"app", "log"}, {"app", "util"}}},
+	{`MATCH (a:Package)-[:IMPORTS*]->(b) WITH a, collect(b) AS bs RETURN a, head(bs) AS first, last(bs) AS final, bs[1] AS second`,
+		"cypher_with1(?a, list(?b)) :- pkg(?a, _), graph.closure(\"imports\", ?a, ?b, 1, 0, _);\n" +
+			`cypher_with1(?a, ?bs), ?_c = list.at(?bs, 0), ?_c1 = list.at(?bs, -1), ?_c2 = list.at(?bs, 1) => ?a, ?_c, ?_c1, ?_c2`,
+		[][]string{{"api", "log", "util", "util"}, {"app", "api", "util", "log"}}},
+	{`MATCH (a:Package)-[:IMPORTS*]->(b) WITH a, collect(b) AS bs MATCH (c:Package) WHERE NOT c IN bs RETURN a, c`,
+		"cypher_with1(?a, list(?b)) :- pkg(?a, _), graph.closure(\"imports\", ?a, ?b, 1, 0, _);\n" +
+			`cypher_with1(?a, ?bs), pkg(?c, _), not list.member(?bs, _, ?c) => ?a, ?c`,
+		[][]string{{"api", "api"}, {"api", "app"}, {"app", "app"}, {"log", "api"}, {"log", "app"}, {"log", "log"}}},
+	{`MATCH (a:Package) WITH collect(a.license) AS ls MATCH (b:Package) WHERE NOT b.license IN ls RETURN b`,
+		"cypher_with1(list(?a_license)) :- pkg(?a, ?a_license);\n" +
+			`cypher_with1(?ls), pkg(?b, ?b_license), not list.member(?ls, _, ?b_license), not absent(?b_license) => ?b`, nil},
+	{`UNWIND ['app', 'log'] AS n MATCH (p:Package {name: n}) RETURN p.license`,
+		`pkg(?p, ?p_license), list.member("[\"app\",\"log\"]", _, ?n), ?p = ?n => ?p_license`, [][]string{{""}, {"MIT"}}},
 	{`MATCH (a {name: 'api'})-[:IMPORTS]-(n) RETURN n`,
 		"cypher_step1(?x, ?y) :- imports(?x, ?y);\ncypher_step1(?x, ?y) :- imports(?y, ?x);\n" +
 			`cypher_step1("api", ?n) => ?n`, [][]string{{"app"}, {"log"}}},
@@ -143,7 +162,7 @@ var depsCases = []compileCase{
 	{`MATCH (p:Package) RETURN p.name AS name ORDER BY name SKIP 1 LIMIT 2`,
 		`pkg(?p, _) => ?p order by ?p limit 2 offset 1`, [][]string{{"app"}, {"log"}}},
 	{`MATCH (p:Package) RETURN collect(p.name)`,
-		`pkg(?p, _) => list(?p)`, [][]string{{"api app log util"}}},
+		`pkg(?p, _) => list(?p)`, [][]string{{`["api","app","log","util"]`}}},
 	{`MATCH (p:Package) WHERE p.license = 'MIT' OR p.license STARTS WITH 'Apache' RETURN p.name`,
 		"cypher_match1(?p) :- pkg(?p, ?p_license), ?p_license = \"MIT\";\ncypher_match1(?p) :- pkg(?p, ?p_license), str.prefix(?p_license, \"Apache\"), not absent(?p_license);\n" +
 			`cypher_match1(?p) => ?p`, [][]string{{"app"}, {"util"}}},
@@ -314,6 +333,26 @@ func TestCompileOverGenericRelations(t *testing.T) {
 	}
 }
 
+// A list parameter is bound to a list's text, and IN reads it as a list (#283), as x10b's ids would be.
+func TestAListParameterIsBoundAsAList(t *testing.T) {
+	v, b := guide.Deps(t)
+	p, err := cypher.Compile(v, depsGraph, `MATCH (a:Package) WHERE a.name IN $names RETURN a`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Text != `pkg(?a, _), list.member(?names, _, ?a) => ?a` {
+		t.Fatalf("wrote %s", p.Text)
+	}
+	bind, err := p.Bind(map[string]ns.Value{"names": ns.S(ns.ListText([]ns.Value{ns.S("app"), ns.S("util"), ns.S("nope")}))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := rowsOf(t, p, b, bind)
+	if err != nil || fmt.Sprint(rows) != "[[app] [util]]" {
+		t.Errorf("rows %v, %v", rows, err)
+	}
+}
+
 // A $parameter is a goal variable the host binds, so one compiled program answers for any value.
 func TestAParameterIsBound(t *testing.T) {
 	v, b := guide.Deps(t)
@@ -364,14 +403,14 @@ func TestGapsAreRefusedByName(t *testing.T) {
 		{`OPTIONAL MATCH (a:Package) RETURN a`, 400, "OPTIONAL"},
 		{`MATCH (a:Package) OPTIONAL MATCH (a)-[:IMPORTS]->(b) WHERE b.name = 'x' OR b.name = 'y' RETURN a, b`, 400, "OPTIONAL MATCH (a)"},
 		{`MATCH (a) OPTIONAL MATCH (a:Package)-[:IMPORTS]->(b) RETURN a, b`, 400, "(a:Package)"},
-		{`MATCH (a:Package) UNWIND [1, 2] AS x RETURN x`, 283, "UNWIND"},
-		{`MATCH (a:Package) WHERE a.name IN $names RETURN a`, 283, "IN $names"},
-		{`MATCH (a:Package) RETURN a {.name}`, 283, "{.name}"},
-		{`MATCH (a:Package) RETURN labels(a)`, 283, "labels"},
+		{`MATCH (a:Package) RETURN a {.name}`, 405, "{.name}"},
+		{`MATCH (a:Package) RETURN labels(a)`, 405, "labels"},
+		{`MATCH (a:Package) WITH collect(a) AS l RETURN l[0..1]`, 405, "[0..1]"},
+		{`MATCH (a:Package) UNWIND [a.name] AS n RETURN n`, 405, "a.name]"},
 		{`MATCH (a:Package) RETURN avg(a.license)`, 284, "avg"},
 		{`MATCH (a:Package) RETURN trim(a.name)`, 284, "trim"},
-		{`MATCH (a:Package) RETURN split(a.name, '-')`, 283, "split"},
-		{`MATCH (a:Package) WHERE size(COLLECT { (a)-->(b) }) > 1 RETURN a`, 283, "COLLECT"},
+		{`MATCH (a:Package) RETURN split(a.name, '-')`, 405, "split"},
+		{`MATCH (a:Package) WHERE size(COLLECT { (a)-->(b) }) > 1 RETURN a`, 405, "COLLECT"},
 		{`MATCH (a:Package) RETURN CASE WHEN a.license IS NULL THEN 'none' END`, 284, "CASE"},
 		{`MATCH (a:Package) SET a.license = 'MIT' RETURN a`, 287, "SET"},
 		{`CREATE (a:Package {name: 'x'}) RETURN a`, 287, "CREATE"},

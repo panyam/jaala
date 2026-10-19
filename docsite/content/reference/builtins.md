@@ -132,3 +132,15 @@ Given an index, `path.node` gives that node alone. `path.nodes(?p, ?l)` is the n
 {{ demo "demos/reference/builtins-path-edge.yaml" }}
 
 A value that isn't a path gives no row rather than an error, since which values reach a function depends on how the query is planned. They live under `path`, so in a host's own module named `path`, a rule's bare `node(...)` or `edge(...)` means these functions, and the module has to write the vocabulary's relation another way or take another name.
+
+## Lists
+
+A list is a value ([#283](https://github.com/panyam/jaala/issues/283)): the [`list` aggregate]({{.Site.PathPrefix}}/guide/aggregation/) builds one, a rule hands it on, and a path's nodes are one too. It's carried as a JSON list, `["cache","db"]`, with a number in a unit written `{"num": 3.3, "unit": "V"}` so it reads back as that number. A Source may serve one in a column it declares `list`. The `list.*` functions read it, each needing the list bound. `list.member(?l, ?i, ?x)` gives each value with its index from 0, which turns a list back into rows:
+
+{{ demo "demos/reference/builtins-list.yaml" }}
+
+With the value bound, `list.member` is a test that the list holds it. `list.length(?l, ?n)` is how many values it holds, and `list.at(?l, ?i, ?x)` the one at an index, a negative index counting from the end:
+
+{{ demo "demos/reference/builtins-list-at.yaml" }}
+
+A value that isn't a list gives no row rather than an error, as with paths. Two lists are equal when they hold the same values in the same order, and they order between themselves by their text, not value by value. A rule can't build a list other than through the aggregate, which keeps a program finite ([#1](https://github.com/panyam/jaala/issues/1)). Lists live under `list`, so a host's module named `list` has the same caveat as one named `path`.

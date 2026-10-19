@@ -315,6 +315,10 @@ type generator struct {
 	// optionals wraps an atom over a graph relation in optional { } now and then (#282), from a stream
 	// of its own.
 	optionals *rand.Rand
+	// lists makes the goal read back a list a rule collected now and then (#283), from a stream of its
+	// own; listRules are those rules, which program adds.
+	lists     *rand.Rand
+	listRules []genRule
 }
 
 // newGenerator draws a program for facts from rnd. Arithmetic depends on the graph's units as drawn,
@@ -336,6 +340,9 @@ func newGenerator(rnd *rand.Rand, facts genFacts) *generator {
 	h = fnv.New64a()
 	fmt.Fprint(h, "optionals", facts.n, facts.edges, facts.weights)
 	g.optionals = rand.New(rand.NewSource(int64(h.Sum64())))
+	h = fnv.New64a()
+	fmt.Fprint(h, "lists", facts.n, facts.edges, facts.weights)
+	g.lists = rand.New(rand.NewSource(int64(h.Sum64())))
 	if facts.units == nil {
 		h := fnv.New64a()
 		fmt.Fprint(h, "arith", facts.n, facts.edges, facts.weights)
@@ -687,6 +694,28 @@ func (g *generator) paths(b *genBody, r genRel) {
 	g.shapes["paths"] = true
 }
 
+// listRead now and then collects each node's edges into a list with a rule, and has the goal require
+// a node it bound to be in some node's list, reading its length half the time (#283): a list built by
+// one relation and read back through list.* in another.
+func (g *generator) listRead(b *genBody) {
+	nodes := b.bound[genNode]
+	if g.lists == nil || len(nodes) == 0 || g.lists.Float64() >= 0.12 {
+		return
+	}
+	k := len(g.listRules) + 1
+	rel, l := fmt.Sprintf("ls%d", k), fmt.Sprintf("?l%d", k)
+	g.listRules = append(g.listRules, genRule{head: rel, args: []string{"?la", "list(?lb)"},
+		body: []genLit{{rel: "edge", args: []string{"?la", "?lb"}}}})
+	b.lits = append(b.lits, genLit{rel: rel, args: []string{"_", l}},
+		genLit{rel: "list.member", args: []string{l, "_", nodes[g.lists.Intn(len(nodes))]}})
+	if g.lists.Float64() < 0.5 {
+		n := fmt.Sprintf("?ln%d", k)
+		b.lits = append(b.lits, genLit{rel: "list.length", args: []string{l, n}})
+		b.bound[genNum] = append(b.bound[genNum], n)
+	}
+	g.shapes["list read"] = true
+}
+
 // compareFacts now and then requires two of the facts b binds to differ, or to be one, as a Cypher
 // match keeps its relationships apart (#279).
 func (g *generator) compareFacts(b *genBody) {
@@ -847,7 +876,9 @@ func (g *generator) program() genProgram {
 			p.rules = append(p.rules, g.rule(r, recursive))
 		}
 	}
+	g.listRules = nil
 	p.goal = g.goal()
+	p.rules = append(p.rules, g.listRules...)
 	for s := range g.shapes {
 		p.shapes = append(p.shapes, s)
 	}
@@ -881,6 +912,7 @@ func (g *generator) goal() genGoal {
 	}
 	g.compareFacts(b)
 	g.compute(b)
+	g.listRead(b)
 	goal := genGoal{}
 	if g.chance(0.35) {
 		g.shapes["goal aggregate"] = true
@@ -1713,7 +1745,7 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 			}
 		}
 	}
-	shapes := []string{"program", "recursion", "negation", "head aggregate", "goal aggregate", "body aggregate", "bound goal", "set-bound goal", "arithmetic", "bound fact", "avg", "closure", "paths", "optional"}
+	shapes := []string{"program", "recursion", "negation", "head aggregate", "goal aggregate", "body aggregate", "bound goal", "set-bound goal", "arithmetic", "bound fact", "avg", "closure", "paths", "optional", "list read"}
 	var counts, issues []string
 	for _, sh := range shapes {
 		counts = append(counts, fmt.Sprintf("%s %d/%d", sh, compared[sh+"/plain"], compared[sh+"/witnessed"]))
@@ -1733,6 +1765,9 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 	}
 	if compared["closure/plain"] == 0 || compared["closure/witnessed"] == 0 {
 		t.Errorf("control: no program walked a relation with graph.closure (#281)")
+	}
+	if compared["list read/plain"] == 0 || compared["list read/witnessed"] == 0 {
+		t.Errorf("control: no program read back a list a rule collected (#283)")
 	}
 	if compared["optional/plain"] == 0 || compared["optional/witnessed"] == 0 {
 		t.Errorf("control: no program matched optionally (#282)")

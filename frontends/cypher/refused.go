@@ -11,8 +11,8 @@ import (
 
 // refusedClauses are clause keywords outside the subset, by the gap or ticket that would take them.
 var refusedClauses = map[string]gap{
-	"UNWIND": gapLists, "FOREACH": gapLists,
-	"CREATE": gapWrites, "MERGE": gapWrites, "SET": gapWrites, "DELETE": gapWrites, "DETACH": gapWrites,
+	"FOREACH": gapLists,
+	"CREATE":  gapWrites, "MERGE": gapWrites, "SET": gapWrites, "DELETE": gapWrites, "DETACH": gapWrites,
 	"NODETACH": gapWrites, "REMOVE": gapWrites,
 	"USE": gapGraphs,
 }
@@ -26,17 +26,6 @@ func (p *parser) refusedClause() (handled, ends bool, err *Error) {
 	}
 	word := strings.ToUpper(t.val)
 	switch {
-	case t.is("UNWIND"):
-		p.refuse(gapLists.at(t.pos, "UNWIND"))
-		p.i++
-		if _, err := p.expr(); err != nil {
-			return true, false, err
-		}
-		if err := p.expect("AS", "AS after UNWIND's list"); err != nil {
-			return true, false, err
-		}
-		_, err := p.name("a name after AS")
-		return true, false, err
 	case t.is("USE"):
 		p.refuse(gapGraphs.at(t.pos, "USE"))
 		p.i++

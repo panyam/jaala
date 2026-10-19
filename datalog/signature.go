@@ -45,7 +45,7 @@ func parseArgType(sp span) (ns.ArgType, error) {
 			return t, sp.errorf("query: bad kind variable %q", s)
 		}
 		t.KindFrom = s[1:]
-	case s == ns.TypeString || s == ns.TypeNumber:
+	case s == ns.TypeString || s == ns.TypeNumber || s == ns.TypeList:
 		t.Type = s
 	case strings.HasPrefix(s, ns.TypeNumber+"[") && strings.HasSuffix(s, "]"):
 		t.Type, t.Unit = ns.TypeNumber, strings.TrimSpace(s[len(ns.TypeNumber)+1:len(s)-1])

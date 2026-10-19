@@ -20,8 +20,16 @@ type stage struct {
 
 // A readClause is a MATCH or a CALL ... YIELD, one of them set.
 type readClause struct {
-	match *matchClause
-	call  *callClause
+	match  *matchClause
+	call   *callClause
+	unwind *unwindClause
+}
+
+// An unwindClause is UNWIND e AS name (#283): a row per value of the list e.
+type unwindClause struct {
+	pos  Pos
+	e    expr
+	name string
 }
 
 type callClause struct {
