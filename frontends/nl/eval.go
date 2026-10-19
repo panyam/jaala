@@ -82,6 +82,8 @@ type Report struct {
 	Checked, Fixed int
 	// Failures counts the cases that failed by Result.Class.
 	Failures map[string]int
+	// Repairs counts the drafts the harness repaired itself and then accepted (Try.Repair).
+	Repairs int
 }
 
 // Eval runs each case's question through translate and scores its answer over b (#326). translate is
@@ -146,6 +148,9 @@ func (rep *Report) add(res Result) {
 		rep.TokensCached += t.TokensCached
 		rep.Latency += t.Latency
 		if t.Err == nil {
+			if t.Repair != "" {
+				rep.Repairs++
+			}
 			continue
 		}
 		rep.Refused[t.Kind]++

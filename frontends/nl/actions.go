@@ -32,6 +32,10 @@ type Actions struct {
 	Steps int
 	// Sample is how many rows a try or values answers, 10 when 0.
 	Sample int
+	// Compact sends the model, in place of the conversation, one turn holding the question and
+	// what it has found: each action with its result, each refused answer on a line, and the last
+	// refusal whole. A small model's drafts get worse as its context grows (#393).
+	Compact bool
 }
 
 // A Prober is a FrontEnd's side of Actions: look and values in its language. A front end that isn't
@@ -111,31 +115,36 @@ const actionInstructions = `
 // findInstruction is actionInstructions' line for find, when Translate has a Grounder.
 const findInstruction = "#   find NAME       the ids or values a name from the question may stand for\n"
 
-// act runs a reply's action and writes what goes back to the model.
-func act(ctx context.Context, action, arg string, v *ns.Vocabulary, o Options) string {
+// act runs a reply's action and writes what goes back to the model, with the text values it saw the
+// data hold, which a later draft's guess may be repaired from.
+func act(ctx context.Context, action, arg string, v *ns.Vocabulary, o Options) (string, []string) {
 	switch action {
 	case ActionFind:
 		if o.grounder == nil {
-			return "there is nothing to find names with here; look and values say what the data holds"
+			return "there is nothing to find names with here; look and values say what the data holds", nil
 		}
 		cands, err := o.grounder.Ground(ctx, arg)
 		if err != nil {
-			return err.Error()
+			return err.Error(), nil
+		}
+		var seen []string
+		for _, c := range cands {
+			seen = append(seen, c.Values...)
 		}
 		if text := strings.TrimSpace(grounded(cands)); text != "" {
-			return text
+			return text, seen
 		}
-		return fmt.Sprintf("nothing found for %q", arg)
+		return fmt.Sprintf("nothing found for %q", arg), nil
 	case ActionLook:
 		text, err := Look(v, o.FrontEnd, arg)
 		if err != nil {
-			return err.Error()
+			return err.Error(), nil
 		}
-		return text
+		return text, nil
 	case ActionValues:
 		probe, err := Probe(v, o.FrontEnd, arg, o.Actions.sample())
 		if err != nil {
-			return err.Error()
+			return err.Error(), nil
 		}
 		return run(ctx, probe, v, o, "values of "+arg)
 	}
@@ -143,16 +152,17 @@ func act(ctx context.Context, action, arg string, v *ns.Vocabulary, o Options) s
 }
 
 // run runs a draft as an answer is judged, with at most Sample rows, and writes what came back: the
-// rows, or why there were none, in the draft's language.
-func run(ctx context.Context, text string, v *ns.Vocabulary, o Options, what string) string {
+// rows, or why there were none, in the draft's language, with the text values in the rows.
+func run(ctx context.Context, text string, v *ns.Vocabulary, o Options, what string) (string, []string) {
 	o.Pack = nil // a look at the data isn't an answer the pack's Check judges
 	try, prog, err := check(ctx, Try{Text: text, explain: func(err error) string { return Explain(text, err) }}, v, o, o.Actions.sample())
 	if err != nil {
-		return strings.TrimRight(try.explain(err), "\n")
+		return strings.TrimRight(try.explain(err), "\n"), nil
 	}
 	if o.Base == nil {
-		return "it checks; with no data to run on, there are no rows to show"
+		return "it checks; with no data to run on, there are no rows to show", nil
 	}
+	var seen []string
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s answered %s:", what, rowCount(len(prog.Rows), o.Actions.sample()))
 	cols := prog.Query.Columns()
@@ -160,10 +170,13 @@ func run(ctx context.Context, text string, v *ns.Vocabulary, o Options, what str
 		vals := make([]string, len(cols))
 		for i, c := range cols {
 			vals[i] = quotedValue(r.Bind[c])
+			if val := r.Bind[c]; !val.Absent && val.Num == nil {
+				seen = append(seen, val.S)
+			}
 		}
 		b.WriteString("\n  " + strings.Join(vals, ", "))
 	}
-	return b.String()
+	return b.String(), seen
 }
 
 func rowCount(n, sample int) string {
