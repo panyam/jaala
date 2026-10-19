@@ -97,6 +97,9 @@ type Options struct {
 	// don't), each draft is compiled before it is checked, and every refusal goes back in its terms.
 	// Grammar defaults to its Grammar.
 	FrontEnd FrontEnd
+	// Actions, when set, let a model look at the vocabulary and the data, and try drafts, before it
+	// answers (#393). The grammar sent becomes the actions' around the draft's.
+	Actions *Actions
 }
 
 // A Program is what Translate accepted: its text, as the model wrote it less any Markdown fence, the
@@ -114,6 +117,8 @@ type Program struct {
 // A Trace is every try Translate made, in order, whether or not one was accepted.
 type Trace struct {
 	Tries []Try
+	// Steps are the actions the models asked for before answering (Options.Actions), in order.
+	Steps []Step
 }
 
 // A Try is one draft: the model, its text, why it was refused (nil and "" when accepted), what it cost
@@ -137,6 +142,9 @@ type Try struct {
 	Report *datalog.Report
 
 	explain func(error) string // how Err goes back to the model, in the draft's language
+	// action and result are set for a reply that was an action (Options.Actions), which Translate
+	// records as a Step rather than a Try.
+	action, result string
 }
 
 // The Try kinds that aren't a CheckError's.
@@ -198,6 +206,10 @@ func Translate(ctx context.Context, question string, v *ns.Vocabulary, g Grounde
 	if err != nil {
 		return Program{}, tr, err
 	}
+	answerGrammar := grammar
+	if o.Actions != nil {
+		grammar = actionGrammar(grammar)
+	}
 	models := []Model{m}
 	if o.Fallback != nil {
 		models = append(models, o.Fallback)
@@ -210,11 +222,33 @@ func Translate(ctx context.Context, question string, v *ns.Vocabulary, g Grounde
 		}
 		lastModel := k == len(models)-1
 		refused := map[string]error{}
-		for range tries {
+		asked := map[string]bool{}
+		steps := 0
+		for t := 0; t < tries; {
 			if err := ctx.Err(); err != nil {
 				return Program{}, tr, err
 			}
-			try, p, err := draft(ctx, model, Prompt{Prefix: prefix, Turns: turns, Grammar: grammar}, v, o, refused)
+			g, oo := grammar, o
+			if o.Actions != nil && steps >= o.Actions.steps() {
+				g, oo.Actions = answerGrammar, nil // out of steps: the next reply is the answer
+			}
+			try, p, err := draft(ctx, model, Prompt{Prefix: prefix, Turns: turns, Grammar: g}, v, oo, refused)
+			if errors.Is(err, errAction) {
+				result := try.result
+				if asked[try.Text] {
+					result = "You asked that already. " + result
+				}
+				asked[try.Text] = true
+				steps++
+				if steps == o.Actions.steps() {
+					result += "\n\nThat was the last look: reply with your answer."
+				}
+				tr.Steps = append(tr.Steps, Step{Model: try.Model, Action: try.action, Text: try.Text, Result: result, After: len(tr.Tries),
+					TokensIn: try.TokensIn, TokensOut: try.TokensOut, TokensCached: try.TokensCached, Latency: try.Latency})
+				turns = append(turns, Turn{RoleModel, try.Text}, Turn{RoleUser, result})
+				continue
+			}
+			t++
 			tr.Tries = append(tr.Tries, try)
 			if err == nil {
 				return p, tr, nil
@@ -249,6 +283,9 @@ func promptPrefix(v *ns.Vocabulary, o Options) (string, error) {
 			return "", err
 		}
 		prefix := card + instructions
+		if o.Actions != nil {
+			prefix += actionsPrefix(nil)
+		}
 		if o.Pack != nil {
 			if err := o.Pack.Validate(v); err != nil {
 				return "", err
@@ -272,6 +309,9 @@ func promptPrefix(v *ns.Vocabulary, o Options) (string, error) {
 		}
 	}
 	prefix := card + fe.Instructions()
+	if o.Actions != nil {
+		prefix += actionsPrefix(fe)
+	}
 	if o.Pack != nil {
 		p := *o.Pack
 		p.Examples = examples
@@ -323,8 +363,24 @@ func draft(ctx context.Context, model Model, p Prompt, v *ns.Vocabulary, o Optio
 		try.Err, try.Kind = err, kind
 		return try, Program{}, err
 	}
+	if o.Actions != nil {
+		if action, arg, ok := readAction(try.Text); ok {
+			try.action, try.result = action, act(ctx, action, arg, v, o)
+			return try, Program{}, errAction
+		}
+	}
 	if err, ok := refused[try.Text]; ok {
 		return refuse(fmt.Errorf("the same draft as before: %w", err), KindRepeat)
+	}
+	return check(ctx, try, v, o, 0)
+}
+
+// check compiles or parses try's text, checks it and, over o.Base, evaluates it, with at most limit
+// rows when limit isn't 0, and judges the answer by the pack's Check.
+func check(ctx context.Context, try Try, v *ns.Vocabulary, o Options, limit int) (Try, Program, error) {
+	refuse := func(err error, kind string) (Try, Program, error) {
+		try.Err, try.Kind = err, kind
+		return try, Program{}, err
 	}
 	prog := Program{Text: try.Text, Model: try.Model, Language: try.Language}
 	if o.FrontEnd != nil {
@@ -348,6 +404,9 @@ func draft(ctx context.Context, model Model, p Prompt, v *ns.Vocabulary, o Optio
 		prog.Query = q
 	}
 	q := prog.Query
+	if limit > 0 && (q.Limit == 0 || q.Limit > limit) {
+		q.Limit = limit
+	}
 	if err := datalog.Validate(q, v); err != nil {
 		return refuse(err, kindOf(err, KindEval))
 	}
