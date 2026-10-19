@@ -74,7 +74,7 @@ be shown on some page.
 A page about a Go API shows a whole file of `Example` functions with
 `{{ includeFileText "examples/<section>/<file>_test.go" }}` in a `go` fence, and `go test` runs each
 against its `// Output:`. The docsite's `go.mod` replaces jaala and every front end with the checkout,
-so an example runs the code beside it (and `make bump-root` tidies it after a release). An example
+so an example runs the code beside it, and `make bump-root` points its requires at each release before it's tagged. An example
 needing a server stands one up with `httptest`, as the llama-server and MCP examples do, so nothing
 leaves the process. Go folds a run of blank lines in an `// Output:` comment into one, so an example
 printing two blank lines in a row can never match: print one.

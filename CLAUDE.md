@@ -146,8 +146,8 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   `origin` fragment that `render` marks with three control bytes `chooseMarks` picks from those no
   input holds (fuzzing found a query string holding `\x01`), and `write` strips them into spans. `cypher.Store` writes the graph of a
   `node(id, kind)`, `edge(from, kind, to)`, `attr(id, key, value)` store, one label per kind
-  (`DefaultLabel`, `DefaultType`), reading the kinds with `Kinds`; mcp's tests build their graph by
-  hand, since mcp requires a tagged `frontends/cypher`.
+  (`DefaultLabel`, `DefaultType`), reading the kinds with `Kinds`; mcp's tests write their graph by
+  hand, and `Store` is tested in `frontends/cypher`.
 - **`frontends/cypher` compiles Cypher to jaala text over a host's `Graph`** (#352, mission #356):
   `Node` and `Edge` name the relation holding a label or a type, its key or endpoints, `Fixed`
   constants (Declaire's `node(id, "Function")`) and property columns, `Props` a key-value
@@ -949,7 +949,7 @@ host filed or the PR's own issue.
 Issues are ranked by the mission they serve (labels `P0`–`P3`, `waiting`, `mission`,
 `mission:active`, `mission_<slug>`), and its tickets are linked as blocked-by. Most of jaala's
 missions unblock a host's active mission; such a mission closes when the host's half of its exercise
-passes too, so it can stay open after jaala's tickets close. One is active:
+passes too, so it can stay open after jaala's tickets close. Two are active. The first is
 `mission_agent_frontend` (#322), a host's caller asks in plain language and jaala's front end
 turns it into a program that checks. jaala's half is `frontends/nl` and `frontends/nlmodels`
 (#321, #323 to #326, #330, #331, #336, #337, released in v0.1.66 and frontends/nlmodels/v0.1.66);
