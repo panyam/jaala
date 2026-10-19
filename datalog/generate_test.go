@@ -1101,6 +1101,43 @@ var pushedPrograms int
 // batchedPrograms counts those whose planned evaluation asked a batching Source for a batch (#153).
 var batchedPrograms int
 
+// fetchedWalkPrograms counts those whose planned evaluation over a batching Source fetched a closure's
+// or a paths call's steps ahead of its walk (#396), and federatedWalkPrograms those through a
+// Federation's batching member.
+var fetchedWalkPrograms, federatedWalkPrograms int
+
+// callsWalk reports whether q calls graph.closure or graph.paths.
+func callsWalk(q Query) bool {
+	called := func(b Body) bool {
+		return slices.ContainsFunc(b.Literals, func(l Literal) bool { return l.Pos != nil && walkCalled(l.Pos.Relation) != nil })
+	}
+	return called(q.Goal) || slices.ContainsFunc(q.Rules, func(r Rule) bool { return called(r.Body) })
+}
+
+// walkFetched reports whether the planned SemiNaive over src fetched an engine walk's steps ahead of
+// it: a batch or a walk read under a closure's or a paths call's literal, which only prefetchClosures
+// makes there.
+func walkFetched(q Query, reg *ns.Vocabulary, src ns.Source) bool {
+	var r Report
+	if _, err := (SemiNaive{}).Eval(bg, q, MustBase(reg, src), Explain(&r)); err != nil {
+		return false
+	}
+	for _, body := range append([]*BodyReport{r.Goal}, r.Rules...) {
+		if body == nil {
+			continue
+		}
+		for _, l := range body.Literals {
+			if !strings.HasPrefix(l.Literal, "graph.") {
+				continue
+			}
+			if slices.ContainsFunc(l.Access, func(a string) bool { return strings.HasPrefix(a, "batched") || strings.HasPrefix(a, "walked") }) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // unitAnswers counts the corpus answers holding a number with a unit, and mixedAnswers those with an
 // aggregate absent over mixed units, for the control that units reach the goals (#192).
 var unitAnswers, mixedAnswers int
@@ -1159,6 +1196,9 @@ func agreeLookingUp(q Query, b *Base, want []Row, werr error, opts []Option) str
 	if len(src.batches) > 0 {
 		batchedPrograms++
 	}
+	if diff == "" && callsWalk(q) && walkFetched(q, b.reg, batchingAt(b.src)) {
+		fetchedWalkPrograms++
+	}
 	return diff
 }
 
@@ -1179,6 +1219,9 @@ func agreeFederated(q Query, b *Base, want []Row, werr error, opts []Option) str
 		return err.Error()
 	}
 	diff := agreeOver(q, b, MustBase(b.reg, f), "federated", want, werr, opts)
+	if diff == "" && callsWalk(q) && walkFetched(q, b.reg, f) {
+		federatedWalkPrograms++
+	}
 	for _, st := range stores {
 		if len(st.lookups) > 0 {
 			federatedPrograms++
@@ -1314,8 +1357,9 @@ func agreeGoals(b *Base, pushing func() (ns.Source, func() (int, int, int))) str
 // stepWalkedPrograms counts the walks agreeWalked made of a step of two literals (#250).
 var stepWalkedPrograms int
 
-// walkedPrograms counts the graphs agreeWalked walked (#239).
-var walkedPrograms int
+// walkedPrograms counts the graphs agreeWalked walked (#239), and walkedClosurePrograms the bounded
+// closures and paths calls among them (#396).
+var walkedPrograms, walkedClosurePrograms int
 
 // agreeWalked runs a reach from the graph's first edge's source over a Source that walks (#239), the
 // shape a walk takes and the generated programs rarely do, and compares it with Naive reading whole,
@@ -1331,6 +1375,9 @@ func agreeWalked(b *Base, walking func() (ns.Source, func() int)) string {
 		`reach(?a, ?b) :- edge(?a, ?b); reach(?a, ?c) :- reach(?a, ?b), edge(?b, ?c); reach(` + from + `, ?x) => ?x`,
 		// two hops a step, a walk of a conjunction (#250)
 		`hop2(?a, ?c) :- edge(?a, ?m), edge(?m, ?c); hop2(?a, ?c) :- hop2(?a, ?b), edge(?b, ?m), edge(?m, ?c); hop2(` + from + `, ?x) => ?x`,
+		// a closure and a paths call with a max, walked to it (#396)
+		`graph.closure("edge", ` + from + `, ?x, 1, 2, ?h) => ?x, ?h`,
+		`graph.paths("edge", ` + from + `, ?x, "trail", 1, 2, ?p) => ?p`,
 	} {
 		if diff := agreeWalkedOn(b, text, walking); diff != "" {
 			return diff
@@ -1356,6 +1403,9 @@ func agreeWalkedOn(b *Base, text string, walking func() (ns.Source, func() int))
 	g, err := SemiNaive{}.Eval(bg, q, MustBase(b.reg, fresh), canon...)
 	if walks() > 0 {
 		walkedPrograms++
+		if callsWalk(q) {
+			walkedClosurePrograms++
+		}
 	}
 	if err != nil || !reflect.DeepEqual(w, g) {
 		return fmt.Sprintf("planned SemiNaive walking cites differently under CanonicalCites on %v\n naive:  %v\n walked: %v %v", q, w, g, err)
@@ -1711,6 +1761,7 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 	pagedPrograms, summarizedPrograms, batchPushedPrograms, stepWalkedPrograms, streamedPrograms, partitionedBatchPrograms, alonePushedPrograms = 0, 0, 0, 0, 0, 0, 0
 	atPrograms, atStoredPrograms, acrossPrograms, acrossAggregates, acrossLookedPrograms = 0, 0, 0, 0, 0
 	overlaidPushed, overlaidBatched, overlaidLookedUp = 0, 0, 0
+	fetchedWalkPrograms, federatedWalkPrograms, walkedClosurePrograms = 0, 0, 0
 	withUnits := 0
 	for seed := first; seed < first+int64(seeds); seed++ {
 		rnd := rand.New(rand.NewSource(seed))
@@ -1811,6 +1862,10 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 	}
 	if walkedPrograms == 0 {
 		t.Errorf("control: no program asked a store to walk a relation")
+	}
+	t.Logf("closures and paths fetched ahead (#396): %d programs batched, %d through a federation, %d graphs walked by the store", fetchedWalkPrograms, federatedWalkPrograms, walkedClosurePrograms)
+	if fetchedWalkPrograms == 0 || federatedWalkPrograms == 0 || walkedClosurePrograms == 0 {
+		t.Errorf("control: %d programs batched a closure's or a paths call's steps, %d through a federation, and %d graphs' bounded closures were walked by the store (#396)", fetchedWalkPrograms, federatedWalkPrograms, walkedClosurePrograms)
 	}
 	if alonePushedPrograms == 0 {
 		t.Errorf("control: no program pushed a literal alone for the store to filter")

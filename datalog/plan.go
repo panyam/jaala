@@ -298,7 +298,7 @@ func planPick(b *Base, pos, waitOn []Literal, bound, ones map[Var]bool) int {
 			if lit.computed && awaitsOperand(lit, waitOn, bound, b.reg) {
 				continue
 			}
-			if bi, ok := predicateIn(b.reg, lit.Pos.Relation); ok && bi.IsGenerator() && bi.Satisfied(flags) && (generatorBound(bi, lit.Pos, flags) > 0 || !slices.ContainsFunc(pos, b.readsWhole)) {
+			if bi, ok := predicateIn(b.reg, lit.Pos.Relation); ok && bi.IsGenerator() && bi.Satisfied(flags) && (generatorBound(bi, lit.Pos, flags) > 0 || !slices.ContainsFunc(pos, b.readsWhole) && !b.walksStore(lit.Pos)) {
 				pick = i
 				break
 			}
@@ -395,6 +395,22 @@ func (b *Base) readsWhole(lit Literal) bool {
 		return b.edb != nil && !b.looksUp(lit.Pos.Relation) && (b.run == nil || !b.run.streamable[lit.Pos.Relation])
 	}
 	return true
+}
+
+// walksStore reports whether a is an engine walk whose steps the Source looks up: from no bound end
+// it reads its step relation whole from the store, so it doesn't run first as a generator binding
+// nothing does (#396).
+func (b *Base) walksStore(a *Atom) bool {
+	_, step, ok := walkOf(a.Relation)
+	if !ok {
+		return false
+	}
+	for _, r := range b.stepReads(step, Term{Var: closureNode}, true) {
+		if b.looksUpBase(&r) {
+			return true
+		}
+	}
+	return false
 }
 
 // fanOut estimates how many tuples a base relation yields per call with the given arguments bound,

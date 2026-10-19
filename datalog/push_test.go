@@ -150,18 +150,28 @@ func (p *pushing) Walk(_ context.Context, w ns.Walk) iter.Seq2[ns.Tuple, error] 
 
 // walkFacts is a store's own answer to w: from each start value, and each To value of a fact it
 // returns, the facts lookup offers with that value at w.From and w.Bound's constants, each value
-// walked once by its text.
+// walked once by its text, and under w.MaxDepth only a value fewer steps out than that (#396).
 func walkFacts(w ns.Walk, lookup func(bound map[int]ns.Value) []ns.Tuple) []ns.Tuple {
+	type at struct {
+		v     ns.Value
+		depth int
+	}
 	var out []ns.Tuple
 	seen := map[string]bool{}
-	queue := append([]ns.Value(nil), w.Start...)
+	var queue []at
+	for _, v := range w.Start {
+		queue = append(queue, at{v, 0})
+	}
 	for len(queue) > 0 {
-		v := queue[0]
+		v, depth := queue[0].v, queue[0].depth
 		queue = queue[1:]
 		if k := valueKey(v); seen[k] {
 			continue
 		} else {
 			seen[k] = true
+		}
+		if w.MaxDepth > 0 && depth >= w.MaxDepth {
+			continue
 		}
 		bound := map[int]ns.Value{w.From: v}
 		for p, c := range w.Bound {
@@ -170,7 +180,7 @@ func walkFacts(w ns.Walk, lookup func(bound map[int]ns.Value) []ns.Tuple) []ns.T
 		for _, t := range lookup(bound) {
 			out = append(out, t)
 			if w.To < len(t.Vals) {
-				queue = append(queue, t.Vals[w.To])
+				queue = append(queue, at{t.Vals[w.To], depth + 1})
 			}
 		}
 	}

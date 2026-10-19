@@ -182,7 +182,7 @@ func prefetchWalks(b *Base, lits []Literal, head string) error {
 		if len(starts) == 0 {
 			continue
 		}
-		if err := b.run.explain.at(i, func() error { return b.walk(atom, s, starts) }); err != nil {
+		if err := b.run.explain.at(i, func() error { return b.walk(atom, s, starts, 0) }); err != nil {
 			return err
 		}
 	}
@@ -222,8 +222,10 @@ func walkStarts(b *Base, prefix []Literal, atom *Atom, s walkStep) ([]ns.Value, 
 // walk asks the Source for s's walk from starts and keeps, for each value it reached, the facts a
 // lookup of that value would have returned. A value is reached when it is a start value, or the value
 // at s.to of a fact the walk returned for a reached value that matches s's constants, so a fact the
-// Source sent that the walk doesn't reach is never filed as some value's whole answer.
-func (b *Base) walk(atom *Atom, s walkStep, starts []ns.Value) error {
+// Source sent that the walk doesn't reach is never filed as some value's whole answer. Under a
+// maxDepth (#396) a value is reached only in fewer steps than that: one at the bound wasn't walked, so
+// its facts, if any came, aren't all of them.
+func (b *Base) walk(atom *Atom, s walkStep, starts []ns.Value, maxDepth int) error {
 	if err := b.countWork(); err != nil {
 		return err
 	}
@@ -232,7 +234,7 @@ func (b *Base) walk(atom *Atom, s walkStep, starts []ns.Value) error {
 	norm := func(v ns.Value, p int) ns.Value {
 		return normalizeTuples(b.units(), []ns.Tuple{{Vals: []ns.Value{v}}}, types[min(p, len(types)):min(p+1, len(types))])[0].Vals[0]
 	}
-	w := ns.Walk{Relation: s.rel, From: s.from, To: s.to, Bound: s.consts, Start: starts, Units: b.units()}
+	w := ns.Walk{Relation: s.rel, From: s.from, To: s.to, Bound: s.consts, Start: starts, Units: b.units(), MaxDepth: maxDepth}
 	byFrom := map[string][]ns.Tuple{}
 	fetched := 0
 	ctx := r.context()
@@ -252,19 +254,26 @@ func (b *Base) walk(atom *Atom, s walkStep, starts []ns.Value) error {
 		fetched++
 	}
 	mask := s.mask()
+	type at struct {
+		v     ns.Value
+		depth int
+	}
 	seen := map[string]bool{}
-	queue := make([]ns.Value, 0, len(starts))
+	queue := make([]at, 0, len(starts))
 	for _, v := range starts {
-		queue = append(queue, norm(v, s.from))
+		queue = append(queue, at{norm(v, s.from), 0})
 	}
 	for len(queue) > 0 {
-		v := queue[0]
+		v, depth := queue[0].v, queue[0].depth
 		queue = queue[1:]
 		k := valueKey(v)
 		if seen[k] {
 			continue
 		}
 		seen[k] = true
+		if maxDepth > 0 && depth >= maxDepth {
+			continue
+		}
 		facts := byFrom[k]
 		vals := make([]ns.Value, 0, len(s.consts)+1)
 		for p := 0; p < maskWidth; p++ {
@@ -280,7 +289,7 @@ func (b *Base) walk(atom *Atom, s walkStep, starts []ns.Value) error {
 		b.keepLookup(lookupKey(s.rel, mask, vals), facts)
 		for _, t := range facts {
 			if s.keeps(t) {
-				queue = append(queue, t.Vals[s.to])
+				queue = append(queue, at{t.Vals[s.to], depth + 1})
 			}
 		}
 	}
