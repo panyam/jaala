@@ -21,23 +21,29 @@ const nodeLabel = "JaalaNode"
 type Options struct {
 	// Database is the database sessions open, "" for the server's default.
 	Database string
+	// LookupsOnly turns pushdown off: the store answers lookups, batches and whole reads, and refuses
+	// every conjunction and summary, so the engine joins, counts and pages itself. Answers are the
+	// same either way; it is for comparing what a question ships, and for a server misbehaving.
+	LookupsOnly bool
 }
 
 // A Store is an ns.Source over a graph server that speaks Bolt (Neo4j, Memgraph), laid out by a
 // cypher.Graph: a label's relation is the nodes holding that label, a type's relation the
 // relationships of that type, and the graph's Props relation the nodes' other properties. It reads
 // a relation whole as a stream (ns.StreamSource), looks a call up by its bound values (ns.LookupSource,
-// ns.BatchLookupSource), says which of those an index answers (ns.IndexedLookups), and writes a change
-// set (Apply). See the package doc for how facts are laid out.
+// ns.BatchLookupSource), says which of those an index answers (ns.IndexedLookups), evaluates a join,
+// a count and a page on the server (ns.PushSource, ns.SummarySource), and writes a change set
+// (Apply). See the package doc for how facts are laid out.
 //
 // A Store is safe for concurrent use, as its driver is.
 type Store struct {
-	driver   neo4j.DriverWithContext
-	db       string
-	server   string
-	rels     map[string]*relation
-	order    []string
-	labelled []string // every property a label's relation keeps, which the Props relation never reads
+	driver      neo4j.DriverWithContext
+	db          string
+	lookupsOnly bool
+	server      string
+	rels        map[string]*relation
+	order       []string
+	labelled    []string // every property a label's relation keeps, which the Props relation never reads
 }
 
 // A relation is one vocabulary relation and where its facts live: the labels or types holding it,
@@ -60,7 +66,7 @@ func (r *relation) labelledProps() []string { return r.labelled }
 // reserves (`id`, or one starting with `_`). It creates the index on every node's id if the server
 // lacks it. g's Derived properties are the host's to compute and aren't served.
 func New(ctx context.Context, driver neo4j.DriverWithContext, g cypher.Graph, schemas map[string]ns.Schema, opts Options) (*Store, error) {
-	s := &Store{driver: driver, db: opts.Database, rels: map[string]*relation{}}
+	s := &Store{driver: driver, db: opts.Database, lookupsOnly: opts.LookupsOnly, rels: map[string]*relation{}}
 	rel := func(name string) (*relation, error) {
 		if r, ok := s.rels[name]; ok {
 			return r, nil

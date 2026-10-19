@@ -45,7 +45,8 @@ func repo(n int) (cypher.Graph, *ns.MemSource) {
 // what the server shipped for a bound question is well under what it holds. Then a session: an edit
 // over the server answers as over memory, and once applied, the server alone does.
 //
-// make exercise-graph-server runs it with -v, which prints the table.
+// make exercise-graph-server runs it with -v, which prints the table: what each question shipped with
+// lookups alone (Options.LookupsOnly) and with pushdown, and what the server was asked.
 func TestExercise(t *testing.T) {
 	type question struct{ name, text string }
 	graphs := []struct {
@@ -85,6 +86,10 @@ func TestExercise(t *testing.T) {
 			if err := s.Apply(bg, load(gr.src)); err != nil {
 				t.Fatal(err)
 			}
+			lookupsOnly, err := New(bg, sv.driver, gr.g, schemasOf(gr.src), Options{LookupsOnly: true})
+			if err != nil {
+				t.Fatal(err)
+			}
 			held := 0
 			for _, rel := range gr.src.Relations() {
 				held += len(gr.src.Tuples(rel))
@@ -98,15 +103,23 @@ func TestExercise(t *testing.T) {
 				if err != nil {
 					t.Fatalf("%s over memory: %v", qq.name, err)
 				}
-				st := &counting{Store: s}
-				got, err := datalog.SemiNaive{}.Eval(bg, q, mustBase(t, gr.vocab(t, st), st))
 				same := "same"
-				if err != nil || !slices.Equal(rows(got), rows(want)) {
-					same = "DIFFERS"
-					t.Errorf("%s %s/%s: bolt answers %q (%v), memory %q", sv.name, gr.name, qq.name, rows(got), err, rows(want))
+				var st, before *counting
+				var got []datalog.Row
+				for _, c := range []**counting{&before, &st} {
+					store := s
+					if c == &before {
+						store = lookupsOnly
+					}
+					*c = &counting{Store: store}
+					got, err = datalog.SemiNaive{}.Eval(bg, q, mustBase(t, gr.vocab(t, *c), *c))
+					if err != nil || !slices.Equal(rows(got), rows(want)) {
+						same = "DIFFERS"
+						t.Errorf("%s %s/%s: bolt answers %q (%v), memory %q", sv.name, gr.name, qq.name, rows(got), err, rows(want))
+					}
 				}
-				table = append(table, fmt.Sprintf("  %-9s %-6s %-13s %-7s %4d rows %5d lookups %4d batches %3d reads %6d shipped of %d",
-					sv.name, gr.name, qq.name, same, len(got), st.lookups, st.batches, st.whole, st.shipped, held))
+				table = append(table, fmt.Sprintf("  %-9s %-6s %-13s %-7s %4d rows  shipped %5d -> %-5d of %-5d %3d pushes %2d summaries %2d pages %4d lookups %3d batches",
+					sv.name, gr.name, qq.name, same, len(got), before.shipped, st.shipped, held, st.pushes, st.summaries, st.pages, st.lookups, st.batches))
 			}
 		}
 		// A session: edit the code graph over the server, then commit it.

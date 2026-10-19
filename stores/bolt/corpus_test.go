@@ -192,7 +192,7 @@ func TestTheCorpusAgreesOverBolt(t *testing.T) {
 	for _, sv := range servers(t) {
 		t.Run(sv.name, func(t *testing.T) {
 			compared, skips, failed := 0, 0, 0
-			lookups, batches, multi := 0, 0, 0
+			lookups, batches, multi, pushes := 0, 0, 0, 0
 			for seed := first; seed < first+int64(seeds); seed++ {
 				rnd := rand.New(rand.NewSource(seed))
 				facts := corpus.Graph(rnd)
@@ -203,6 +203,7 @@ func TestTheCorpusAgreesOverBolt(t *testing.T) {
 					st := &counting{Store: s}
 					out, diff := agreeOverBolt(t, s, c, st)
 					lookups, batches, multi = lookups+st.lookups, batches+st.batches, max(multi, st.batchedValues-st.batches)
+					pushes += st.pushes
 					switch out {
 					case skipped:
 						skips++
@@ -221,11 +222,14 @@ func TestTheCorpusAgreesOverBolt(t *testing.T) {
 					}
 				}
 			}
-			t.Logf("%d seeds: %d cases compared, %d skipped (a limit without an order by, or over Naive's budget); %d lookups, %d batches",
-				seeds, compared, skips, lookups, batches)
+			t.Logf("%d seeds: %d cases compared, %d skipped (a limit without an order by, or over Naive's budget); %d lookups, %d batches, %d pushes",
+				seeds, compared, skips, lookups, batches, pushes)
 			if seeds >= 20 {
 				if lookups+batches == 0 {
 					t.Error("control: no program asked the server by lookup or batch")
+				}
+				if pushes == 0 {
+					t.Error("control: no program pushed a conjunction to the server")
 				}
 				if multi == 0 {
 					t.Error("control: no batch carried more than one value")

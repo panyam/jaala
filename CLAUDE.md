@@ -200,7 +200,17 @@ GOARCH=wasm go test ./ns` (#417 ran `ns` that way).
   witnesses (a dropped edge id survived a values-only compare). `scripts/bolt-servers.sh` runs a command
   against the servers `STORES` names, using a URL or starting a Docker container, exit 3 for "could not
   run"; `make exercise-graph-server` and selfcheck's graph-server step (1000 seeds) go through it.
-  Joins, walks, counts and pages as Cypher are #412.
+  Joins, counts and pages go as Cypher (#412, `push.go`): a MATCH per atom (one MATCH never binds a
+  relationship twice, which lost the row where two atoms read one fact), conditions only where the
+  server matches exactly (ids, text, absent, null-safe text joins); a number's constant or join is
+  left to the engine (`inexact`), which also refuses the conjunction as a summary, since a summary's
+  matches aren't rechecked. A page orders by `_ord` (hex of the id's UTF-8) and only over ids;
+  `TestAPageOrdersIdsAsJaalaDoes` passes ordering by `.id` too, since Neo4j orders stored ids by code
+  point, so `_ord` is defensive, against Neo4j ordering parameters by UTF-16 unit. A lone literal with a
+  constant is a lookup, never a push, so a push's number-constant path needs a direct `Push` test
+  (`TestAPushNeverLeavesOutAMatchOnANumber`), and a summary's spelling shows only for text saying more
+  than the number (`3.3V nominal`), since answers canonicalize `3.3V`. `Options.LookupsOnly` turns
+  pushdown off; the exercise prints shipped with it and without. Walks are #412's second PR.
 - **`frontends/cypher` compiles Cypher to jaala text over a host's `Graph`** (#352, mission #356):
   `Node` and `Edge` name the relation holding a label or a type, its key or endpoints, `Fixed`
   constants (Declaire's `node(id, "Function")`) and property columns, `Props` a key-value

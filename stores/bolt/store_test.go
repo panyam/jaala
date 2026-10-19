@@ -19,7 +19,8 @@ func code() (cypher.Graph, *ns.MemSource) {
 		DeclareSchema("node", ns.Schema{Arity: 2, Labels: []string{"id", "kind"}, Types: []ns.ArgType{{Kind: "node"}, {Type: ns.TypeString}}}).
 		DeclareSchema("edge", ns.Schema{Arity: 4, Labels: []string{"from", "kind", "to", "weight"}, Types: []ns.ArgType{{Kind: "node"}, {Type: ns.TypeString}, {Kind: "node"}, {Type: ns.TypeNumber}}}).
 		DeclareSchema("attr", ns.Schema{Arity: 3, Labels: []string{"id", "key", "value"}, Types: []ns.ArgType{{Kind: "node"}, {Type: ns.TypeString}}}).
-		DeclareSchema("size", ns.Schema{Arity: 2, Labels: []string{"id", "lines"}, Types: []ns.ArgType{{Kind: "node"}, {Type: ns.TypeNumber}}})
+		DeclareSchema("size", ns.Schema{Arity: 2, Labels: []string{"id", "lines"}, Types: []ns.ArgType{{Kind: "node"}, {Type: ns.TypeNumber}}}).
+		DeclareSchema("tag", ns.Schema{Arity: 2, Labels: []string{"id", "tag"}, Types: []ns.ArgType{{Kind: "node"}, {Type: ns.TypeString}}})
 	add := func(rel, id string, cites []string, vals ...ns.Value) {
 		src.Add(rel, ns.Tuple{Vals: vals, ID: id, Cites: cites})
 	}
@@ -32,8 +33,12 @@ func code() (cypher.Graph, *ns.MemSource) {
 	add("edge", "", nil, s("parse"), s("calls"), s("lex"), ns.Value{S: "01", Num: ptr(1)})
 	add("edge", "", nil, s("parse"), s("calls"), s("parse"), ns.N(math.Copysign(0, -1)))
 	add("edge", "", nil, s("app"), s("contains"), s("main"), ns.Absent())
+	add("edge", "", nil, s("lex"), s("calls"), s("ghost"), ns.N(3)) // ghost has no node fact
+	add("tag", "", nil, s("main"), s("entry"))
+	add("tag", "", nil, s("parse"), ns.Absent())
+	add("tag", "", nil, s("lex"), ns.Absent())
 	add("attr", "", []string{"doc:main"}, s("main"), s("doc"), s("entry point"))
-	add("attr", "", nil, s("parse"), s("volts"), ns.Value{S: "3.3V", Num: ptr(3.3), BaseUnit: "V"})
+	add("attr", "", nil, s("parse"), s("volts"), ns.Value{S: "3.3V nominal", Num: ptr(3.3), BaseUnit: "V"})
 	add("attr", "", nil, s("lex"), s("doc"), s("01"))
 	add("size", "", nil, s("main"), ns.N(40))
 	add("size", "", nil, s("parse"), ns.NU(1.5, "kV"))
@@ -42,7 +47,8 @@ func code() (cypher.Graph, *ns.MemSource) {
 	for i := range g.Edges {
 		g.Edges[i].Props = map[string]int{"weight": 3}
 	}
-	g.Nodes = append(g.Nodes, cypher.Node{Label: "Sized", Relation: "size", Key: 0, Props: map[string]int{"lines": 1}})
+	g.Nodes = append(g.Nodes, cypher.Node{Label: "Sized", Relation: "size", Key: 0, Props: map[string]int{"lines": 1}},
+		cypher.Node{Label: "Tagged", Relation: "tag", Key: 0, Props: map[string]int{"tag": 1}})
 	return g, src
 }
 

@@ -177,7 +177,7 @@ func (s *Store) row(r *relation, m match, t ns.Tuple, add bool) (map[string]any,
 		if err != nil {
 			return nil, "", err
 		}
-		row["id"] = id
+		row["id"], row["ord"] = id, ordKey(id)
 		if add {
 			for p, i := range n.Props {
 				if i != n.Key {
@@ -200,7 +200,7 @@ func (s *Store) row(r *relation, m match, t ns.Tuple, add bool) (map[string]any,
 		if err != nil {
 			return nil, "", err
 		}
-		row["from"], row["to"] = from, to
+		row["from"], row["to"], row["ford"], row["tord"] = from, to, ordKey(from), ordKey(to)
 		if add {
 			for p, i := range e.Props {
 				put(props, p, t.Vals[i], r.textual(i))
@@ -230,7 +230,7 @@ func (s *Store) row(r *relation, m match, t ns.Tuple, add bool) (map[string]any,
 	if slices.Contains(r.labelled, k.S) {
 		return nil, "", fmt.Errorf("bolt: property %q is a label's column, so %s can't hold it too", k.S, r.name)
 	}
-	row["id"], row["k"] = id, k.S
+	row["id"], row["k"], row["ord"] = id, k.S, ordKey(id)
 	if add && t.Vals[p.Value].Absent {
 		return nil, "", fmt.Errorf("bolt: %s gives %s no value, and a node keeps a property only by its value", r.name, show(t.Vals))
 	}
@@ -282,14 +282,14 @@ func (m match) statements(r *relation, add bool) []write {
 				check: func(id string) error {
 					return fmt.Errorf("bolt: %s already holds a fact for %s, and the store keeps one per key", r.name, id)
 				}},
-			{query: "UNWIND $rows AS r MERGE " + n + " SET x:" + l + " SET x += r.props"},
+			{query: "UNWIND $rows AS r MERGE " + n + " SET x:" + l + " SET x += r.props, x._ord = r.ord"},
 		}
 	case m.edge != nil:
 		t := quote(m.edge.Type)
 		if !add {
 			return []write{{query: "UNWIND $rows AS r MATCH (a:" + nodeLabel + " {id: r.from})-[e:" + t + " {_key: r.key}]->(b:" + nodeLabel + " {id: r.to}) DELETE e"}}
 		}
-		return []write{{query: "UNWIND $rows AS r MERGE (a:" + nodeLabel + " {id: r.from}) MERGE (b:" + nodeLabel + " {id: r.to}) MERGE (a)-[e:" + t + " {_key: r.key}]->(b) SET e += r.props"}}
+		return []write{{query: "UNWIND $rows AS r MERGE (a:" + nodeLabel + " {id: r.from}) MERGE (b:" + nodeLabel + " {id: r.to}) MERGE (a)-[e:" + t + " {_key: r.key}]->(b) SET e += r.props, a._ord = r.ford, b._ord = r.tord"}}
 	}
 	if !add {
 		return []write{{query: "UNWIND $rows AS r MATCH " + n + " WHERE properties(x)['_key.' + r.k] = r.key SET x += r.nulls"}}
@@ -299,7 +299,7 @@ func (m match) statements(r *relation, add bool) []write {
 			check: func(id string) error {
 				return fmt.Errorf("bolt: %s already holds a value for %s, and the store keeps one per property", r.name, id)
 			}},
-		{query: "UNWIND $rows AS r MERGE " + n + " SET x += r.props"},
+		{query: "UNWIND $rows AS r MERGE " + n + " SET x += r.props, x._ord = r.ord"},
 	}
 }
 
