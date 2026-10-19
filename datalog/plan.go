@@ -34,9 +34,13 @@ func checkModesFrom(b *Base, where string, body Body, inputs map[Var][]ns.Value)
 		if a == nil {
 			continue
 		}
-		if bi, ok := b.reg.Predicate(a.Relation); ok && bi.IsGenerator() && !bi.Satisfied(boundFlags(a, bound)) {
+		if bi, ok := predicateIn(b.reg, a.Relation); ok && bi.IsGenerator() && !bi.Satisfied(boundFlags(a, bound)) {
+			rel := a.Relation
+			if isClosure(rel) {
+				rel = closureName
+			}
 			return checkErr(KindUnbound, fmt.Sprintf("query: %s calls %s, and nothing binds what %s needs first: it needs %s",
-				where, a, a.Relation, modesText(bi, a))).call(a.Relation, len(a.Args)).
+				where, a, rel, modesText(bi, a))).call(rel, len(a.Args)).
 				fix(fmt.Sprintf("add a relation to the body that binds what %s needs (%s)", shownName(a.Relation), modesText(bi, a)))
 		}
 	}
@@ -51,7 +55,7 @@ func checkFilters(b *Base, body Body, inputs map[Var][]ns.Value) error {
 	bound, _ := modeBound(b, body, inputs)
 	for _, lit := range body.Literals {
 		if a := lit.Pos; a != nil {
-			if bi, ok := b.reg.Predicate(a.Relation); ok && !bi.IsGenerator() && slices.Contains(boundFlags(a, bound), false) {
+			if bi, ok := predicateIn(b.reg, a.Relation); ok && !bi.IsGenerator() && slices.Contains(boundFlags(a, bound), false) {
 				return unboundFilter(a)
 			}
 		}
@@ -73,7 +77,7 @@ func modeBound(b *Base, body Body, inputs map[Var][]ns.Value) (map[Var]bool, []b
 			if done[i] || lit.Pos == nil {
 				continue
 			}
-			bi, isPred := b.reg.Predicate(lit.Pos.Relation)
+			bi, isPred := predicateIn(b.reg, lit.Pos.Relation)
 			switch {
 			case isPred && !bi.IsGenerator():
 				continue // a filter binds nothing
@@ -258,7 +262,7 @@ func couldRun(b *Base, pos []Literal, bound map[Var]bool) []Literal {
 		if lit.Pos == nil {
 			continue
 		}
-		bi, ok := b.reg.Predicate(lit.Pos.Relation)
+		bi, ok := predicateIn(b.reg, lit.Pos.Relation)
 		if !ok || bi.IsGenerator() && bi.Satisfied(boundFlags(lit.Pos, bound)) {
 			out = append(out, lit)
 		}
@@ -291,7 +295,7 @@ func planPick(b *Base, pos, waitOn []Literal, bound, ones map[Var]bool) int {
 			if lit.computed && awaitsOperand(lit, waitOn, bound, b.reg) {
 				continue
 			}
-			if bi, ok := b.reg.Predicate(lit.Pos.Relation); ok && bi.IsGenerator() && bi.Satisfied(flags) && (generatorBound(bi, lit.Pos, flags) > 0 || !slices.ContainsFunc(pos, b.readsWhole)) {
+			if bi, ok := predicateIn(b.reg, lit.Pos.Relation); ok && bi.IsGenerator() && bi.Satisfied(flags) && (generatorBound(bi, lit.Pos, flags) > 0 || !slices.ContainsFunc(pos, b.readsWhole)) {
 				pick = i
 				break
 			}
@@ -305,7 +309,7 @@ func planPick(b *Base, pos, waitOn []Literal, bound, ones map[Var]bool) int {
 				continue
 			}
 			flags := boundFlags(lit.Pos, bound)
-			bi, gen := b.reg.Predicate(lit.Pos.Relation)
+			bi, gen := predicateIn(b.reg, lit.Pos.Relation)
 			if gen && !bi.Satisfied(flags) {
 				continue
 			}
@@ -381,7 +385,7 @@ func (b *Base) readsWhole(lit Literal) bool {
 	if lit.Pos == nil {
 		return false
 	}
-	if _, ok := b.reg.Predicate(lit.Pos.Relation); ok {
+	if _, ok := predicateIn(b.reg, lit.Pos.Relation); ok {
 		return false
 	}
 	if _, base := b.schemaOf(lit.Pos.Relation); base {
@@ -464,7 +468,7 @@ func isCheck(b *Base, lit Literal) bool {
 	if lit.Compare != nil {
 		return true
 	}
-	bi, ok := b.reg.Predicate(lit.Pos.Relation)
+	bi, ok := predicateIn(b.reg, lit.Pos.Relation)
 	return ok && !bi.IsGenerator()
 }
 
@@ -474,7 +478,7 @@ func isProbe(b *Base, lit Literal) bool {
 	if lit.Pos == nil {
 		return false
 	}
-	_, isPred := b.reg.Predicate(lit.Pos.Relation)
+	_, isPred := predicateIn(b.reg, lit.Pos.Relation)
 	return !isPred
 }
 
@@ -499,6 +503,10 @@ func checkReady(lit Literal, bound map[Var]bool) bool {
 // on what is bound, run once for constants but once per row of whatever bound a variable (#304:
 // agni's net.reaches(?n, ?rn, ?h) with ?rn bound walked 2,250 steps for each of 220 pins).
 func generatorBound(bi ns.Builtin, a *Atom, flags []bool) int {
+	if isClosure(a.Relation) {
+		// its relation and bounds are always given: only an end says where it walks from (#281)
+		return count(flags[1:3])
+	}
 	for _, m := range bi.Modes {
 		reads, ok := false, true
 		for i, need := range m {

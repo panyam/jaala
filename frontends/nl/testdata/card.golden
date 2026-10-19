@@ -6,6 +6,7 @@ coalesce(value, fallback, result) needs value+fallback # binds the value, or the
 edge(from: node, to: node) # A directed edge between two nodes.
 node(name: node) # Every node.
 weight(node: node, w: number)
+graph.closure(relation, from, to, min: number, max: number, hops: number) needs relation+min+max # to is reachable from from in min to max steps of the two-argument relation named in quotes (max 0: no bound), hops the fewest
 
 module graph
 graph.heavy(n: ~node, w: ~number, in min) # heavy is a node weighing more than min.

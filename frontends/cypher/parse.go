@@ -489,8 +489,10 @@ var clauseWords = map[string]bool{
 	"WHERE": true, "ORDER": true, "SKIP": true, "OFFSET": true, "LIMIT": true,
 }
 
-// pattern reads a chain of nodes and relationships. A path variable or selector before it, a
-// shortestPath around it, and a quantified path pattern or relationship in it are read and refused.
+// pattern reads a chain of nodes and relationships. A path selector before it or a shortestPath around
+// it keeps the matches it would have, since a match answers its nodes and not its paths, and a
+// quantified relationship is a variable length. A path variable and a quantified path pattern are read
+// and refused.
 func (p *parser) pattern() (pattern, *Error) {
 	t := p.peek()
 	if t.kind == tIdent && p.peekAt(1).sym("=") {
@@ -501,15 +503,15 @@ func (p *parser) pattern() (pattern, *Error) {
 		return pattern{}, err
 	}
 	if t = p.peek(); t.is("shortestPath") || t.is("allShortestPaths") {
-		p.refuse(gapShortest.at(t.pos, "%s", t.val))
 		p.i++
 		if err := p.expectSym("(", "( after "+t.val); err != nil {
 			return pattern{}, err
 		}
-		if _, err := p.pattern(); err != nil {
+		pat, err := p.pattern()
+		if err != nil {
 			return pattern{}, err
 		}
-		return pattern{pos: t.pos, refused: true}, p.expectSym(")", ") to end "+t.val)
+		return pat, p.expectSym(")", ") to end "+t.val)
 	}
 	pat := pattern{pos: p.peek().pos}
 	needNode := true
@@ -540,9 +542,8 @@ func (p *parser) pattern() (pattern, *Error) {
 		if err != nil {
 			return pat, err
 		}
-		if q := p.peek(); p.quantifier(false) {
-			p.refuse(gapShortest.at(q.pos, "a quantified relationship"))
-			pat.refused = true
+		if q := p.peek(); p.quantifier(false, &r) && r.min == -2 {
+			return pat, errAt(q.pos, "a relationship has a length (*) and a quantifier: write one")
 		}
 		pat.rels = append(pat.rels, r)
 		needNode = true
@@ -1049,7 +1050,7 @@ func (p *parser) atom() (expr, *Error) {
 			if _, err := p.pattern(); err != nil {
 				return nil, err
 			}
-			return p.refuse(gapShortest.at(t.pos, "%s", t.val)), nil
+			return p.refuse(gapPaths.at(t.pos, "%s as a value, a path", t.val)), nil
 		}
 		if p.callAhead() {
 			return p.call()

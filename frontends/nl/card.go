@@ -72,12 +72,25 @@ func cardModule(b *strings.Builder, v *ns.Vocabulary, module string) error {
 		wrote = true
 		b.WriteString(cardLine(v, m))
 	}
+	if module == "" {
+		b.WriteString(closureLine(v))
+	}
 	for _, s := range subs {
 		if err := cardModule(b, v, s); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// closureLine is the card's line for graph.closure (#281), which the engine answers rather than the
+// vocabulary, when the vocabulary holds a relation it can walk.
+func closureLine(v *ns.Vocabulary) string {
+	members, _, err := callees(v)
+	if err != nil || len(walkable(members)) == 0 {
+		return ""
+	}
+	return `graph.closure(relation, from, to, min: number, max: number, hops: number) needs relation+min+max # to is reachable from from in min to max steps of the two-argument relation named in quotes (max 0: no bound), hops the fewest` + "\n"
 }
 
 func cardLine(v *ns.Vocabulary, m ns.Entry) string {

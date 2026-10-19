@@ -96,6 +96,10 @@ func translateSouffle(q Query, bind map[Var][]ns.Value, prefix string) (souffleT
 		return souffleTranslation{}, unsupported("after")
 	}
 	q = souffleFacts(q)
+	q, err := souffleClosures(q)
+	if err != nil {
+		return souffleTranslation{}, err
+	}
 	tr := &souffler{prefix: prefix}
 	body, one := bindGoalBody(q.Goal, bind)
 	tr.one = one
@@ -133,6 +137,69 @@ func translateSouffle(q Query, bind map[Var][]ns.Value, prefix string) (souffleT
 	}
 	out.prefix, out.text, out.q = prefix, tr.b.String(), q
 	return out, nil
+}
+
+// souffleClosures is q with each graph.closure call (#281) a call to rules of its own counting a
+// walk's steps, closure_k(?x, ?y, ?hops), the fewest of at least min: a walk of every length up to max,
+// or with no max up to min plus 9, past which no shortest walk in a corpus graph of at most 8 nodes
+// goes. It reads no breadth-first search, so it checks the engine's. A zero min and a bound in a
+// variable are outside it.
+func souffleClosures(q Query) (Query, error) {
+	names := map[string]string{}
+	var extra []Rule
+	var err error
+	lower := func(b Body) Body {
+		out := b
+		out.Literals = slices.Clone(b.Literals)
+		for i, l := range out.Literals {
+			a := l.Pos
+			if a == nil || a.Relation != closureName {
+				if l.Neg != nil && l.Neg.Relation == closureName {
+					err = unsupported("a negated closure")
+				}
+				continue
+			}
+			if len(a.Args) != 6 || a.Args[0].Const == nil || a.Args[3].Const == nil || a.Args[4].Const == nil {
+				err = unsupported("a closure's relation or bound in a variable")
+				continue
+			}
+			step, lo, hi := a.Args[0].Const.S, a.Args[3].Const.S, a.Args[4].Const.S
+			if lo == "0" {
+				err = unsupported("a zero-length closure")
+				continue
+			}
+			key := step + "/" + lo + "/" + hi
+			name, ok := names[key]
+			if !ok {
+				name = fmt.Sprintf("closure_%d", len(names)+1)
+				names[key] = name
+				cap := hi
+				if hi == "0" {
+					n, _ := strconv.Atoi(lo)
+					cap = strconv.Itoa(n + 9)
+				}
+				rules, perr := ParseRules(fmt.Sprintf(
+					"%[1]s_walk(?x, ?y, 1) :- %[2]s(?x, ?y);\n"+
+						"%[1]s_walk(?x, ?z, ?e) :- %[1]s_walk(?x, ?y, ?d), %[2]s(?y, ?z), ?d < %[3]s, ?e = ?d + 1;\n"+
+						"%[1]s(?x, ?y, min(?d)) :- %[1]s_walk(?x, ?y, ?d), ?d >= %[4]s;", name, step, cap, lo))
+				if perr != nil {
+					err = perr
+					continue
+				}
+				extra = append(extra, rules...)
+			}
+			out.Literals[i].Pos = &Atom{Relation: name, Args: []Term{a.Args[1], a.Args[2], a.Args[5]}}
+		}
+		return out
+	}
+	q.Goal = lower(q.Goal)
+	rules := make([]Rule, len(q.Rules))
+	for i, r := range q.Rules {
+		rules[i] = r
+		rules[i].Body = lower(r.Body)
+	}
+	q.Rules = append(rules, extra...)
+	return q, err
 }
 
 // souffleFacts is q with each atom binding its fact (#279) a call to that relation's fact relation,

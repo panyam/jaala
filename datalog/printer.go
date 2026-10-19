@@ -34,7 +34,11 @@ func (a Atom) String() string {
 	for i, t := range a.Args {
 		args[i] = t.String()
 	}
-	s := a.Relation + "(" + strings.Join(args, ", ") + ")"
+	rel := a.Relation
+	if isClosure(rel) {
+		rel = closureName // its relation is its first argument
+	}
+	s := rel + "(" + strings.Join(args, ", ") + ")"
 	if a.Fact != "" {
 		s += " as ?" + string(a.Fact)
 	}

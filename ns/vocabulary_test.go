@@ -204,3 +204,16 @@ func TestSatisfiedReadsEachMode(t *testing.T) {
 		t.Error("a filter is satisfied exactly when every argument is bound")
 	}
 }
+
+// A name the engine answers itself is refused, so a host's predicate under it isn't silently never
+// called; its module's other names are free.
+func TestAnEngineNameIsReserved(t *testing.T) {
+	v := MustVocabulary(NewMemSource())
+	err := v.AddPredicate("graph.closure", Filter(1, func([]Value) (bool, error) { return true, nil }))
+	if err == nil || !strings.Contains(err.Error(), `"graph.closure" is the engine's own`) {
+		t.Errorf("err = %v", err)
+	}
+	if err := v.AddPredicate("graph.reach", Filter(1, func([]Value) (bool, error) { return true, nil })); err != nil {
+		t.Errorf("control: graph.reach: %v", err)
+	}
+}

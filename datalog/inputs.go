@@ -77,7 +77,7 @@ func bindsFrom(lits []Literal, bound map[Var]bool, self string, ins map[string]R
 				for _, v := range inputsOf(callee, ins, reg) {
 					takes[headIndexOf(callee.Head, v)] = true
 				}
-			} else if bi, ok := reg.Predicate(l.Pos.Relation); ok {
+			} else if bi, ok := predicateIn(reg, l.Pos.Relation); ok {
 				if !bi.IsGenerator() {
 					done[i] = true
 					continue

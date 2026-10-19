@@ -1,0 +1,3 @@
+fixture: deps
+query: graph.closure("imports", ?p, ?p, 1, 0, ?hops) => ?p, ?hops
+expect: [[cache, "2"], [config, "2"]]

@@ -54,7 +54,8 @@ func (frontEnd) Instructions() string {
 	return `
 # Write one Cypher query answering the question, using only the labels, types and properties above:
 # MATCH patterns, WHERE, WITH, UNION, and RETURN with DISTINCT, count, min, max, sum, collect,
-# ORDER BY, SKIP and LIMIT. A node is its key, so RETURN n answers n's key. Strings are 'quoted'.
+# ORDER BY, SKIP and LIMIT, and a variable length -[:T*1..6]->, any length, or shortestPath(...)
+# in MATCH. A node is its key, so RETURN n answers n's key. Strings are 'quoted'.
 # Not supported: OPTIONAL MATCH, relationship variables and paths, UNWIND and lists, CASE, writes.
 # Reply with the query alone.
 `

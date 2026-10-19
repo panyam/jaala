@@ -386,7 +386,7 @@ func (b *Base) signatureFix(rel string) string {
 	var labels []string
 	var types []ns.ArgType
 	n, required := 0, -1
-	if bi, ok := b.reg.Predicate(rel); ok {
+	if bi, ok := predicateIn(b.reg, rel); ok {
 		labels, types, n = bi.Labels, bi.Types, max(bi.Arity, bi.MaxArity)
 		if bi.MaxArity > 0 {
 			required = bi.Arity

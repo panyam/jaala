@@ -161,7 +161,7 @@ func prefetchWalks(b *Base, lits []Literal, head string) error {
 		if atom == nil {
 			continue
 		}
-		if bi, ok := b.reg.Predicate(atom.Relation); ok {
+		if bi, ok := predicateIn(b.reg, atom.Relation); ok {
 			if bi.Volatile {
 				return nil
 			}
@@ -344,7 +344,7 @@ func prefetchStepWalks(b *Base, lits []Literal, head string) error {
 		if atom == nil {
 			continue
 		}
-		if bi, ok := b.reg.Predicate(atom.Relation); ok {
+		if bi, ok := predicateIn(b.reg, atom.Relation); ok {
 			if bi.Volatile {
 				return nil
 			}

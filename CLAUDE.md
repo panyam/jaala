@@ -176,8 +176,9 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   refusal and matched everything (#352's second PR caught it). An OR becomes a `cypher_match` rule
   per alternative, a WHERE pattern or `EXISTS { }` a `cypher_exists` rule over the nodes it shares
   (each a stand-in, `nodeVar.of`, so reading one's column inside reads it there), `COUNT { }` a
-  body aggregate (so a node with no match counts 0), a variable length `cypher_reach` (bounded:
-  each length up to 8). Each `WITH` closes a stage (`stage.go`): a `compiler` per stage on a shared
+  body aggregate (so a node with no match counts 0), a variable length (`*m..n`, a
+  quantifier, `shortestPath` or a path selector, the last two keeping only the nodes) `graph.closure`
+  over the type's relation or a `cypher_step` helper (#281). Each `WITH` closes a stage (`stage.go`): a `compiler` per stage on a shared
   `world`, the stage a `cypher_with` rule whose head is what it hands on, a carried node keeping
   its labels with its label atom written only when a column is read (`nodeAtm.lazy`). A `UNION` is
   one `cypher_union` relation, a part that aggregates first a `cypher_part` rule. `CALL p(args)
@@ -397,6 +398,22 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   edge's fact now and then from a stream of its own (`generator.facts`, `bound fact`), every third
   generated edge left without an id, and Soufflé reads `edge_fact`. nl's grammar writes `as ?v`
   (`fact`).
+- **`graph.closure("rel", ?from, ?to, min, max, ?hops)` is the engine's** (`closure.go`, #281): a
+  breadth-first walk of a binary relation over (node, depth capped at min) states, `?hops` the fewest
+  steps, max 0 none. `lowerClosures` (before `Link`, and per module before `resolveRule`, whose
+  `renameAtom` renames the step inside the name and the first argument) writes it as `\x00c:rel`
+  with its six arguments, so everything that classifies by name reads it: `predicateIn` (never call
+  `reg.Predicate` directly in production datalog, except for a step or a head) makes it a generator of
+  three modes, `relationsRead` makes `Link`, `reached`, `recursiveRelations` and `derivedKeys` see
+  the step, and `stratify` puts the step strictly below (`depEdge.walk`). The planner counts only its
+  ends as bound (`generatorBound`), or an all-free closure ran first (x10b, 46,536 work against 254).
+  It reads the step through `extendAtom`, so Naive and SemiNaive share it, and the planned evaluator
+  walks a step whose rules each read one base relation through those atoms (`walkSteps`, off when
+  witnessed), or a `cypher_step` would be derived in full. Under `CanonicalCites` the path is the
+  least shortest one walking out (`leastPath`), so either end gives one witness; `Across` refuses it.
+  `ns` reserves the name. The corpus draws closures from a stream of its own (`generator.closures`),
+  Soufflé reads them as a depth-counting walk and a `min` (`souffleClosures`), and `agreeAcross`
+  skips them. `stdlib.Hops` is the same walk over a host's step function, `?within` an input.
 - **A rewrite that rebuilds a `Literal` must keep its `at`, and one that rebuilds a `Rule` its
   `text`.** They carry the written position and form a witness follows (`witness.go`); dropping
   either makes that literal vanish from explanations or shows a rule in its rewritten form, with no

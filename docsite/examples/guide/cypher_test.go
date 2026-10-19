@@ -67,9 +67,7 @@ func Example_cypher() {
 	runCypher(`MATCH (a:Package {name: 'app'})-[:IMPORTS*]->(b:Package)
 RETURN b.name AS dependency, b.license AS license ORDER BY dependency`, nil)
 	// Output:
-	// cypher_reach1(?x, ?y) :- imports(?x, ?y);
-	// cypher_reach1(?x, ?y) :- cypher_reach1(?x, ?z), imports(?z, ?y);
-	// pkg("app", _), pkg(?b, ?b_license), cypher_reach1("app", ?b) => ?b, ?b_license order by ?b
+	// pkg("app", _), pkg(?b, ?b_license), graph.closure("imports", "app", ?b, 1, 0, _) => ?b, ?b_license order by ?b
 	// dependency | license
 	// "api" | absent
 	// "log" | ""
@@ -106,17 +104,13 @@ RETURN a.name AS name, n ORDER BY n DESC`, nil)
 	}
 	fmt.Println(p.Text)
 	// Output:
-	// cypher_reach1(?x, ?y) :- imports(?x, ?y);
-	// cypher_reach1(?x, ?y) :- cypher_reach1(?x, ?z), imports(?z, ?y);
-	// cypher_with1(?a, count(distinct ?d)) :- pkg(?a, _), pkg(?d, _), cypher_reach1(?a, ?d);
+	// cypher_with1(?a, count(distinct ?d)) :- pkg(?a, _), pkg(?d, _), graph.closure("imports", ?a, ?d, 1, 0, _);
 	// cypher_with1(?a, ?n), ?n > 1 => ?a, ?n order by ?n desc
 	// name | n
 	// "app" | "3"
 	// "api" | "2"
 	// cypher: $pkg is read inside a WITH stage, a UNION part, an OR, a pattern test or a variable-length relationship, which datalog.Bind can't reach: compile with cypher.Params
-	// cypher_reach1(?x, ?y) :- imports(?x, ?y);
-	// cypher_reach1(?x, ?y) :- cypher_reach1(?x, ?z), imports(?z, ?y);
-	// cypher_with1(?d) :- pkg("api", _), cypher_reach1("api", ?d);
+	// cypher_with1(?d) :- pkg("api", _), graph.closure("imports", "api", ?d, 1, 0, _);
 	// cypher_with1(?d) => ?d
 }
 
@@ -320,6 +314,6 @@ func Example_cypherTranslate() {
 	// try in cypher: "compile"
 	// try in cypher: ""
 	// MATCH (:Package {name: 'app'})-[:IMPORTS*]->(d) RETURN d.name
-	// compiled to: cypher_reach1(?x, ?y) :- imports(?x, ?y); cypher_reach1(?x, ?y) :- cypher_reach1(?x, ?z), imports(?z, ?y); pkg("app", _), cypher_reach1("app", ?d) => ?d
+	// compiled to: pkg("app", _), graph.closure("imports", "app", ?d, 1, 0, _) => ?d
 	// api log util
 }

@@ -98,10 +98,29 @@ func lookingTimedOver(timed *ns.TimedMemSource, seed int) (*lookingTimed, ns.Sou
 	return lt, tf
 }
 
+// callsClosure reports whether q calls graph.closure (#281) in its goal or a rule.
+func callsClosure(q Query) bool {
+	bodies := []Body{q.Goal}
+	for _, r := range q.Rules {
+		bodies = append(bodies, r.Body)
+	}
+	for _, b := range bodies {
+		for _, a := range ruleAtoms(b) {
+			if a.Relation == closureName {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // agreeAcross requires every evaluator's Across answer over b's facts dealt across versions to hold,
 // for each version v, exactly the rows At(v) answers, and under CanonicalCites their citations and
 // witnesses at v too (#180).
 func agreeAcross(q Query, b *Base, opts []Option, seed int) string {
+	if callsClosure(q) {
+		return "" // refused across versions (#281), which TestClosureIsRefusedAcrossVersions checks
+	}
 	if anyRows(q) {
 		q.Limit = 0
 	}

@@ -278,7 +278,7 @@ func (b *Base) knownRelation(rel string) bool {
 	if isPushed(rel) {
 		return true
 	}
-	if _, ok := b.reg.Predicate(rel); ok {
+	if _, ok := predicateIn(b.reg, rel); ok {
 		return true
 	}
 	if _, ok := b.schemaOf(rel); ok {
@@ -568,6 +568,11 @@ func stratify(rules []Rule, arity map[string]int) ([][]string, error) {
 			if _, isIDB := arity[atom.Relation]; isIDB {
 				edges = append(edges, depEdge{from: head, to: atom.Relation, neg: neg, agg: agg})
 			}
+			if step, ok := stepOf(atom.Relation); ok {
+				if _, isIDB := arity[step]; isIDB {
+					edges = append(edges, depEdge{from: head, to: step, walk: true})
+				}
+			}
 		}
 	}
 	stratum := map[string]int{}
@@ -579,7 +584,7 @@ func stratify(rules []Rule, arity map[string]int) ([][]string, error) {
 		changed := false
 		for _, e := range edges {
 			want := stratum[e.to]
-			if e.neg || e.agg {
+			if e.neg || e.agg || e.walk {
 				want++
 			}
 			if stratum[e.from] < want {
@@ -593,6 +598,9 @@ func stratify(rules []Rule, arity map[string]int) ([][]string, error) {
 		if round == n {
 			// A body aggregate's zero clause negates its reduction, which climbs as the aggregate does,
 			// so a cycle through one is reported as through the aggregate.
+			if cycle := strictCycle(edges, func(e depEdge) bool { return e.walk }); len(cycle) > 0 {
+				return nil, checkErr(KindStratify, fmt.Sprintf("query: rules are not stratifiable (recursion through %s: %s)", closureName, strings.Join(cycle, ", ")))
+			}
 			if cycle := strictCycle(edges, func(e depEdge) bool { return e.neg && !isAggReduce(e.to) }); len(cycle) > 0 {
 				return nil, checkErr(KindStratify, fmt.Sprintf("query: rules are not stratifiable (recursion through negation: %s)", strings.Join(cycle, ", ")))
 			}
@@ -620,8 +628,8 @@ func stratify(rules []Rule, arity map[string]int) ([][]string, error) {
 // depEdge is one rule dependency: from's rule reads to, under negation when neg, and to reduce it when
 // agg (from's rule aggregates).
 type depEdge struct {
-	from, to string
-	neg, agg bool
+	from, to       string
+	neg, agg, walk bool // walk: from's rule walks to with graph.closure
 }
 
 // strictCycle names the relations whose rules read, through an edge strict says must climb (negation

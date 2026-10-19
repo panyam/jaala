@@ -872,8 +872,10 @@ func (c *compiler) relLiteral(r relPat, from, to *nodeVar) (frag, *Error) {
 		}
 		return edgeAtom(es[0], argss[0], y, x)
 	}
+	helper := ""
 	if len(es) > 1 || r.dir == 0 || hasParamIn(argss) {
 		name := c.helper("step")
+		helper = name
 		for i, e := range es {
 			c.addRule(rule{head: frag{name + "(?x, ?y)"}, body: []frag{edgeAtom(e, argss[i], "?x", "?y")}})
 			if r.dir == 0 {
@@ -891,40 +893,26 @@ func (c *compiler) relLiteral(r relPat, from, to *nodeVar) (frag, *Error) {
 	if !r.varLen {
 		return step(src, dst), nil
 	}
-	if r.min < 1 {
-		return nil, gapShortest.at(r.pos, "a zero-length match (*0..): start the range at 1")
-	}
 	if r.max != -1 && r.max < r.min {
 		return nil, errAt(r.pos, "the range *%d..%d is empty", r.min, r.max)
 	}
-	const maxHops = 8
-	if r.max > maxHops || (r.max == -1 && r.min > maxHops) {
-		return nil, gapShortest.at(r.pos, "a bounded match longer than %d hops: write * for any length", maxHops)
-	}
-	reach := c.helper("reach")
-	chain := func(k int) []frag {
-		var body []frag
-		prev := "?x"
-		for i := 1; i <= k; i++ {
-			next := fmt.Sprintf("?y%d", i)
-			if i == k {
-				next = "?y"
-			}
-			body = append(body, step(prev, next))
-			prev = next
+	// A variable length walks one step's relation with graph.closure: the helper above when there is
+	// one, the type's own relation when it has two arguments, from and to, and otherwise a helper of one
+	// hop.
+	walked := helper
+	switch e := es[0]; {
+	case helper != "":
+	case len(argss[0]) == 2:
+		walked = e.Relation
+		if (e.From == 1) != (r.dir == -1) { // src and dst are the pattern's, the relation's columns may run the other way
+			src, dst = dst, src
 		}
-		return body
+	default:
+		walked = c.helper("step")
+		c.addRule(rule{head: frag{walked + "(?x, ?y)"}, body: []frag{step("?x", "?y")}})
 	}
-	if r.max == -1 {
-		c.addRule(
-			rule{head: frag{reach + "(?x, ?y)"}, body: chain(r.min)},
-			rule{head: frag{reach + "(?x, ?y)"}, body: []frag{{reach + "(?x, ?z)"}, step("?z", "?y")}})
-	} else {
-		for k := r.min; k <= r.max; k++ {
-			c.addRule(rule{head: frag{reach + "(?x, ?y)"}, body: chain(k)})
-		}
-	}
-	return frag{reach, "(", src, ", ", dst, ")"}, nil
+	upTo := max(r.max, 0) // graph.closure reads 0 as no bound
+	return frag{fmt.Sprintf("graph.closure(%q, ", walked), src, ", ", dst, fmt.Sprintf(", %d, %d, _)", r.min, upTo)}, nil
 }
 
 // value is e as an operand of a comparison: a constant, a parameter, a variable or arithmetic over

@@ -43,7 +43,7 @@ func Link(q Query, reg *ns.Vocabulary) (Query, error) {
 			if strings.Contains(a.Relation, privateSep) {
 				return fmt.Errorf("query: %s", reg.Unknown(displayName(a.Relation)))
 			}
-			pending = append(pending, a.Relation)
+			pending = append(pending, relationsRead(a.Relation)...)
 		}
 		return nil
 	}
@@ -72,7 +72,7 @@ func Link(q Query, reg *ns.Vocabulary) (Query, error) {
 		for _, r := range rules {
 			linked = append(linked, r)
 			for _, a := range ruleAtoms(r.Body) {
-				pending = append(pending, a.Relation)
+				pending = append(pending, relationsRead(a.Relation)...)
 			}
 		}
 	}

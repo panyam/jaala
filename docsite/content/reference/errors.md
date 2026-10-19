@@ -387,6 +387,14 @@ A `not` with the wrong number of arguments. Over a rewritten relation it can nam
 
 {{ demo "demos/errors/negated-relation-q-takes.yaml" }}
 
+`query: graph.closure takes 6 args, got …`, `query: graph.closure's relation must be a text constant naming one, not …`
+
+`graph.closure("relation", ?from, ?to, min, max, ?hops)` names the relation it walks as text in its first argument, and takes all six ([#281](https://github.com/panyam/jaala/issues/281)). Write `_` for the hops you don't read and `0` for no max.
+
+`query: graph.closure needs a relation of 2 args, from and to; … takes …`, `query: graph.closure can't walk …, a predicate: it walks a relation's facts`, `query: graph.closure can't walk …, which takes an argument from its caller`
+
+A closure walks a relation's facts from their first argument to their second. To walk a wider relation, such as `edge(from, kind, to)`, write a rule of two arguments reading it, `calls(?a, ?b) :- edge(?a, "CALLS", ?b)`, and walk that. A relation it can't name at all is reported as `query: graph.closure over unknown relation …`.
+
 ## Rules
 
 Rules are checked as a whole before any of them runs.
@@ -541,6 +549,14 @@ Two rules of a module member declare one argument differently. Raised by `Check`
 
 A module member declares a type its rules can't produce. Raised by `Check`.
 
+`query: graph.closure's min must be a whole number of steps, 0 or more, not …`, `query: graph.closure's max must be a whole number of steps, 0 for no bound or at least min, not …`
+
+A closure's bounds count steps. Min 0 lets `?from` reach itself in none, and max 0 means no bound.
+
+`query: a reach's within must be a whole number of steps, at least 1`, `query: a reach's within needs a number bound (the most steps a path may take)`
+
+The same for a host's reach built with `stdlib.Hops`, whose within is the most steps a path may take.
+
 ## Running the query
 
 These depend on the order variables get their values, so jaala checks them against the body as it will run.
@@ -614,6 +630,14 @@ A glob given to `str.glob` doesn't compile.
 `query: Materialize: keeping …: …`
 
 The `DerivedStore` given to `Base.KeepDerivedIn` refused to keep a relation `Materialize` derived. The message carries the store's own error. An `Eval` ignores the same failure, since it already has its answer.
+
+`query: graph.closure needs its min and max bound (a variable must appear in a relation before graph.closure reads it)`
+
+An evaluator running the body as written reached a closure whose bounds are variables nothing has bound yet. The planned evaluator moves it after them.
+
+`query: graph.closure isn't evaluated across versions: ask each version with At`
+
+A shortest path can hold in no one version though each of its steps holds in some, so a closure isn't answered under `Across`. Ask `At` each version you need.
 
 ## Grouping and ordering
 
@@ -843,6 +867,10 @@ Two members serve one relation with different arities, labels or types. The engi
 
 `Federation.Timed` was called on a federation none of whose members is a timed source, so it has no versions to serve.
 
+`query: … is the engine's own, which a query calls whatever the vocabulary holds: register yours under another name`
+
+`graph.closure` is answered by the engine before the vocabulary is asked, so a predicate registered under that name would never be called.
+
 ## Internal
 
 These shouldn't reach anyone. If one does, please report it.
@@ -858,3 +886,7 @@ A host generator emitted a row with the wrong number of values.
 `query: stop`
 
 Used inside the engine to stop a generator early. It never reaches a host.
+
+`query: closure found its target`, `query: internal: graph.closure is run by the engine`, `query: internal: graph.closure found no path from … to …`
+
+Used inside the engine while a closure walks: the first stops a walk at a bound target, and the others mean a bug in jaala.

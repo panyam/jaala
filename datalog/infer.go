@@ -108,7 +108,14 @@ func (t *typer) argTypes(rel string, seen map[string]bool) ([]string, []ns.ArgTy
 	if s, ok := schemaIn(t.reg, rel); ok {
 		return s.Labels, s.Types, true
 	}
-	if b, ok := t.reg.Predicate(rel); ok {
+	if step, ok := stepOf(rel); ok {
+		types := slices.Clone(closureBuiltin.Types)
+		if _, st, ok := t.argTypes(step, seen); ok && len(st) == 2 {
+			types[1], types[2] = st[0], st[1]
+		}
+		return closureBuiltin.Labels, types, true
+	}
+	if b, ok := predicateIn(t.reg, rel); ok {
 		return b.Labels, b.Types, true
 	}
 	if !t.isDerived(rel) || seen[rel] {

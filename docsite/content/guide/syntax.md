@@ -45,6 +45,22 @@ Two facts are equal only when they're the same fact, so `?r != ?s` keeps a path 
 
 Only a positive atom over a base relation can name its fact. A derived relation's tuples, a predicate's matches and a negated atom's absence aren't facts any store holds, so `as` there is refused. A store keeping more about a fact (where an edge came from, what it costs) keys it by the fact's id, and a query reads that through an ordinary relation of the host's: `imports(?a, ?b) as ?r, imports_attr(?r, "kind", ?k)`. The [stores]({{.Site.PathPrefix}}/guide/stores/) page says how a host gives its facts ids.
 
+## Walking a relation
+
+`graph.closure("imports", ?from, ?to, min, max, ?hops)` holds when `?to` is reachable from `?from` in `min` to `max` steps of a relation of two arguments, and `?hops` is the fewest it takes ([#281](https://github.com/panyam/jaala/issues/281)). It's the recursive rule `reach(?a, ?c) :- reach(?a, ?b), imports(?b, ?c)` with a bound and a count the rule can't carry, since a rule computing a number it then reads again might never finish. Max `0` is no bound. What `app` reaches within two steps:
+
+{{ demo "demos/guide/syntax-closure.yaml" }}
+
+It walks from whichever end the body binds, so asking what reaches `util` walks back from it. Each answer cites one path of `?hops` steps, in order from `?from` to `?to`, and with `Witnesses()` its witness has a node per step:
+
+{{ demo "demos/guide/syntax-closure-back.yaml" }}
+
+A node reaches itself only through a cycle, at the cycle's length, as the recursive rule's would, and min `0` makes every node reach itself in none:
+
+{{ demo "demos/guide/syntax-closure-cycle.yaml" }}
+
+The walk is breadth first, once per node (and per depth below `min`), so it costs what lies within the bound, where a rule counting depth would derive every walk of every length. The relation can be base or derived, by its full name (`"deps.depends_on"`), but it must be complete before the walk reads it, so a relation can't walk itself, and one whose rules each read one base relation, such as `calls(?a, ?b) :- edge(?a, "CALLS", ?b)`, is walked through that relation's facts directly. `graph.closure` is the engine's name, which a vocabulary can't register.
+
 ## The goal and its projection
 
 After the goal, `=>` and a list of columns say what the answer holds. The columns are variables, [aggregates]({{.Site.PathPrefix}}/guide/aggregation/) or [arithmetic]({{.Site.PathPrefix}}/guide/arithmetic/#in-the-answer-and-in-a-rules-head), and after them can come `having`, `order by`, `limit` and `offset`, in that order. Leave out `=>` and its columns, and the answer has one column per variable of the goal, in the order they first appear:

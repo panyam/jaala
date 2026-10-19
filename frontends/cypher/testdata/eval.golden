@@ -1,15 +1,15 @@
 case        pass  tries  work  refused
 direct      yes   1      7
-transitive  yes   2      28    compile
+transitive  yes   2      27    compile
 license     yes   1      4
 unstated    yes   1      4
-count       yes   1      28
+count       yes   1      27
 reverse     yes   1      11
 columns     yes   1      4
 missing     no    2            compile repeat
 passed 7/8 in cypher, 6 on the first try; 10 tries, tokens 0 in (0 cached), 0 out
 refused: compile 2, repeat 1; check errors with a fix 0/0
 costliest drafts:
-  transitive try 2 (accepted): work 28, most in imports(?z, ?y) (6)
-  count try 1 (accepted): work 28, most in imports(?z, ?y) (6)
+  transitive try 2 (accepted): work 27, most in graph.closure("imports", "app", ?d, 1, 0, _) (15)
+  count try 1 (accepted): work 27, most in graph.closure("imports", "app", ?d, 1, 0, _) (15)
   reverse try 1 (accepted): work 11, most in pkg(?x, _) (4)

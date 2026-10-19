@@ -30,6 +30,7 @@ func Example_card() {
 	// coalesce(value, fallback, result) needs value+fallback # binds the value, or the fallback when the value is absent
 	// imports(from, to)
 	// pkg(name, license)
+	// graph.closure(relation, from, to, min: number, max: number, hops: number) needs relation+min+max # to is reachable from from in min to max steps of the two-argument relation named in quotes (max 0: no bound), hops the fewest
 	//
 	// module deps
 	// deps.depends_on(a, b) # Everything a package depends on, directly or through others.

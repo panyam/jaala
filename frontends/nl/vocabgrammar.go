@@ -3,6 +3,7 @@ package nl
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -55,8 +56,21 @@ var grammarBuilds atomic.Int64
 // closed domain, if any.
 type callee struct {
 	path    string
+	kind    ns.EntryKind
 	arities []int
 	domains [][]string
+}
+
+// walkable are the relations graph.closure can walk (#281): every relation of two arguments, base or
+// derived.
+func walkable(members []callee) []string {
+	var out []string
+	for _, m := range members {
+		if m.kind != ns.EntryPredicate && slices.Equal(m.arities, []int{2}) {
+			out = append(out, m.path)
+		}
+	}
+	return out
 }
 
 func vocabRules(v *ns.Vocabulary, o grammarOpts) ([]rule, error) {
@@ -88,6 +102,14 @@ func vocabRules(v *ns.Vocabulary, o grammarOpts) ([]rule, error) {
 		}
 		extra = append(extra, rule{name, forms})
 		atoms = append(atoms, ref(name))
+	}
+	if rels := walkable(members); len(rels) > 0 {
+		var names alt
+		for _, r := range rels {
+			names = append(names, lit(`"`+r+`"`))
+		}
+		extra = append(extra, rule{"walked", names})
+		atoms = append(atoms, seq{lit("graph.closure("), ref("walked"), lit(", "), ref("term"), lit(", "), ref("term"), lit(", "), ref("term"), lit(", "), ref("term"), lit(", "), ref("term"), lit(")")})
 	}
 	if !o.goalOnly {
 		local := seq{ref("local"), lit("(")}
@@ -178,7 +200,7 @@ func callees(v *ns.Vocabulary) ([]callee, []string, error) {
 				}
 				continue
 			}
-			c := callee{path: m.Path, arities: []int{len(m.Args)}}
+			c := callee{path: m.Path, kind: m.Kind, arities: []int{len(m.Args)}}
 			if bi, ok := v.Predicate(m.Path); ok && bi.MaxArity > 0 {
 				c.arities = nil
 				for n := bi.Arity; n <= bi.MaxArity; n++ {

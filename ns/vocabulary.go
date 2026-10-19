@@ -162,6 +162,9 @@ func (v *Vocabulary) admits(path string, m member) error {
 	if err := checkPath(path); err != nil {
 		return err
 	}
+	if reserved[path] {
+		return fmt.Errorf("query: %q is the engine's own, which a query calls whatever the vocabulary holds: register yours under another name", path)
+	}
 	if prev, ok := v.members[path]; ok {
 		return fmt.Errorf("query: %q is defined twice, as a %s and as a %s", path, prev.kind, m.kind)
 	}
@@ -177,6 +180,10 @@ func (v *Vocabulary) admits(path string, m member) error {
 	}
 	return nil
 }
+
+// reserved are the names the engine answers itself, before the vocabulary: graph.closure walks a
+// relation (jaala#281). A member registered under one would never be called.
+var reserved = map[string]bool{"graph.closure": true}
 
 // put places m at path, which admits has accepted, and drops every cached result.
 func (v *Vocabulary) put(path string, m member) {

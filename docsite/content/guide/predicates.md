@@ -33,6 +33,10 @@ The planned `SemiNaive` runs a generator as soon as one of its modes is satisfie
 
 `Naive` doesn't plan. It calls a generator where it's written, with the unbound arguments `Bound: false`, so a generator must refuse a call it can't run, returning an error, rather than read the zero value. `stdlib`'s `str.distance` errs that way.
 
+### A walk of the host's own
+
+A host whose graph lives in its own structures, rather than in a relation a query can walk with [`graph.closure`]({{.Site.PathPrefix}}/guide/syntax/#walking-a-relation), writes only one step: `stdlib.Hops(step, extra...)` takes a function listing one node's neighbours, with each edge's citations, and builds `reach(?from, ?to, extra..., ?within, ?hops)` ([#281](https://github.com/panyam/jaala/issues/281)). jaala walks breadth first from whichever end the body binds, so `?within` is "at most this many steps" and the walk asks nothing past it, and `?hops` is the fewest steps, cited by one path of that length in order from `?from` to `?to`. `stdlib.Reach` hands the host the whole walk instead, for a host whose walk is its own.
+
 ### Labels and types
 
 `Labels` and `Types` describe the arguments as a base relation's schema does. jaala reads an emitted value as its argument's type, so `size.lines` emitting `ns.N(900)` into a number column compares as a number in `?n > 100`, and a generator reading a number argument waits for the relations binding it, so it reads the spelling they agree on ([#244](https://github.com/panyam/jaala/issues/244)). A generator typing nothing, as most hosts' do, is never held. `Doc` is the line a host shows when it lists the vocabulary.
