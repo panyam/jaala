@@ -405,7 +405,9 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   `_step`, #319); a helper that joins, compares or calls a predicate is probed per round. The corpus's programs
   rarely walk, so `agreeWalked` runs a fixed reach from each graph's first edge over a walking store
   and over the partitioned federation, on a fresh Base (Naive's lookups would leave nothing to walk);
-  `walkedPrograms` is its control.
+  `walkedPrograms` is its control; it walks a bounded closure and paths call too
+  (`walkedClosurePrograms`), and `fetchedWalkPrograms` and `federatedWalkPrograms` count the corpus's
+  own closures batched ahead (#396).
 - **`Report.Cold` reruns the query when the Eval was warm** (`coldCost`, #147): it reused a derived
   relation, answered a lookup from an earlier Eval's (`SourceReport.Kept`, #212), or probed a held
   relation a fresh Base would have looked up. The rerun is a copy with no derived or lookup cache, no
@@ -441,7 +443,15 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   walks a step whose rules each read one base relation through those atoms (`walkSteps`, off when
   witnessed), or a `cypher_step` would be derived in full. Under `CanonicalCites` the path is the
   least shortest one walking out (`leastPath`), so either end gives one witness; `Across` refuses it.
-  `ns` reserves the name. The corpus draws closures from a stream of its own (`generator.closures`),
+  `ns` reserves the name. Over a store, `prefetchClosures` (`closurefetch.go`, #396, from `prefetch`,
+  so the planned SemiNaive only) walks ahead of a closure or paths call from every start its prefix
+  binds: one `Walk` with `MaxDepth` the call's max when the store walks its one step read
+  (`walkedStep`), else a `LookupBatch` per level (`prefetchLevels`), stopping at the bound ends when
+  every start has one and min is at most 1. `stepReads` is the one place a step's atoms are built,
+  so the prefetch's keys are the walk's. `walk` files a value only below `MaxDepth`, and a Federation
+  routes a crossing value with its steps left. The planner doesn't run an all-free walk over a looked-up
+  step first (`walksStore`): that read the store whole ahead of the literal binding its start.
+  The corpus draws closures from a stream of its own (`generator.closures`),
   Soufflé reads them as a depth-counting walk and a `min` (`souffleClosures`), and `agreeAcross`
   skips them. `stdlib.Hops` is the same walk over a host's step function, `?within` an input.
 - **`graph.paths("rel", ?from, ?to, mode, min, max, ?path)` is the engine's too** (`paths.go`, #280),

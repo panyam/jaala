@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"maps"
 	"math"
 	"reflect"
 	"slices"
@@ -888,26 +889,35 @@ type walkMem struct {
 	*MemSource
 	walks  int
 	refuse bool
+	depths []int // each walk's MaxDepth
 }
 
 func (m *walkMem) Walks(string, int, int, []int) bool { return !m.refuse }
 
 func (m *walkMem) Walk(_ context.Context, w Walk) iter.Seq2[Tuple, error] {
 	m.walks++
+	m.depths = append(m.depths, w.MaxDepth)
+	type at struct {
+		v     Value
+		depth int
+	}
 	var out []Tuple
 	seen := map[string]bool{}
-	queue := append([]Value(nil), w.Start...)
+	var queue []at
+	for _, v := range w.Start {
+		queue = append(queue, at{v, 0})
+	}
 	for len(queue) > 0 {
-		v := queue[0]
+		v, depth := queue[0].v, queue[0].depth
 		queue = queue[1:]
-		if seen[v.S] {
+		if seen[v.S] || w.MaxDepth > 0 && depth >= w.MaxDepth {
 			continue
 		}
 		seen[v.S] = true
 		for _, t := range m.Tuples(w.Relation) {
 			if t.Vals[w.From].S == v.S {
 				out = append(out, t)
-				queue = append(queue, t.Vals[w.To])
+				queue = append(queue, at{t.Vals[w.To], depth + 1})
 			}
 		}
 	}
@@ -992,6 +1002,48 @@ func TestAFederationWalksAcrossMembers(t *testing.T) {
 	}
 	if n != 3 || a.walks != 1 || b.walks != 1 {
 		t.Errorf("walked %d facts, A %d times and B %d, want 3 facts and one walk each: A reached a9 already", n, a.walks, b.walks)
+	}
+}
+
+// A Federation's bounded walk goes on in another member with the steps it has left (#396), and a
+// value arriving with more steps left than a member walked it with is walked there again: a4 is 3
+// steps out through A alone but 2 through B, so a5's fact, 4 steps out, comes back only from the
+// second walk.
+func TestAFederationWalkCarriesTheStepsLeft(t *testing.T) {
+	next := func(m *MemSource, from, to string) {
+		m.Add("next", Tuple{Vals: []Value{S(from), S(to)}, Cites: []string{from + "-" + to}})
+	}
+	walk := func(maxDepth int) ([]string, *walkMem, *walkMem) {
+		a := &walkMem{MemSource: NewMemSource().Declare("next", "src", "dst")}
+		b := &walkMem{MemSource: NewMemSource().Declare("next", "src", "dst")}
+		for _, e := range [][2]string{{"a1", "a2"}, {"a2", "a3"}, {"a3", "a4"}, {"a4", "a5"}, {"a5", "a6"}, {"a6", "a7"}, {"a1", "b1"}} {
+			next(a.MemSource, e[0], e[1])
+		}
+		next(b.MemSource, "b1", "a4")
+		next(b.MemSource, "b1", "b2")
+		next(b.MemSource, "b2", "b3")
+		next(b.MemSource, "b3", "b4")
+		f, _ := NewFederation(Member{Name: "A", Source: a, Holds: HoldsPrefix("a", map[string][]int{"next": {0}})}, Member{Name: "B", Source: b, Holds: HoldsPrefix("b", map[string][]int{"next": {0}})})
+		seen := map[string]bool{}
+		for tu, err := range f.Walk(context.Background(), Walk{Relation: "next", From: 0, To: 1, Start: []Value{S("a1")}, MaxDepth: maxDepth}) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			seen[strings.Join(tu.Cites, " ")] = true
+		}
+		got := slices.Sorted(maps.Keys(seen))
+		return got, a, b
+	}
+	got, a, b := walk(4)
+	want := []string{"A:a1-a2", "A:a1-b1", "A:a2-a3", "A:a3-a4", "A:a4-a5", "A:a5-a6", "B:b1-a4", "B:b1-b2", "B:b2-b3", "B:b3-b4"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("walked %q within 4 steps, want %q", got, want)
+	}
+	if !reflect.DeepEqual(a.depths, []int{4, 2}) || !reflect.DeepEqual(b.depths, []int{3}) {
+		t.Errorf("A walked with %v steps and B with %v, want [4 2] (a4 again, 2 steps left) and [3]", a.depths, b.depths)
+	}
+	if got, _, _ := walk(0); len(got) != 11 {
+		t.Errorf("control: an unbounded walk reached %d facts, want all 11: %q", len(got), got)
 	}
 }
 

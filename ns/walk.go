@@ -42,6 +42,12 @@ type Walk struct {
 	// vocabulary doesn't fold them (#303): a Federation folds by it a value one member reached before
 	// walking it in another. Nil folds nothing.
 	Units *Units
+	// MaxDepth bounds the walk at that many steps from a start, 0 for no bound (#396): a graph.closure
+	// or graph.paths with a max asks for no more than it reads. The store need return only the facts of
+	// values reached in fewer than MaxDepth steps, and the engine takes a value reached in exactly
+	// MaxDepth as unwalked, so it never files that value's facts as complete. A store that ignores it
+	// walks further and returns more, which costs fetches, never answers.
+	MaxDepth int
 }
 
 // ConjunctionWalkSource is optionally implemented by a Source that follows a step of several literals

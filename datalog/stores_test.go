@@ -382,6 +382,9 @@ var storeQuestions = []struct{ name, text string }{
 	{"count-lines", `attr(?id, "lines", "7") => count(?id)`},
 	{"page", `attr(?id, "lines", ?n) => ?id, ?n order by ?id limit 10`},
 	{"attrs-of-reached", `reach(?a, ?b) :- edge(?a, _, ?b); reach(?a, ?c) :- reach(?a, ?b), edge(?b, _, ?c); reach("repo0/n0", ?x), edge(?x, _, ?y), attr(?y, "lines", "7") => count(?y)`},
+	{"bounded-walk", `graph.closure("next", "repo0/n0", ?x, 1, 5, _) => count(?x)`},
+	{"bounded-tree", `call(?a, ?b) :- edge(?a, "calls", ?b); graph.closure("call", "repo0/n0", ?x, 1, 4, _) => count(?x)`},
+	{"bounded-paths", `graph.paths("next", "repo0/n0", ?x, "trail", 1, 5, ?p) => count(?p)`},
 	{"self-loops", `edge(?a, ?k, ?a) => ?a, ?k`},
 	{"edges", `edge(?a, _, ?b) => ?a, ?b`},
 }
@@ -606,6 +609,32 @@ func TestStoresExercise(t *testing.T) {
 	}
 	if c := costs["deep-walk"]; c.calls != 1 {
 		t.Errorf("a walk %d deep made %d calls, want one: the store walks it (#239)", storeChain, c.calls)
+	}
+	// A closure or a paths call with a max (#396): a walking store is asked once for no more than the
+	// bound, and one that only batches once per level, where a store that does neither is asked once
+	// per node.
+	question := func(name string) Query {
+		return mustParse(t, storeQuestions[slices.IndexFunc(storeQuestions, func(sq struct{ name, text string }) bool { return sq.name == name })].text)
+	}
+	const bound, treeBound = 5, 4
+	for _, name := range []string{"bounded-walk", "bounded-paths"} {
+		if c := costs[name]; c.calls != 1 || c.shipped != bound {
+			t.Errorf("%s made %d store calls shipping %d facts, want one walk shipping the %d within its max (#396)", name, c.calls, c.shipped, bound)
+		}
+		if c, again, _, err := newStoreSet(n).unwalked().askTwice(question(name)); err != nil || c.calls != bound || c.shipped != bound || again.calls != 0 {
+			t.Errorf("%s over stores that don't walk made %d calls shipping %d facts, then %d asked again, want a batch per level, %d, shipping %d, then none: %v", name, c.calls, c.shipped, again.calls, bound, bound, err)
+		}
+	}
+	tree := costs["bounded-tree"]
+	if tree.calls != tree.asked {
+		t.Errorf("bounded-tree made %d calls to %d stores, want one walk each (#396)", tree.calls, tree.asked)
+	}
+	batched, _, _, err := newStoreSet(n).unwalked().askTwice(question("bounded-tree"))
+	if err != nil || batched.calls > batched.asked*treeBound {
+		t.Errorf("bounded-tree over stores that don't walk made %d calls to %d stores, want at most a batch per store per level of its %d: %v", batched.calls, batched.asked, treeBound, err)
+	}
+	if c, _, _, err := unbatchedStoreSet(n).askTwice(question("bounded-tree")); err != nil || c.calls <= batched.asked*treeBound {
+		t.Errorf("control: over stores that don't batch, bounded-tree made %d calls, want more than %d (a call per node): %v", c.calls, batched.asked*treeBound, err)
 	}
 	if c := costs["reach"]; c.calls != c.asked || c.asked != 2 {
 		t.Errorf("reach made %d calls to %d stores, want one to each of repo0 and repo1, whose leaves repo0 calls: each store walks its part (#239)", c.calls, c.asked)

@@ -664,30 +664,42 @@ func (b *Base) onStep(step string, node ns.Value) (bool, error) {
 // closureNeighbours calls each with every node one fact of step leads to from node, out or back, and
 // that fact.
 func (b *Base) closureNeighbours(step string, node ns.Value, fwd bool, each func(ns.Value, closureStep) error) error {
-	if rules, ok := b.run.closureWalks[step]; ok {
-		for _, r := range rules {
-			if err := b.walkRule(r, node, fwd, each); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	at, next := Term{Const: &node}, Term{Var: closureVar}
-	if !fwd {
-		at, next = next, at
-	}
 	arity := b.stepArity(step)
-	return b.extendAtom(&Atom{Relation: step, Args: stepArgs(arity, at, next)}, newBinding(), func(sb *binding) error {
-		n := sb.value(closureVar)
-		s := closureStep{vals: stepValues(arity, node, n, sb, fwd), cites: slices.Clone(sb.cites)}
-		if b.witnessing() {
-			s.wit = sb.last
-			if s.wit == nil {
-				s.wit = leaf(step, s.vals, s.cites)
+	for _, a := range b.stepReads(step, Term{Const: &node}, fwd) {
+		err := b.extendAtom(&a, newBinding(), func(sb *binding) error {
+			n := sb.value(closureVar)
+			s := closureStep{vals: stepValues(arity, node, n, sb, fwd), cites: slices.Clone(sb.cites)}
+			if b.witnessing() {
+				s.wit = sb.last
+				if s.wit == nil {
+					s.wit = leaf(step, s.vals, s.cites)
+				}
 			}
+			return each(n, s)
+		})
+		if err != nil {
+			return err
 		}
-		return each(n, s)
-	})
+	}
+	return nil
+}
+
+// stepReads are the atoms a walk reads a node's steps of step through, out (fwd) or back, with at
+// where the node goes, closureVar where the step leads and closureEdge at its edge: the step relation
+// itself, or each of its rules' one atom when walkSteps walks through them (walksThrough).
+func (b *Base) stepReads(step string, at Term, fwd bool) []Atom {
+	if rules, ok := b.run.closureWalks[step]; ok {
+		out := make([]Atom, len(rules))
+		for i, r := range rules {
+			out[i] = ruleRead(r, at, fwd)
+		}
+		return out
+	}
+	from, to := at, Term{Var: closureVar}
+	if !fwd {
+		from, to = to, from
+	}
+	return []Atom{{Relation: step, Args: stepArgs(b.stepArity(step), from, to)}}
 }
 
 // stepValues is a step's fact in from, (edge,) to order, read from sb: node where the walk is, n where
@@ -703,14 +715,14 @@ func stepValues(arity int, node, n ns.Value, sb *binding, fwd bool) []ns.Value {
 	return []ns.Value{from, to}
 }
 
-// walkRule is closureNeighbours through one rule walksThrough accepted: its atom, the head's first
-// variable node and its last the next node when walking out, the other way round walking back, and a
-// middle one the edge.
-func (b *Base) walkRule(r Rule, node ns.Value, fwd bool, each func(ns.Value, closureStep) error) error {
+// ruleRead is the atom of one rule walksThrough accepted, read from at: the head's first variable is
+// where the walk is and its last where it goes when walking out, the other way round walking back, and
+// a middle one the edge.
+func ruleRead(r Rule, at Term, fwd bool) Atom {
 	h := r.Head.Args
-	at, next := h[0].Var, h[len(h)-1].Var
+	here, next := h[0].Var, h[len(h)-1].Var
 	if !fwd {
-		at, next = next, at
+		here, next = next, here
 	}
 	edge := Var("\x00none")
 	if len(h) == 3 {
@@ -720,18 +732,15 @@ func (b *Base) walkRule(r Rule, node ns.Value, fwd bool, each func(ns.Value, clo
 	a.Args = slices.Clone(a.Args)
 	for i, t := range a.Args {
 		switch t.Var {
-		case at:
-			a.Args[i] = Term{Const: &node}
+		case here:
+			a.Args[i] = at
 		case next:
 			a.Args[i] = Term{Var: closureVar}
 		case edge:
 			a.Args[i] = Term{Var: closureEdge}
 		}
 	}
-	return b.extendAtom(&a, newBinding(), func(sb *binding) error {
-		n := sb.value(closureVar)
-		return each(n, closureStep{vals: stepValues(len(h), node, n, sb, fwd), cites: slices.Clone(sb.cites)})
-	})
+	return a
 }
 
 // leastPath is, for CanonicalCites, the path from from to to of the fewest steps whose facts come

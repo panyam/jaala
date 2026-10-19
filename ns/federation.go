@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"iter"
+	"math"
 	"reflect"
 	"slices"
 	"strconv"
@@ -897,59 +898,115 @@ func (f *Federation) Walks(rel string, from, to int, bound []int) bool {
 // member walks a value once, so a walk staying in one store costs one call, and one crossing stores a
 // call per store per crossing. Every member serving the relation is asked when Holds is nil. Each
 // tuple is cited to its member, and a member's failure is wrapped with its name.
+//
+// Under a MaxDepth (#396) a value goes on with the steps it has left: the Federation finds each
+// reached value's depth from the facts the member returned, a member is asked once per distinct
+// number of steps left among the values it is sent, and a value is walked again where it arrives with
+// more steps left than it was walked with.
 func (f *Federation) Walk(ctx context.Context, w Walk) iter.Seq2[Tuple, error] {
 	return func(yield func(Tuple, error) bool) {
 		serving := f.serving[w.Relation]
-		walked := make([]map[string]bool, len(f.members))
-		for _, i := range serving {
-			walked[i] = map[string]bool{}
+		bound := w.MaxDepth
+		if bound <= 0 {
+			bound = math.MaxInt
 		}
-		pending := map[int][]Value{}
-		route := func(v Value, from int) {
-			v = w.Units.FoldValue(v) // a member reached it as it stores it; the next is asked folded (#205)
-			bound := make(map[int]Value, len(w.Bound)+1)
-			for p, c := range w.Bound {
-				bound[p] = c
+		// walked[i][k] is the most steps member i has had left walking from value k
+		walked := make([]map[string]int, len(f.members))
+		for _, i := range serving {
+			walked[i] = map[string]int{}
+		}
+		// after is what a walk with left steps has left d steps on; without a bound it stays unbounded,
+		// so a value is never walked again for arriving by a shorter way
+		after := func(left, d int) int {
+			if left == math.MaxInt {
+				return left
 			}
-			bound[w.From] = v
+			return left - d
+		}
+		pending := map[int]map[int][]Value{}
+		route := func(v Value, from, left int) {
+			v = w.Units.FoldValue(v) // a member reached it as it stores it; the next is asked folded (#205)
+			args := make(map[int]Value, len(w.Bound)+1)
+			for p, c := range w.Bound {
+				args[p] = c
+			}
+			args[w.From] = v
+			k := walkKey(v)
 			for _, i := range serving {
-				k := walkKey(v)
-				if i == from || walked[i][k] {
+				if i == from || walked[i][k] >= left {
 					continue
 				}
-				if h := f.members[i].Holds; h == nil || h(w.Relation, bound) {
-					walked[i][k] = true
-					pending[i] = append(pending[i], v)
+				if h := f.members[i].Holds; h == nil || h(w.Relation, args) {
+					walked[i][k] = left
+					if pending[i] == nil {
+						pending[i] = map[int][]Value{}
+					}
+					pending[i][left] = append(pending[i][left], v)
 				}
 			}
 		}
 		for _, v := range w.Start {
-			route(v, -1)
+			route(v, -1, bound)
 		}
 		for len(pending) > 0 {
 			for _, i := range serving {
-				vals, ok := pending[i]
+				byLeft, ok := pending[i]
 				if !ok {
 					continue
 				}
 				delete(pending, i)
-				ws := f.members[i].Source.(WalkSource)
-				mw := w
-				mw.Start = vals
-				for t, err := range ws.Walk(ctx, mw) {
-					if err != nil {
-						yield(Tuple{}, fmt.Errorf("member %s: %w", f.name(i), err))
-						return
+				lefts := make([]int, 0, len(byLeft))
+				for left := range byLeft {
+					lefts = append(lefts, left)
+				}
+				slices.Sort(lefts)
+				for _, left := range slices.Backward(lefts) {
+					ws := f.members[i].Source.(WalkSource)
+					mw := w
+					mw.Start = byLeft[left]
+					mw.MaxDepth = 0
+					if left < math.MaxInt {
+						mw.MaxDepth = left
 					}
-					if w.From < len(t.Vals) {
-						walked[i][walkKey(w.Units.FoldValue(t.Vals[w.From]))] = true
+					next := map[string][]Value{}
+					for t, err := range ws.Walk(ctx, mw) {
+						if err != nil {
+							yield(Tuple{}, fmt.Errorf("member %s: %w", f.name(i), err))
+							return
+						}
+						if w.From < len(t.Vals) && w.To < len(t.Vals) {
+							k := walkKey(w.Units.FoldValue(t.Vals[w.From]))
+							next[k] = append(next[k], t.Vals[w.To])
+						}
+						if !yield(f.cite(i, t), nil) {
+							return
+						}
 					}
-					if w.To < len(t.Vals) {
-						walked[i][walkKey(w.Units.FoldValue(t.Vals[w.To]))] = true
-						route(t.Vals[w.To], i)
+					// what the member reached, breadth first from its starts: a value reached with steps
+					// left was walked there, and goes on to the others with what it has left
+					depth := map[string]int{}
+					queue := []Value{}
+					for _, v := range mw.Start {
+						if k := walkKey(v); depth[k] == 0 {
+							depth[k] = 1 // depth plus one, so 0 is unseen
+							queue = append(queue, v)
+						}
 					}
-					if !yield(f.cite(i, t), nil) {
-						return
+					for len(queue) > 0 {
+						v := queue[0]
+						queue = queue[1:]
+						k := walkKey(v)
+						d := depth[k] - 1
+						walked[i][k] = max(walked[i][k], after(left, d))
+						for _, n := range next[k] {
+							nk := walkKey(w.Units.FoldValue(n))
+							if depth[nk] != 0 {
+								continue
+							}
+							depth[nk] = d + 2
+							queue = append(queue, w.Units.FoldValue(n))
+							route(n, i, after(left, d+1))
+						}
 					}
 				}
 			}
