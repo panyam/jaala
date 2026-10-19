@@ -376,6 +376,9 @@ func evaluateOn(b *Base, gen int64, q Query, o evalOptions, rewrite func(*Base, 
 	if q, err = lowerExpressions(q, b.reg); err != nil {
 		return nil, err
 	}
+	if q, err = lowerClosures(q); err != nil {
+		return nil, err
+	}
 	written := q
 	if o.after != nil {
 		if written.After, err = cursorOf(written, o.after); err != nil {
@@ -604,6 +607,12 @@ func (b *Base) checkWrittenArity(q Query) error {
 			if a == nil || mixed[a.Relation] {
 				continue
 			}
+			if isClosure(a.Relation) {
+				if err := b.checkClosure(a, derived); err != nil {
+					return err
+				}
+				continue
+			}
 			want, label := -1, ""
 			if n, ok := derived[a.Relation]; ok {
 				want, label = n, fmt.Sprint(n)
@@ -628,7 +637,7 @@ func (b *Base) checkWrittenArity(q Query) error {
 			case neg:
 				return b.arityErr(fmt.Sprintf("query: negated relation %q takes %s args, got %d", a.Relation, label, len(a.Args)), a)
 			case want < 0:
-				if _, isPred := b.reg.Predicate(a.Relation); isPred {
+				if _, isPred := predicateIn(b.reg, a.Relation); isPred {
 					return b.arityErr(fmt.Sprintf("query: %s takes %s args, got %d", a.Relation, label, len(a.Args)), a)
 				}
 			}
@@ -879,12 +888,12 @@ func deferComparisons(lits []Literal, reg *ns.Vocabulary) []Literal {
 	ready := func(l Literal) bool {
 		if l.computed && l.Pos != nil {
 			// A call an expression was written as waits for one of its function's modes (#5).
-			bi, ok := reg.Predicate(l.Pos.Relation)
+			bi, ok := predicateIn(reg, l.Pos.Relation)
 			return !ok || !bi.IsGenerator() || bi.Satisfied(boundFlags(l.Pos, bound)) && !awaitsBinder(l, rest, bound, reg) &&
 				!awaitsOperand(l, rest, bound, reg) && !awaitsOperand(l, others(), bound, reg)
 		}
 		if l.Pos != nil {
-			bi, ok := reg.Predicate(l.Pos.Relation)
+			bi, ok := predicateIn(reg, l.Pos.Relation)
 			switch {
 			case ok && !bi.IsGenerator():
 				// A filter waits for its arguments as a comparison does (#215).
@@ -944,7 +953,7 @@ func deferComparisons(lits []Literal, reg *ns.Vocabulary) []Literal {
 			if !w.computed || w.Pos == nil {
 				continue
 			}
-			if bi, ok := reg.Predicate(w.Pos.Relation); ok && bi.Satisfied(boundFlags(w.Pos, bound)) {
+			if bi, ok := predicateIn(reg, w.Pos.Relation); ok && bi.Satisfied(boundFlags(w.Pos, bound)) {
 				able = append(able, w)
 			}
 		}
@@ -1084,7 +1093,7 @@ func awaitsBinder(lit Literal, rest []Literal, bound map[Var]bool, reg *ns.Vocab
 			if o.Pos == nil || o.computed {
 				continue
 			}
-			if _, ok := reg.Predicate(o.Pos.Relation); ok {
+			if _, ok := predicateIn(reg, o.Pos.Relation); ok {
 				continue
 			}
 			for _, a := range o.Pos.Args {
@@ -1127,7 +1136,7 @@ func awaitsOperand(lit Literal, rest []Literal, bound map[Var]bool, reg *ns.Voca
 			args := o.Pos.Args
 			if o.computed {
 				args = args[len(args)-1:] // a computed call binds its result, and reads the rest
-			} else if _, ok := reg.Predicate(o.Pos.Relation); ok {
+			} else if _, ok := predicateIn(reg, o.Pos.Relation); ok {
 				continue // a generator may itself wait for this call's result
 			}
 			if slices.ContainsFunc(args, func(a Term) bool { return a.Var == t.Var }) {

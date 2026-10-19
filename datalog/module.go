@@ -134,6 +134,9 @@ func resolveAll(v *ns.Vocabulary) (*resolution, error) {
 			rules, err = lowerExprRules(rules, v)
 		}
 		if err == nil {
+			rules, err = lowerClosureRules(rules)
+		}
+		if err == nil {
 			// Folded before its signature is inferred, so a head's 1kV types and bounds the column
 			// as the 1000 V it answers (#224).
 			var q Query
@@ -173,7 +176,7 @@ func resolveAll(v *ns.Vocabulary) (*resolution, error) {
 		for i, rules := range perModule {
 			for _, rule := range rules {
 				for _, a := range ruleAtoms(rule.Body) {
-					if !privates[a.Relation] && !isAggHelper(a.Relation) && !isFact(a.Relation) && !v.Has(a.Relation) {
+					if !privates[a.Relation] && !isAggHelper(a.Relation) && !isFact(a.Relation) && !isClosure(a.Relation) && !v.Has(a.Relation) {
 						return nil, fail(i, checkErr(KindUnknown, fmt.Sprintf("query: module %q rule %q reads %s", mods[i].Path, displayName(rule.Head.Relation), v.Unknown(a.Relation))))
 					}
 				}
@@ -272,6 +275,13 @@ func resolveRule(v *ns.Vocabulary, path string, privates map[string]bool, id int
 }
 
 func renameAtom(a Atom, name func(string) string) Atom {
+	if step, ok := stepOf(a.Relation); ok {
+		// the step's written name is the first argument too, which a printed rule reads
+		step = name(step)
+		a.Relation = closureRelation(step)
+		a.Args = append([]Term{{Const: &ns.Value{S: step}}}, a.Args[1:]...)
+		return a
+	}
 	a.Relation = name(a.Relation)
 	return a
 }

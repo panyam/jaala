@@ -165,7 +165,7 @@ func (u *unfolder) renames(r Rule) bool {
 	if len(r.Body.Literals) != 1 || r.Body.Literals[0].Pos == nil {
 		return false
 	}
-	_, pred := u.reg.Predicate(r.Body.Literals[0].Pos.Relation)
+	_, pred := predicateIn(u.reg, r.Body.Literals[0].Pos.Relation)
 	return !pred
 }
 
@@ -180,7 +180,7 @@ func (u *unfolder) readsValue(body Body, v Var) bool {
 				return true
 			}
 		case l.Pos != nil:
-			if _, ok := u.reg.Predicate(l.Pos.Relation); !ok {
+			if _, ok := predicateIn(u.reg, l.Pos.Relation); !ok {
 				continue
 			}
 			for _, t := range l.Pos.Args {
@@ -227,7 +227,7 @@ func recursiveRelations(rules []Rule) map[string]bool {
 	reads := map[string][]string{}
 	for _, r := range rules {
 		for _, a := range ruleAtoms(r.Body) {
-			reads[r.Head.Relation] = append(reads[r.Head.Relation], a.Relation)
+			reads[r.Head.Relation] = append(reads[r.Head.Relation], relationsRead(a.Relation)...)
 		}
 	}
 	out := map[string]bool{}
@@ -303,13 +303,13 @@ func reached(q Query) map[string]bool {
 	reads := map[string][]string{}
 	for _, r := range q.Rules {
 		for _, a := range ruleAtoms(r.Body) {
-			reads[r.Head.Relation] = append(reads[r.Head.Relation], a.Relation)
+			reads[r.Head.Relation] = append(reads[r.Head.Relation], relationsRead(a.Relation)...)
 		}
 	}
 	out := map[string]bool{}
 	var stack []string
 	for _, a := range ruleAtoms(q.Goal) {
-		stack = append(stack, a.Relation)
+		stack = append(stack, relationsRead(a.Relation)...)
 	}
 	for len(stack) > 0 {
 		n := stack[len(stack)-1]

@@ -1,0 +1,3 @@
+fixture: deps
+query: graph.closure("imports", "app", ?p, 1, 2, ?hops) => ?p, ?hops
+expect: [[api, "1"], [auth, "2"], [cache, "2"], [config, "1"], [db, "2"], [log, "1"], [util, "2"]]

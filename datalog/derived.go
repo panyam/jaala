@@ -240,9 +240,11 @@ func derivedKeys(b *Base, rules []Rule) map[string]string {
 					if bi, ok := b.reg.Predicate(a.Relation); ok && bi.Volatile {
 						volatile = true
 					}
-					if _, derived := byHead[a.Relation]; derived && !seen[a.Relation] {
-						seen[a.Relation] = true
-						stack = append(stack, a.Relation)
+					for _, n := range relationsRead(a.Relation) {
+						if _, derived := byHead[n]; derived && !seen[n] {
+							seen[n] = true
+							stack = append(stack, n)
+						}
 					}
 				}
 			}

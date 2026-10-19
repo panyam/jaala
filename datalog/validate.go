@@ -42,6 +42,9 @@ func validateBound(q Query, reg *ns.Vocabulary, vars []Var) error {
 	if q, err = lowerExpressions(q, reg); err != nil {
 		return err
 	}
+	if q, err = lowerClosures(q); err != nil {
+		return err
+	}
 	written := q
 	q, cols, err := bindGoal(q, bind)
 	if err != nil {

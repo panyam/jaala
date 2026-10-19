@@ -96,7 +96,10 @@ func (b *Base) extendAtom(atom *Atom, bnd *binding, yield func(*binding) error) 
 		return err
 	}
 	rel := atom.Relation
-	if bi, ok := b.reg.Predicate(rel); ok {
+	if isClosure(rel) {
+		return b.extendClosure(atom, bnd, yield)
+	}
+	if bi, ok := predicateIn(b.reg, rel); ok {
 		return extendBuiltin(bi, atom, bnd, b, yield)
 	}
 	if _, ok := b.schemaOf(rel); ok {
@@ -152,7 +155,10 @@ func (b *Base) checkArgValues(atom *Atom, s ns.Schema) error {
 // a solve happens to arrive is checking it sometimes.
 func (b *Base) checkAtom(atom *Atom) error {
 	rel := atom.Relation
-	if bi, ok := b.reg.Predicate(rel); ok {
+	if isClosure(rel) {
+		return b.checkClosure(atom, b.idbArity)
+	}
+	if bi, ok := predicateIn(b.reg, rel); ok {
 		if !bi.Accepts(len(atom.Args)) {
 			return b.arityErr(fmt.Sprintf("query: %s takes %s args, got %d", rel, bi.ArityLabel(), len(atom.Args)), atom)
 		}
@@ -300,7 +306,7 @@ func (b *Base) atomHolds(atom *Atom, bnd *binding) (bool, error) {
 // on the positive path, so a variadic built-in cannot be accepted in a positive atom while its
 // negation is rejected.
 func (b *Base) arityAccepts(rel string, n int) (ok bool, known bool) {
-	if bi, found := b.reg.Predicate(rel); found {
+	if bi, found := predicateIn(b.reg, rel); found {
 		return bi.Accepts(n), true
 	}
 	if s, found := b.schemaOf(rel); found {
@@ -314,7 +320,7 @@ func (b *Base) arityAccepts(rel string, n int) (ok bool, known bool) {
 
 // arityLabelOf renders a relation's accepted argument count for an error message.
 func (b *Base) arityLabelOf(rel string) string {
-	if bi, ok := b.reg.Predicate(rel); ok {
+	if bi, ok := predicateIn(b.reg, rel); ok {
 		return bi.ArityLabel()
 	}
 	if s, ok := b.schemaOf(rel); ok {

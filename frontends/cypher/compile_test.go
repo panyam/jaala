@@ -45,17 +45,25 @@ var depsCases = []compileCase{
 	{`MATCH (u:Package {name: 'util'})<-[:IMPORTS]-(x) RETURN x`,
 		`pkg("util", _), imports(?x, "util") => ?x`, [][]string{{"log"}}},
 	{`MATCH (a:Package {name: 'app'})-[:IMPORTS*]->(d) RETURN DISTINCT d.name`,
-		"cypher_reach1(?x, ?y) :- imports(?x, ?y);\ncypher_reach1(?x, ?y) :- cypher_reach1(?x, ?z), imports(?z, ?y);\n" +
-			`pkg("app", _), cypher_reach1("app", ?d) => ?d`, [][]string{{"api"}, {"log"}, {"util"}}},
+		`pkg("app", _), graph.closure("imports", "app", ?d, 1, 0, _) => ?d`, [][]string{{"api"}, {"log"}, {"util"}}},
 	{`MATCH (a {name: 'app'})-[:IMPORTS*2..]->(d) RETURN d`,
-		"cypher_reach1(?x, ?y) :- imports(?x, ?y1), imports(?y1, ?y);\ncypher_reach1(?x, ?y) :- cypher_reach1(?x, ?z), imports(?z, ?y);\n" +
-			`cypher_reach1("app", ?d) => ?d`, [][]string{{"log"}, {"util"}}},
+		`graph.closure("imports", "app", ?d, 2, 0, _) => ?d`, [][]string{{"log"}, {"util"}}},
 	{`MATCH (a {name: 'app'})-[:IMPORTS*1..2]->(d) RETURN d`,
-		"cypher_reach1(?x, ?y) :- imports(?x, ?y);\ncypher_reach1(?x, ?y) :- imports(?x, ?y1), imports(?y1, ?y);\n" +
-			`cypher_reach1("app", ?d) => ?d`, [][]string{{"api"}, {"log"}}},
+		`graph.closure("imports", "app", ?d, 1, 2, _) => ?d`, [][]string{{"api"}, {"log"}}},
 	{`MATCH (a {name: 'util'})<-[:IMPORTS*2]-(d) RETURN d`,
-		"cypher_reach1(?x, ?y) :- imports(?y1, ?x), imports(?y, ?y1);\n" +
-			`cypher_reach1("util", ?d) => ?d`, [][]string{{"api"}}},
+		`graph.closure("imports", ?d, "util", 2, 2, _) => ?d`, [][]string{{"api"}}},
+	// Any length, a long bound, none at all, a quantifier and a selector or shortestPath, which keep the
+	// pattern's matches (#281).
+	{`MATCH (a {name: 'app'})-[:IMPORTS*0..20]->(d) RETURN d`,
+		`graph.closure("imports", "app", ?d, 0, 20, _) => ?d`, [][]string{{"api"}, {"app"}, {"log"}, {"util"}}},
+	{`MATCH (a {name: 'app'})-[:IMPORTS]->{2,3}(d) RETURN d`,
+		`graph.closure("imports", "app", ?d, 2, 3, _) => ?d`, [][]string{{"log"}, {"util"}}},
+	{`MATCH (a {name: 'app'})-[:IMPORTS]->+(d) RETURN d`,
+		`graph.closure("imports", "app", ?d, 1, 0, _) => ?d`, [][]string{{"api"}, {"log"}, {"util"}}},
+	{`MATCH SHORTEST 1 (a {name: 'app'})-[:IMPORTS]->+(d {name: 'util'}) RETURN d`,
+		`graph.closure("imports", "app", ?d, 1, 0, _), ?d = "util" => ?d`, [][]string{{"util"}}},
+	{`MATCH shortestPath((a {name: 'app'})-[:IMPORTS*]->(d)) RETURN d`,
+		`graph.closure("imports", "app", ?d, 1, 0, _) => ?d`, [][]string{{"api"}, {"log"}, {"util"}}},
 	{`MATCH (a {name: 'api'})-[:IMPORTS]-(n) RETURN n`,
 		"cypher_step1(?x, ?y) :- imports(?x, ?y);\ncypher_step1(?x, ?y) :- imports(?y, ?x);\n" +
 			`cypher_step1("api", ?n) => ?n`, [][]string{{"app"}, {"log"}}},
@@ -83,8 +91,7 @@ var depsCases = []compileCase{
 		"cypher_match1(\"app\") :- pkg(\"app\", _);\ncypher_match1(\"log\") :- pkg(\"log\", _);\n" +
 			`cypher_match1(?p) => ?p`, [][]string{{"app"}, {"log"}}},
 	{`MATCH (a:Package)-[:IMPORTS*]->(d) WHERE d.name IN ['log', 'util'] RETURN a, d.name`,
-		"cypher_reach1(?x, ?y) :- imports(?x, ?y);\ncypher_reach1(?x, ?y) :- cypher_reach1(?x, ?z), imports(?z, ?y);\n" +
-			"cypher_match1(?a, \"log\") :- pkg(?a, _), cypher_reach1(?a, \"log\");\ncypher_match1(?a, \"util\") :- pkg(?a, _), cypher_reach1(?a, \"util\");\n" +
+		"cypher_match1(?a, \"log\") :- pkg(?a, _), graph.closure(\"imports\", ?a, \"log\", 1, 0, _);\ncypher_match1(?a, \"util\") :- pkg(?a, _), graph.closure(\"imports\", ?a, \"util\", 1, 0, _);\n" +
 			`cypher_match1(?a, ?d) => ?a, ?d`, [][]string{{"api", "log"}, {"api", "util"}, {"app", "log"}, {"app", "util"}, {"log", "util"}}},
 	// A key the alternative reads again stays a variable, and so does one it equates twice.
 	{`MATCH (p:Package) WHERE p.name = 'app' AND p.name STARTS WITH 'a' OR p.name = 'log' RETURN p`,
@@ -117,12 +124,10 @@ var depsCases = []compileCase{
 	// A WITH stage is a rule; what it hands on is its head, a node keeping its labels, so a column
 	// read after it brings its relation back.
 	{`MATCH (a:Package)-[:IMPORTS*]->(d) WITH a, count(DISTINCT d) AS n WHERE n > 1 RETURN a.name, n ORDER BY n DESC`,
-		"cypher_reach1(?x, ?y) :- imports(?x, ?y);\ncypher_reach1(?x, ?y) :- cypher_reach1(?x, ?z), imports(?z, ?y);\n" +
-			"cypher_with1(?a, count(distinct ?d)) :- pkg(?a, _), cypher_reach1(?a, ?d);\n" +
+		"cypher_with1(?a, count(distinct ?d)) :- pkg(?a, _), graph.closure(\"imports\", ?a, ?d, 1, 0, _);\n" +
 			`cypher_with1(?a, ?n), ?n > 1 => ?a, ?n order by ?n desc`, [][]string{{"app", "3"}, {"api", "2"}}},
 	{`MATCH (a:Package {name: 'app'})-[:IMPORTS*]->(b:Package) WITH b RETURN b.license`,
-		"cypher_reach1(?x, ?y) :- imports(?x, ?y);\ncypher_reach1(?x, ?y) :- cypher_reach1(?x, ?z), imports(?z, ?y);\n" +
-			"cypher_with1(?b) :- pkg(\"app\", _), pkg(?b, _), cypher_reach1(\"app\", ?b);\n" +
+		"cypher_with1(?b) :- pkg(\"app\", _), pkg(?b, _), graph.closure(\"imports\", \"app\", ?b, 1, 0, _);\n" +
 			`cypher_with1(?b), pkg(?b, ?b_license) => ?b_license`, [][]string{{"absent"}, {""}, {"Apache-2.0"}}},
 	// control: a carried node whose columns nothing reads needs no atom after the WITH.
 	{`MATCH (b:Package) WITH b RETURN b`,
@@ -206,8 +211,8 @@ var codeCases = []compileCase{
 		`node(?f, "Function"), node(?g, "Function"), edge(?f, "CALLS", ?g), attr(?f, "name", "main"), attr(?g, "name", ?g_name) => ?g_name`,
 		[][]string{{"help"}, {"parse"}}},
 	{`MATCH (:File {name: 'a.go'})-[:CONTAINS]->(f)-[:CALLS*]->(g) RETURN DISTINCT g`,
-		"cypher_reach1(?x, ?y) :- edge(?x, \"CALLS\", ?y);\ncypher_reach1(?x, ?y) :- cypher_reach1(?x, ?z), edge(?z, \"CALLS\", ?y);\n" +
-			`node(?_n, "File"), edge(?_n, "CONTAINS", ?f), cypher_reach1(?f, ?g), attr(?_n, "name", "a.go") => ?g`,
+		"cypher_step1(?x, ?y) :- edge(?x, \"CALLS\", ?y);\n" +
+			`node(?_n, "File"), edge(?_n, "CONTAINS", ?f), graph.closure("cypher_step1", ?f, ?g, 1, 0, _), attr(?_n, "name", "a.go") => ?g`,
 		[][]string{{"f:help"}, {"f:lex"}, {"f:parse"}}},
 	{`MATCH (f:Function) WHERE f.doc IS NULL RETURN f`,
 		`node(?f, "Function"), not attr(?f, "doc", _) => ?f`, [][]string{{"f:help"}, {"f:lex"}, {"f:parse"}}},
@@ -281,9 +286,8 @@ func TestGapsAreRefusedByName(t *testing.T) {
 		{`MATCH p = (a)-[:IMPORTS]->(b) RETURN p`, 280, "p ="},
 		{`MATCH (a)-[r:IMPORTS*]->(b) RETURN a`, 280, "-[r"},
 		{`MATCH (a)-[:IMPORTS]->(b) RETURN length(a)`, 280, "length"},
-		{`MATCH (a), (b) RETURN shortestPath((a)-[*]->(b))`, 281, "shortestPath"},
-		{`MATCH (a)-[:IMPORTS*0..2]->(b) RETURN b`, 281, "-[:IMPORTS*0"},
-		{`MATCH (a)-[:IMPORTS*1..20]->(b) RETURN b`, 281, "-[:IMPORTS*1"},
+		{`MATCH (a), (b) RETURN shortestPath((a)-[*]->(b))`, 280, "shortestPath"},
+		{`MATCH ((a)-[:IMPORTS]->(b)){1,3} RETURN b`, 280, "((a)"},
 		{`OPTIONAL MATCH (a:Package) RETURN a`, 282, "OPTIONAL"},
 		{`MATCH (a:Package) OPTIONAL MATCH (a)-[:IMPORTS]->(b) RETURN a, b`, 282, "OPTIONAL"},
 		{`MATCH (a:Package) UNWIND [1, 2] AS x RETURN x`, 283, "UNWIND"},
@@ -371,15 +375,15 @@ func asError(err error, target **cypher.Error) bool {
 // The helper names Compile writes stay clear of the vocabulary's own.
 func TestHelpersAvoidTheVocabularysNames(t *testing.T) {
 	v, b := guide.Deps(t)
-	if err := v.AddModule("cypher_reach1", datalog.LanguageName, "x(?a) :- pkg(?a, _);", ""); err != nil {
+	if err := v.AddModule("cypher_step1", datalog.LanguageName, "x(?a) :- pkg(?a, _);", ""); err != nil {
 		t.Fatal(err)
 	}
 	_ = b
-	p, err := cypher.Compile(v, depsGraph, `MATCH (a {name: 'app'})-[:IMPORTS*]->(d) RETURN d`)
+	p, err := cypher.Compile(v, depsGraph, `MATCH (a {name: 'app'})-[:IMPORTS*]-(d) RETURN d`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(p.Text, "cypher_reach2(") || strings.Contains(p.Text, "cypher_reach1(") {
+	if !strings.Contains(p.Text, "cypher_step2(") || strings.Contains(p.Text, "cypher_step1(") {
 		t.Errorf("wrote %s", p.Text)
 	}
 	if !slices.Contains(p.Columns, "d") {

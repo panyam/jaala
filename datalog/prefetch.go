@@ -42,7 +42,7 @@ func prefetch(b *Base, lits, negs []Literal) error {
 		if atom == nil {
 			continue
 		}
-		if bi, ok := b.reg.Predicate(atom.Relation); ok {
+		if bi, ok := predicateIn(b.reg, atom.Relation); ok {
 			if bi.Volatile {
 				return nil
 			}

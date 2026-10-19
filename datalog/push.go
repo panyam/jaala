@@ -230,7 +230,7 @@ func (b *Base) filters(lit Literal, vars map[Var]bool) bool {
 	if lit.Pos == nil {
 		return false
 	}
-	if bi, ok := b.reg.Predicate(lit.Pos.Relation); !ok || bi.IsGenerator() || b.filterer == nil || !b.filterer.PushesFilter(lit.Pos.Relation) {
+	if bi, ok := predicateIn(b.reg, lit.Pos.Relation); !ok || bi.IsGenerator() || b.filterer == nil || !b.filterer.PushesFilter(lit.Pos.Relation) {
 		return false
 	}
 	for _, t := range lit.Pos.Args {
@@ -567,7 +567,7 @@ func prefetchPushed(b *Base, lits []Literal) error {
 		if atom == nil {
 			continue
 		}
-		if bi, ok := b.reg.Predicate(atom.Relation); ok {
+		if bi, ok := predicateIn(b.reg, atom.Relation); ok {
 			if bi.Volatile {
 				return nil
 			}

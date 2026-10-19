@@ -45,7 +45,11 @@ func (s SemiNaive) EvalTable(ctx context.Context, q Query, b *Base, opts ...Opti
 	if !s.WrittenOrder {
 		rewrite = func(b *Base, q Query) Query {
 			b.run.batch = true // the planned order asks a batching Source ahead (see prefetch)
-			q = reuseDerived(b, withoutUnreached(bindEqualities(q)))
+			q = bindEqualities(q)
+			if !b.witnessing() {
+				q = walkSteps(b, q) // a witness shows the step relation's node
+			}
+			q = reuseDerived(b, withoutUnreached(q))
 			if !b.witnessing() {
 				q = unfold(b, q) // inlining would remove a relation's node from the witness
 			}
@@ -288,7 +292,7 @@ func scanSize(b *Base, lit Literal) (int, error) {
 	if lit.Pos == nil {
 		return math.MaxInt, nil
 	}
-	if _, ok := b.reg.Predicate(lit.Pos.Relation); ok {
+	if _, ok := predicateIn(b.reg, lit.Pos.Relation); ok {
 		return math.MaxInt, nil
 	}
 	if isPushed(lit.Pos.Relation) {

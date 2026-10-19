@@ -7,15 +7,16 @@
 // reads a query against one and returns the Program: its text, parsed, the columns as Cypher names
 // them, and the variable each $parameter binds. The text is ordinary jaala, so Validate, Eval,
 // Explain and Locate read it as they read any program. Helper relations Compile writes start with
-// cypher_: a variable-length step (step, reach), a WITH stage (with, its head what the stage hands
+// cypher_: a step of several types or either direction (step), a WITH stage (with, its head what the stage hands
 // on), a pattern test or EXISTS (exists), the alternatives of an OR (match), and a UNION (union, with
 // a part rule for a part that aggregates). An alternative that equates a node with a text, as each of
-// an IN's does, writes the text in the node's place in its rule, so demand starts a variable-length
-// match from it (#392).
+// an IN's does, writes the text in the node's place in its rule, so a variable-length match walks
+// from it (#392).
 //
 // It compiles the part of Cypher a program expresses today: MATCH over node and relationship
-// patterns (labels, inline properties, either direction, several types, variable length as recursion
-// or, when bounded, as the paths of each length up to 8 hops), WHERE (comparisons, AND, OR, XOR,
+// patterns (labels, inline properties, either direction, several types, a variable length, *m..n
+// or a quantifier, as graph.closure over the step's relation (#281), and shortestPath or a path
+// selector, which keep the match's nodes), WHERE (comparisons, AND, OR, XOR,
 // NOT, IS NULL, STARTS WITH, ENDS WITH, CONTAINS, =~, IN over a written list, a label test, a
 // pattern, EXISTS { } and COUNT { }, the last a body aggregate so a node with no match counts 0),
 // WITH stages with their aggregates and WHERE, UNION and UNION ALL, CALL proc(args) YIELD over a
@@ -35,12 +36,12 @@
 //   - A property read through the graph's Props relation, or a Derived one, is a match: a node without it has no row,
 //     where Cypher would answer null (#282).
 //   - A variable-length match is reachability: it doesn't keep Cypher's rule that a path uses a
-//     relationship once, which can differ for a bounded range over a cycle (#280).
+//     relationship once, which can differ for a bounded range over a cycle (#280). A zero-length one
+//     from a node nothing else binds pairs only the nodes its relationship's relation holds.
 //   - collect answers a text listing the values, not a list (#283).
 //
 // The rest it refuses with an *Error naming the issue that would let it: a relationship variable
-// read anywhere (#279), paths as values (#280), shortest paths and long or zero-length bounds
-// (#281), OPTIONAL MATCH (#282), lists, maps and UNWIND (#283), functions beyond the aggregates
+// read anywhere (#279), paths as values and quantified path patterns (#280), OPTIONAL MATCH (#282), lists, maps and UNWIND (#283), functions beyond the aggregates
 // above (#284), writes (#287), USE and LOAD CSV (#289), CALL { } subqueries, an ORDER BY, SKIP or
 // LIMIT inside a WITH or a UNION part, a label expression beyond A&B and a query without a MATCH
 // or a RETURN (#364), and a WHERE of more than 16 alternatives (#388). It parses all of Neo4j 5's

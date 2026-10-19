@@ -98,6 +98,15 @@ func callsMembers(v *ns.Vocabulary, q datalog.Query, goalOnly bool) string {
 		}
 	}
 	check := func(rel string, args []datalog.Term) string {
+		if rel == "graph.closure" { // the engine's (#281): its first argument names what it walks
+			if len(args) != 6 || args[0].Const == nil {
+				return "a closure without six arguments and a relation named"
+			}
+			if e, err := v.Lookup(args[0].Const.S); err != nil || len(e.Args) != 2 {
+				return "a closure over " + args[0].Const.S + ", no relation of two arguments"
+			}
+			return ""
+		}
 		e, err := v.Lookup(rel)
 		if err != nil {
 			if goalOnly || strings.Contains(rel, ".") {

@@ -175,7 +175,7 @@ func lowerFactLiteral(l Literal, reg *ns.Vocabulary, derived map[string]bool) (L
 		return l, nil
 	}
 	a := *l.Pos
-	switch _, isPred := reg.Predicate(a.Relation); {
+	switch _, isPred := predicateIn(reg, a.Relation); {
 	case isPred:
 		return l, factErr(&a, fmt.Sprintf("query: %s is a predicate, whose matches are no stored facts, so \"as ?%s\" names none", a.Relation, a.Fact), "drop `as ?"+string(a.Fact)+"`")
 	case derived[a.Relation] || (reg.Has(a.Relation) && !isBase(reg, a.Relation)):

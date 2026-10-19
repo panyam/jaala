@@ -299,6 +299,10 @@ type generator struct {
 	// avgs turns a drawn sum into an avg now and then (#284), from a stream of its own, so a seed
 	// writing no sum is the program it was.
 	avgs *rand.Rand
+	// closures turns a literal of two nodes into graph.closure over its relation now and then (#281),
+	// from a stream of its own, as facts does; nclosures numbers the hops it binds.
+	closures  *rand.Rand
+	nclosures int
 }
 
 // newGenerator draws a program for facts from rnd. Arithmetic depends on the graph's units as drawn,
@@ -311,6 +315,9 @@ func newGenerator(rnd *rand.Rand, facts genFacts) *generator {
 	h = fnv.New64a()
 	fmt.Fprint(h, "avgs", facts.n, facts.edges, facts.weights)
 	g.avgs = rand.New(rand.NewSource(int64(h.Sum64())))
+	h = fnv.New64a()
+	fmt.Fprint(h, "closures", facts.n, facts.edges, facts.weights)
+	g.closures = rand.New(rand.NewSource(int64(h.Sum64())))
 	if facts.units == nil {
 		h := fnv.New64a()
 		fmt.Fprint(h, "arith", facts.n, facts.edges, facts.weights)
@@ -552,7 +559,11 @@ func (g *generator) body(layer int, recursive bool) *genBody {
 				}
 			}
 		}
-		g.atom(b, from[g.pick(len(from))], false)
+		r := from[g.pick(len(from))]
+		g.atom(b, r, false)
+		if i != same {
+			g.closure(b, r)
+		}
 	}
 	if g.chance(0.08) {
 		g.bodyAggregate(b, layer)
@@ -567,6 +578,28 @@ func (g *generator) body(layer int, recursive bool) *genBody {
 	g.compareFacts(b)
 	g.compute(b)
 	return b
+}
+
+// closure now and then makes the literal of two nodes just drawn a walk of its relation (#281), min 1
+// to 3 steps and max none or a few more, binding the hops it took to a number half the time. A body
+// never walks its own relation, which stratification refuses.
+func (g *generator) closure(b *genBody, r genRel) {
+	l := &b.lits[len(b.lits)-1]
+	if g.closures == nil || len(r.cols) != 2 || r.cols[0] != genNode || r.cols[1] != genNode || l.fact != "" || g.closures.Float64() >= 0.12 {
+		return
+	}
+	lo, hi := 1+g.closures.Intn(3), 0
+	if g.closures.Float64() < 0.6 {
+		hi = lo + g.closures.Intn(3)
+	}
+	hops := "_"
+	if g.closures.Float64() < 0.5 {
+		g.nclosures++
+		hops = fmt.Sprintf("?h%d", g.nclosures)
+		b.bound[genNum] = append(b.bound[genNum], hops)
+	}
+	l.rel, l.args = closureName, []string{strconv.Quote(r.name), l.args[0], l.args[1], strconv.Itoa(lo), strconv.Itoa(hi), hops}
+	g.shapes["closure"] = true
 }
 
 // compareFacts now and then requires two of the facts b binds to differ, or to be one, as a Cypher
@@ -1595,7 +1628,7 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 			}
 		}
 	}
-	shapes := []string{"program", "recursion", "negation", "head aggregate", "goal aggregate", "body aggregate", "bound goal", "set-bound goal", "arithmetic", "bound fact", "avg"}
+	shapes := []string{"program", "recursion", "negation", "head aggregate", "goal aggregate", "body aggregate", "bound goal", "set-bound goal", "arithmetic", "bound fact", "avg", "closure"}
 	var counts, issues []string
 	for _, sh := range shapes {
 		counts = append(counts, fmt.Sprintf("%s %d/%d", sh, compared[sh+"/plain"], compared[sh+"/witnessed"]))
@@ -1612,6 +1645,9 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 	}
 	if compared["arithmetic/plain"] == 0 || compared["arithmetic/witnessed"] == 0 {
 		t.Errorf("control: no program computed with arithmetic (#209)")
+	}
+	if compared["closure/plain"] == 0 || compared["closure/witnessed"] == 0 {
+		t.Errorf("control: no program walked a relation with graph.closure (#281)")
 	}
 	if compared["bound fact/plain"] == 0 || compared["bound fact/witnessed"] == 0 {
 		t.Errorf("control: no program bound an edge's fact (#279)")

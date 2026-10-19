@@ -1,6 +1,9 @@
 package cypher
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
 
 // What parse reads only to refuse it (#382): each function here reads a construct's whole syntax and
 // records a refusal naming its gap, so the rest of the text is still checked. Backfilling a gap moves
@@ -324,24 +327,20 @@ func (p *parser) prefix() *Error {
 	}
 }
 
-// pathSelector reads a selector before a pattern (SHORTEST k, ALL SHORTEST, ANY, ANY SHORTEST),
-// refused, and ALL [PATHS], which keeps every match as a match does anyway.
+// pathSelector reads a selector before a pattern (SHORTEST k, ALL SHORTEST, ANY, ANY SHORTEST, ALL
+// [PATHS]). Each chooses among a pair of nodes' paths, and a match answers the nodes, which every
+// selector keeps, so it compiles as the pattern alone.
 func (p *parser) pathSelector() *Error {
 	t := p.peek()
 	if !(t.is("SHORTEST") || t.is("ALL") || t.is("ANY")) || p.peekAt(1).sym("=") {
 		return nil
 	}
-	plain := true
 	for {
 		w := p.peek()
 		switch {
 		case w.is("SHORTEST"), w.is("ANY"), w.is("GROUP"), w.is("GROUPS"), w.kind == tNumber:
-			plain = false
 		case w.is("ALL"), w.is("PATH"), w.is("PATHS"):
 		default:
-			if !plain {
-				p.refuse(gapShortest.at(t.pos, "a path selector (%s)", strings.TrimSpace(p.text[t.pos.Offset:w.pos.Offset])))
-			}
 			if !w.sym("(") && !(w.kind == tIdent && p.peekAt(1).sym("=")) {
 				return p.unexpected("( to start the pattern")
 			}
@@ -354,7 +353,7 @@ func (p *parser) pathSelector() *Error {
 // quantifiedPath reads a parenthesized path, ((a)-->(b) [WHERE expr]) and its quantifier, refused.
 func (p *parser) quantifiedPath() *Error {
 	t := p.next() // (
-	p.refuse(gapShortest.at(t.pos, "a quantified path pattern"))
+	p.refuse(gapPaths.at(t.pos, "a quantified path pattern"))
 	if _, err := p.pattern(); err != nil {
 		return err
 	}
@@ -366,30 +365,66 @@ func (p *parser) quantifiedPath() *Error {
 	if err := p.expectSym(")", ") to end the path pattern"); err != nil {
 		return err
 	}
-	p.quantifier(true)
+	p.quantifier(true, nil)
 	return nil
 }
 
 // quantifier reads a quantifier after a parenthesized path or a relationship (+, *, {n}, {n,}, {,m}
 // or {n,m}), saying whether there was one. After a relationship, + and * count only before the next
-// node.
-func (p *parser) quantifier(path bool) bool {
+// node, and r, when set, is given the length the quantifier says, as *min..max would; one already of a
+// variable length gets min -2, which the caller refuses.
+func (p *parser) quantifier(path bool, r *relPat) bool {
 	t := p.peek()
+	lo, hi := 0, -1
 	switch {
 	case (t.sym("+") || t.sym("*")) && (path || p.peekAt(1).sym("(")):
 		p.i++
-		return true
+		if t.sym("+") {
+			lo = 1
+		}
 	case t.sym("{"):
 		n := 1
+		var nums []string
+		comma := false
 		for p.peekAt(n).kind == tNumber || p.peekAt(n).sym(",") {
+			if p.peekAt(n).sym(",") {
+				comma = true
+			} else if !comma {
+				nums = append(nums, p.peekAt(n).val)
+			} else {
+				nums = append(nums, ","+p.peekAt(n).val)
+			}
 			n++
 		}
-		if n > 1 && p.peekAt(n).sym("}") {
-			p.i += n + 1
+		if n == 1 || !p.peekAt(n).sym("}") {
+			return false
+		}
+		p.i += n + 1
+		for _, s := range nums {
+			v, err := strconv.Atoi(strings.TrimPrefix(s, ","))
+			if err != nil {
+				continue
+			}
+			if strings.HasPrefix(s, ",") {
+				hi = v
+			} else {
+				lo = v
+			}
+		}
+		if !comma {
+			hi = lo
+		}
+	default:
+		return false
+	}
+	if r != nil {
+		if r.varLen {
+			r.min = -2
 			return true
 		}
+		r.varLen, r.min, r.max = true, lo, hi
 	}
-	return false
+	return true
 }
 
 // typeTest reads a type predicate, x :: TYPE or x IS [NOT] TYPED TYPE (IS and NOT read already),
