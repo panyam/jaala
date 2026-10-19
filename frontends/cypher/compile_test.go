@@ -455,6 +455,7 @@ func TestMistakesSayWhatTheGraphHolds(t *testing.T) {
 		{`MATCH p = (a)-[:DEPENDS_ON]->(b) RETURN relationships(p)`, "relationships(p) reads each relationship's id, and DEPENDS_ON is derived", "-[:DEPENDS_ON]"},
 		{`MATCH (a)-[:IMPORTS]->(b) WHERE 'x' IN nodes(a) RETURN b`, "nodes() reads a path variable", "IN nodes"},
 		{`MATCH (a:Package) RETURN 'x'`, "RETURN of a constant", "'x'"},
+		{`MATCH (a:Package) RETURN [1, 2]`, "RETURN of a constant", "[1, 2]"},
 		{`MATCH (a:Package) RETURN a extra`, `unexpected "extra"`, "extra"},
 		{`MATCH (p:Package) WHERE p.name = $x OR p.name = 'log' RETURN p`, "which datalog.Bind can't reach: compile with cypher.Params", "$x"},
 		{`MATCH (p:Package {name: $x}) WHERE p.license = 'MIT' OR p.license = '' RETURN p.license`, "which datalog.Bind can't reach", "$x"},

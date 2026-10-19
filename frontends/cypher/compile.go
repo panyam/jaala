@@ -1758,7 +1758,7 @@ func (c *compiler) column(it returnItem) (column, *Error) {
 	case paramRef:
 		return col, errAt(it.e.at(), "RETURN of a parameter: its value is the one the host binds")
 	}
-	if isConst(it.e) {
+	if _, list := it.e.(listLit); isConst(it.e) || list {
 		return col, errAt(it.e.at(), "RETURN of a constant: jaala's columns are variables")
 	}
 	f, err := c.term(it.e)
