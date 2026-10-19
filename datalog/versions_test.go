@@ -395,6 +395,38 @@ func TestDiffIsTheSetDifferenceOfTwoVersions(t *testing.T) {
 	}
 }
 
+func TestADiffAppliedToTheFirstVersionGivesTheSecond(t *testing.T) {
+	src := versionedGraph()
+	b := baseFor(std(src))
+	timed, _ := src.TimedTuples(bg, "edge")
+	changed := 0
+	for from := range ns.Version(3) {
+		var base []ns.Tuple
+		for _, tt := range timed {
+			if tt.Versions.Contains(from) {
+				base = append(base, ns.Tuple{Vals: tt.Vals, Cites: tt.CitesAt(from)})
+			}
+		}
+		for to := range ns.Version(3) {
+			d, err := b.Diff(bg, "edge", from, to)
+			if err != nil {
+				t.Fatal(err)
+			}
+			changed += len(d.Added) + len(d.Removed)
+			got := tupleTexts(d.Changes("edge").Apply("edge", base))
+			slices.Sort(got)
+			want := factsAt(t, b, to)
+			slices.Sort(want)
+			if !slices.Equal(got, want) {
+				t.Errorf("Diff(%d, %d) applied to %d gives %v, want %v", from, to, from, got, want)
+			}
+		}
+	}
+	if changed == 0 {
+		t.Fatal("control: no pair of versions differs")
+	}
+}
+
 func TestDiffRefusesWhatItCannotRead(t *testing.T) {
 	for _, tc := range []struct {
 		b        *Base

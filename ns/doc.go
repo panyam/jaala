@@ -40,4 +40,8 @@
 // serves each version as a Source of its own, so a question at a version reaches its store, one
 // implementing TimedLookupSource answers a bound call across every version at once, and
 // Federation.Timed joins timed members with members that don't change between versions.
+//
+// The engine never writes to a Source. A host edits its facts through a Changes, a change set of the
+// facts to add to and remove from each base relation, which it builds from an edit (or from the diff
+// between two versions) and applies to its own store, checked first against the vocabulary.
 package ns
