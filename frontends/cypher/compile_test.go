@@ -119,6 +119,10 @@ var depsCases = []compileCase{
 	{`MATCH (p:Package) OPTIONAL MATCH (p)-[:IMPORTS]->(d) WHERE d.name <> 'log' RETURN p, d`,
 		`pkg(?p, _), optional { imports(?p, ?d), ?d != "log" } => ?p, ?d`,
 		[][]string{{"api", "absent"}, {"app", "api"}, {"log", "util"}, {"util", "absent"}}},
+	{`MATCH (a) OPTIONAL MATCH (p)-[:IMPORTS]->(a) RETURN a, p`,
+		"cypher_node1(?n) :- pkg(?n, _);\n" +
+			`cypher_node1(?a), optional { imports(?p, ?a) } => ?a, ?p`,
+		[][]string{{"api", "app"}, {"app", "absent"}, {"log", "api"}, {"util", "log"}}},
 	{`MATCH (a:Package), (b:Package) WHERE a.license = b.license RETURN a, b`,
 		`pkg(?a, ?a_license), pkg(?b, ?b_license), ?a_license = ?b_license, not absent(?a_license), not absent(?b_license) => ?a, ?b`,
 		[][]string{{"app", "app"}, {"log", "log"}, {"util", "util"}}},
