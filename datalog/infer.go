@@ -26,10 +26,23 @@ type typer struct {
 	// ignoreDecl is a relation whose declared head types are set aside, so its declarations can be
 	// compared with what its rules alone produce.
 	ignoreDecl string
+	// recursive are the derived relations on a cycle, and known the types argTypes worked out for the
+	// others, keyed with ignoreDecl. A relation on no cycle reads only relations below it, none of which
+	// a walk reaching it can be typing further up, so its types don't depend on the walk: without the
+	// memo each head column walked its rule's body again, and a chain of n one-rule relations took 3^n
+	// (FuzzCompile's sixteen chained WITH * stages ran for minutes).
+	recursive map[string]bool
+	known     map[[2]string]typed
+}
+
+// typed is a derived relation's labels and types, as argTypes returns them.
+type typed struct {
+	labels []string
+	types  []ns.ArgType
 }
 
 func newTyper(reg *ns.Vocabulary, rules []Rule) *typer {
-	t := &typer{reg: reg, rules: map[string][]Rule{}}
+	t := &typer{reg: reg, rules: map[string][]Rule{}, recursive: recursiveRelations(rules), known: map[[2]string]typed{}}
 	for _, r := range rules {
 		t.rules[r.Head.Relation] = append(t.rules[r.Head.Relation], r)
 	}
@@ -121,6 +134,10 @@ func (t *typer) argTypes(rel string, seen map[string]bool) ([]string, []ns.ArgTy
 	if !t.isDerived(rel) || seen[rel] {
 		return nil, nil, false
 	}
+	key := [2]string{rel, t.ignoreDecl}
+	if k, ok := t.known[key]; ok {
+		return k.labels, slices.Clone(k.types), true
+	}
 	labels := t.headLabels(rel)
 	declared, _ := t.declared(rel)
 	types := make([]ns.ArgType, len(labels))
@@ -130,6 +147,9 @@ func (t *typer) argTypes(rel string, seen map[string]bool) ([]string, []ns.ArgTy
 		} else {
 			types[j] = t.ofHead(rel, j, seen)
 		}
+	}
+	if !t.recursive[rel] {
+		t.known[key] = typed{labels, types}
 	}
 	return labels, types, true
 }
