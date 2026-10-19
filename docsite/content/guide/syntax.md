@@ -45,6 +45,22 @@ Two facts are equal only when they're the same fact, so `?r != ?s` keeps a path 
 
 Only a positive atom over a base relation can name its fact. A derived relation's tuples, a predicate's matches and a negated atom's absence aren't facts any store holds, so `as` there is refused. A store keeping more about a fact (where an edge came from, what it costs) keys it by the fact's id, and a query reads that through an ordinary relation of the host's: `imports(?a, ?b) as ?r, imports_attr(?r, "kind", ?k)`. The [stores]({{.Site.PathPrefix}}/guide/stores/) page says how a host gives its facts ids.
 
+## Optional matches
+
+`optional { ... }` holds whether the literals in its braces match or not ([#282](https://github.com/panyam/jaala/issues/282)). When they match, the row is there once per match, as a join would give it. When they don't, the row is still there, and what only the braces bind is `absent`. Every package, with its tests where it has any:
+
+{{ demo "demos/guide/syntax-optional.yaml" }}
+
+It's what Cypher's `OPTIONAL MATCH` and SQL's left outer join do, and what a program used to say with a second rule, a `not` and a sentinel such as `""` for the missing value. The braces can hold several literals, filters included, and then they match together or not at all. Here a web package's imports are kept only when security owns them:
+
+{{ demo "demos/guide/syntax-optional-filter.yaml" }}
+
+An `absent` value reads as it does anywhere in jaala: it equals only another absent value, has no order, is skipped by `count(distinct ...)`, `sum`, `min`, `max` and `list`, and computes nothing in arithmetic. So `count(distinct ?t)` counts a package with no tests as 0:
+
+{{ demo "demos/guide/syntax-optional-count.yaml" }}
+
+A plain `count(?t)` counts bindings, the empty one too. The braces need a relation outside them to match first, since an optional keeps a row the rest of its clause found, and they read only relations complete before the clause's own, as `not` does: underneath, the empty case is a negation of the braces.
+
 ## Walking a relation
 
 `graph.closure("imports", ?from, ?to, min, max, ?hops)` holds when `?to` is reachable from `?from` in `min` to `max` steps of a relation of two arguments, and `?hops` is the fewest it takes ([#281](https://github.com/panyam/jaala/issues/281)). It's the recursive rule `reach(?a, ?c) :- reach(?a, ?b), imports(?b, ?c)` with a bound and a count the rule can't carry, since a rule computing a number it then reads again might never finish. Max `0` is no bound. What `app` reaches within two steps:

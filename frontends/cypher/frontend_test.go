@@ -48,7 +48,7 @@ func (r *replies) Complete(_ context.Context, p nl.Prompt) (nl.Completion, error
 func TestTranslateRefusesAGapInCypher(t *testing.T) {
 	v, b := guide.Deps(t)
 	m := &replies{texts: []string{
-		"MATCH (p:Package)\nOPTIONAL MATCH (p)-[:IMPORTS]->(q) RETURN p.name, q.name",
+		"MATCH (p:Package)\nUNWIND [1, 2] AS x RETURN p.name, x",
 		`MATCH (p:Package)-[:IMPORTS]->(q) RETURN p.name, q.name`,
 	}}
 	p, tr, err := nl.Translate(context.Background(), "what imports what?", v, nil, m, nl.Options{Base: b, FrontEnd: cypher.NewFrontEnd(depsGraph)})
@@ -59,7 +59,7 @@ func TestTranslateRefusesAGapInCypher(t *testing.T) {
 		t.Errorf("tries %v, program %+v", tr.Tries, p)
 	}
 	fed := m.asked[1].Turns[2].Text
-	for _, want := range []string{"jaala#282", "line 2, column 1:\n  OPTIONAL MATCH", "  ^\n", "Write the query without it"} {
+	for _, want := range []string{"jaala#283", "line 2, column 1:\n  UNWIND", "  ^\n", "Write the query without it"} {
 		if !strings.Contains(fed, want) {
 			t.Errorf("fed back %q, want %q in it", fed, want)
 		}

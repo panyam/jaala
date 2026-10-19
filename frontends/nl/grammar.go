@@ -114,7 +114,7 @@ func programRules() []rule {
 		{"decl", alt{lit("string"), lit("number"), seq{lit("number["), ref("unit"), lit("]")}, ref("ident"), seq{ref("ident"), lit(" "), ref("domain")}, ref("domain")}},
 		{"domain", seq{lit("{"), list(ref("string"), ", "), lit("}")}},
 		{"literals", seq{ref("literal"), star(seq{alt{lit(", "), lit(",\n  ")}, ref("literal")})}},
-		{"literal", alt{ref("fact"), seq{lit("not "), ref("atom")}, ref("comparison"), ref("bodyagg")}},
+		{"literal", alt{ref("fact"), seq{lit("not "), ref("atom")}, ref("comparison"), ref("bodyagg"), ref("optional")}},
 		{"fact", seq{ref("atom"), opt(seq{lit(" as ?"), ref("vname")})}}, // an atom binding its fact (#279)
 		{"atom", seq{ref("relation"), lit("("), opt(list(ref("term"), ", ")), lit(")")}},
 		{"comparison", seq{ref("sum"), lit(" "), ref("cmpop"), lit(" "), ref("sum")}},
@@ -137,6 +137,8 @@ func programRules() []rule {
 		{"dcall", seq{ref("ident"), plus(seq{lit("."), ref("ident")}), lit("("), list(ref("sum"), ", "), lit(")")}},
 		{"bodyagg", seq{lit("?"), ref("vname"), lit(" = "), ref("aggregate"), lit(" : { "), list(ref("inner"), ", "), lit(" }")}},
 		{"inner", alt{ref("fact"), seq{lit("not "), ref("atom")}, ref("comparison")}},
+		// a row holding whether its literals match, what only they bind absent when not (#282)
+		{"optional", seq{lit("optional { "), list(ref("inner"), ", "), lit(" }")}},
 		{"aggregate", seq{ref("aggfn"), lit("("), opt(lit("distinct ")), lit("?"), ref("vname"), lit(")")}},
 		{"aggfn", alt{lit("count"), lit("min"), lit("max"), lit("sum"), lit("avg"), lit("list")}},
 		{"goal", seq{ref("literals"), opt(seq{lit(" => "), list(ref("column"), ", "), ref("tail")})}},

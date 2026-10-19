@@ -34,7 +34,7 @@ var depsCases = []compileCase{
 	{`MATCH (p:Package) WHERE p.license IS NULL RETURN p`,
 		`pkg(?p, ?p_license), absent(?p_license) => ?p`, [][]string{{"api"}}},
 	{`MATCH (p:Package) WHERE NOT p.license IS NULL AND p.license <> '' RETURN p.name`,
-		`pkg(?p, ?p_license), not absent(?p_license), ?p_license != "" => ?p`, [][]string{{"app"}, {"util"}}},
+		`pkg(?p, ?p_license), not absent(?p_license), ?p_license != "", not absent(?p_license) => ?p`, [][]string{{"app"}, {"util"}}},
 	// The license read in RETURN keeps its column a variable, so the constant becomes a comparison.
 	{`MATCH (p:Package {license: 'MIT'}) RETURN p.name, p.license`,
 		`pkg(?p, ?p_license), ?p_license = "MIT" => ?p, ?p_license`, [][]string{{"app", "MIT"}}},
@@ -91,6 +91,39 @@ var depsCases = []compileCase{
 	{`MATCH p = (a {name: 'app'})-[:IMPORTS*]->(d) WITH p, d WHERE length(p) > 2 RETURN d, p`,
 		"cypher_with1(?p, ?d) :- graph.paths(\"imports\", \"app\", ?d, \"trail\", 1, 0, ?p);\n" +
 			`cypher_with1(?p, ?d), path.length(?p) > 2 => ?d, ?p`, [][]string{{"util", `["app","api","log","util"]`}}},
+	// OPTIONAL MATCH keeps a row whose optional part didn't match, absent where Cypher answers null,
+	// and the compiler writes Cypher's null rules: a test over what may be absent is guarded, and
+	// count(b) over an optional node counts its matches (#282).
+	{`MATCH (p:Package) OPTIONAL MATCH (p)-[:IMPORTS]->(d) RETURN p, d`,
+		`pkg(?p, _), optional { imports(?p, ?d) } => ?p, ?d`,
+		[][]string{{"api", "log"}, {"app", "api"}, {"log", "util"}, {"util", "absent"}}},
+	{`MATCH (a:Package) OPTIONAL MATCH (a)-[:IMPORTS]->(b) WHERE b.license = 'Apache-2.0' RETURN a, b`,
+		`pkg(?a, _), optional { imports(?a, ?b), pkg(?b, ?b_license), ?b_license = "Apache-2.0" } => ?a, ?b`,
+		[][]string{{"api", "absent"}, {"app", "absent"}, {"log", "util"}, {"util", "absent"}}},
+	{`MATCH (a:Package) OPTIONAL MATCH (a)-[:IMPORTS]->(b) OPTIONAL MATCH (b)-[:IMPORTS]->(c) RETURN a, b, c`,
+		`pkg(?a, _), optional { imports(?a, ?b) }, optional { imports(?b, ?c) } => ?a, ?b, ?c`,
+		[][]string{{"api", "log", "util"}, {"app", "api", "log"}, {"log", "util", "absent"}, {"util", "absent", "absent"}}},
+	{`MATCH (a:Package) OPTIONAL MATCH (a)-[:IMPORTS]->(b) RETURN a, count(b) AS n`,
+		`pkg(?a, _), optional { imports(?a, ?b), ?_seen = 1 * 1 } => ?a, sum(?_seen)`,
+		[][]string{{"api", "1"}, {"app", "1"}, {"log", "1"}, {"util", "0"}}},
+	{`MATCH (a:Package) OPTIONAL MATCH (a)-[:IMPORTS]->(b) WITH a, b WHERE b IS NULL RETURN a`,
+		"cypher_with1(?a, ?b) :- pkg(?a, _), optional { imports(?a, ?b) };\n" +
+			`cypher_with1(?a, ?b), absent(?b) => ?a`, [][]string{{"util"}}},
+	{`MATCH (a:Package) OPTIONAL MATCH p = (a)-[:IMPORTS*]->(b {name: 'util'}) RETURN a, length(p) AS n`,
+		`pkg(?a, _), optional { graph.paths("imports", ?a, ?b, "trail", 1, 0, ?p), ?b = "util" }, optional { ?_c = path.length(?p) } => ?a, ?_c`,
+		[][]string{{"api", "2"}, {"app", "3"}, {"log", "1"}, {"util", "absent"}}},
+	{`MATCH (a:Package) OPTIONAL MATCH (a)-[:IMPORTS]->(b:Package) WITH a, b RETURN a, b.license`,
+		"cypher_with1(?a, ?b) :- pkg(?a, _), optional { pkg(?b, _), imports(?a, ?b) };\n" +
+			`cypher_with1(?a, ?b), optional { pkg(?b, ?b_license) } => ?a, ?b_license`,
+		[][]string{{"api", ""}, {"app", "absent"}, {"log", "Apache-2.0"}, {"util", "absent"}}},
+	{`MATCH (p:Package) OPTIONAL MATCH (p)-[:IMPORTS]->(d) WHERE d.name <> 'log' RETURN p, d`,
+		`pkg(?p, _), optional { imports(?p, ?d), ?d != "log" } => ?p, ?d`,
+		[][]string{{"api", "absent"}, {"app", "api"}, {"log", "util"}, {"util", "absent"}}},
+	{`MATCH (a:Package), (b:Package) WHERE a.license = b.license RETURN a, b`,
+		`pkg(?a, ?a_license), pkg(?b, ?b_license), ?a_license = ?b_license, not absent(?a_license), not absent(?b_license) => ?a, ?b`,
+		[][]string{{"app", "app"}, {"log", "log"}, {"util", "util"}}},
+	{`MATCH (a:Package) WHERE a.license <> 'MIT' RETURN a`,
+		`pkg(?a, ?a_license), ?a_license != "MIT", not absent(?a_license) => ?a`, [][]string{{"log"}, {"util"}}},
 	{`MATCH (a {name: 'api'})-[:IMPORTS]-(n) RETURN n`,
 		"cypher_step1(?x, ?y) :- imports(?x, ?y);\ncypher_step1(?x, ?y) :- imports(?y, ?x);\n" +
 			`cypher_step1("api", ?n) => ?n`, [][]string{{"app"}, {"log"}}},
@@ -108,7 +141,7 @@ var depsCases = []compileCase{
 	{`MATCH (p:Package) RETURN collect(p.name)`,
 		`pkg(?p, _) => list(?p)`, [][]string{{"api app log util"}}},
 	{`MATCH (p:Package) WHERE p.license = 'MIT' OR p.license STARTS WITH 'Apache' RETURN p.name`,
-		"cypher_match1(?p) :- pkg(?p, ?p_license), ?p_license = \"MIT\";\ncypher_match1(?p) :- pkg(?p, ?p_license), str.prefix(?p_license, \"Apache\");\n" +
+		"cypher_match1(?p) :- pkg(?p, ?p_license), ?p_license = \"MIT\";\ncypher_match1(?p) :- pkg(?p, ?p_license), str.prefix(?p_license, \"Apache\"), not absent(?p_license);\n" +
 			`cypher_match1(?p) => ?p`, [][]string{{"app"}, {"util"}}},
 	{`MATCH (p:Package) WHERE NOT (p.name = 'app' OR p.license IS NULL) RETURN p`,
 		`pkg(?p, ?p_license), ?p != "app", not absent(?p_license) => ?p`, [][]string{{"log"}, {"util"}}},
@@ -258,6 +291,14 @@ var codeCases = []compileCase{
 			`cypher_with1(?f, ?n), attr(?f, "name", ?f_name), ?n > 1 => ?f_name`, [][]string{{"main"}}},
 	{`MATCH (f:Function) WHERE COUNT { (f)<-[:CALLS]-() } = 2 RETURN f`,
 		`node(?f, "Function"), ?_count = count(?_n) : { edge(?_n, "CALLS", ?f) }, ?_count = 2 => ?f`, [][]string{{"f:parse"}}},
+	// A property an optional node has, read through attr, is read in braces of its own, so a match
+	// without it keeps its row.
+	{`MATCH (f:Function) OPTIONAL MATCH (f)-[:CALLS]->(g) RETURN f, g.name`,
+		`node(?f, "Function"), optional { edge(?f, "CALLS", ?g) }, optional { attr(?g, "name", ?g_name) } => ?f, ?g_name`,
+		[][]string{{"f:help", "parse"}, {"f:lex", "absent"}, {"f:main", "help"}, {"f:main", "parse"}, {"f:parse", "lex"}}},
+	{`MATCH (f:Function) OPTIONAL MATCH (f)-[:CALLS]->(g) RETURN f, count(g) AS calls`,
+		`node(?f, "Function"), optional { edge(?f, "CALLS", ?g), ?_seen = 1 * 1 } => ?f, sum(?_seen)`,
+		[][]string{{"f:help", "1"}, {"f:lex", "0"}, {"f:main", "2"}, {"f:parse", "1"}}},
 	{`MATCH (f:Function)-[:CALLS]->(g) RETURN f, count(g) AS calls ORDER BY calls DESC, f LIMIT 1`,
 		`node(?f, "Function"), edge(?f, "CALLS", ?g) => ?f, count(?g) order by count(?g) desc, ?f limit 1`, [][]string{{"f:main", "2"}}},
 }
@@ -316,8 +357,9 @@ func TestGapsAreRefusedByName(t *testing.T) {
 		{`MATCH (a)-[r:IMPORTS*]->(b) RETURN a`, 398, "-[r"},
 		{`MATCH (a), (b) RETURN shortestPath((a)-[*]->(b))`, 398, "shortestPath"},
 		{`MATCH ((a)-[:IMPORTS]->(b)){1,3} RETURN b`, 398, "((a)"},
-		{`OPTIONAL MATCH (a:Package) RETURN a`, 282, "OPTIONAL"},
-		{`MATCH (a:Package) OPTIONAL MATCH (a)-[:IMPORTS]->(b) RETURN a, b`, 282, "OPTIONAL"},
+		{`OPTIONAL MATCH (a:Package) RETURN a`, 400, "OPTIONAL"},
+		{`MATCH (a:Package) OPTIONAL MATCH (a)-[:IMPORTS]->(b) WHERE b.name = 'x' OR b.name = 'y' RETURN a, b`, 400, "OPTIONAL MATCH (a)"},
+		{`MATCH (a) OPTIONAL MATCH (a:Package)-[:IMPORTS]->(b) RETURN a, b`, 400, "(a:Package)"},
 		{`MATCH (a:Package) UNWIND [1, 2] AS x RETURN x`, 283, "UNWIND"},
 		{`MATCH (a:Package) WHERE a.name IN $names RETURN a`, 283, "IN $names"},
 		{`MATCH (a:Package) RETURN a {.name}`, 283, "{.name}"},

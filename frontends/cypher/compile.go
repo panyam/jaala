@@ -88,6 +88,8 @@ type nodeVar struct {
 	anchor   bool             // a rule reads it (a pattern test), so a parameter can't stand in for it
 	carried  bool             // a WITH handed it on, so it is matched already
 	of       *nodeVar         // inside a subquery, the outer node this one stands for
+	opt      int              // the OPTIONAL MATCH that declared it, from 1, so it may be absent (#282)
+	absent   bool             // a WITH carried it from an OPTIONAL MATCH, so it may be absent
 }
 
 // markValued keeps n's key a variable, and the outer node's it stands for in a subquery.
@@ -118,6 +120,9 @@ type (
 	// braces are a body aggregate's literals, which jaala lowers to rules, so a parameter can't
 	// reach them either.
 	braces struct{ lits []frag }
+	// optBraces are an optional's literals (#282), written `optional { ... }` unless they render to
+	// nothing (a lazy label atom no column read), when the optional goes too.
+	optBraces struct{ lits []frag }
 	// origin is a piece of program written for the Cypher at at, so an error in it is located there.
 	origin struct {
 		at Pos
@@ -294,9 +299,16 @@ func (c *world) render(f frag) string {
 			c.inRule = true
 			b.WriteString(c.joinLits(el.lits))
 			c.inRule = was
+		case optBraces:
+			was := c.inRule
+			c.inRule = true
+			if s := c.joinLits(el.lits); s != "" {
+				b.WriteString("optional { " + s + " }")
+			}
+			c.inRule = was
 		case paramEl:
 			if c.inRule {
-				c.fail(errAt(el.pos, "$%s is read inside a WITH stage, a UNION part, an OR, a pattern test or a variable-length relationship, which datalog.Bind can't reach: compile with cypher.Params", el.name))
+				c.fail(errAt(el.pos, "$%s is read inside a WITH stage, a UNION part, an OR, a pattern test, a variable-length relationship or an OPTIONAL MATCH, which datalog.Bind can't reach: compile with cypher.Params", el.name))
 			}
 			b.WriteString("?" + c.params[el.name])
 		default:
@@ -633,7 +645,7 @@ func (c *compiler) resolveProp(n *nodeVar, r propRef) (label string, identity, k
 				return owners[0], true, false, nil
 			}
 			n.labels = append(n.labels, owners[0])
-			c.shared = append(c.shared, frag{nodeAtm{n: n, label: owners[0]}})
+			c.into(n.opt, frag{nodeAtm{n: n, label: owners[0]}}) // inside its OPTIONAL MATCH's braces, if one declared it
 			return owners[0], false, false, nil
 		}
 		if len(owners) > 1 {
@@ -1180,7 +1192,7 @@ func (c *compiler) condition(e expr, neg bool) (frag, *Error) {
 			if neg {
 				op = flip[op]
 			}
-			return frag{l, " " + op + " ", r}, nil
+			return append(frag{l, " " + op + " ", r}, c.guards(op, e.l, e.r, l, r)...), nil
 		case "STARTS WITH", "ENDS WITH", "CONTAINS":
 			l, err := c.term(e.l)
 			if err != nil {
@@ -1191,7 +1203,7 @@ func (c *compiler) condition(e expr, neg bool) (frag, *Error) {
 				return nil, err
 			}
 			pred := map[string]string{"STARTS WITH": "str.prefix", "ENDS WITH": "str.suffix", "CONTAINS": "str.contains"}[e.op]
-			return frag{not + pred + "(", l, ", ", r, ")"}, nil
+			return append(frag{not + pred + "(", l, ", ", r, ")"}, c.guards(e.op, e.l, e.r, l, r)...), nil
 		case "IN":
 			// x IN nodes(p): the path passes through x
 			p, ok := c.pathArg(e.r.(call))
@@ -1216,16 +1228,27 @@ func (c *compiler) condition(e expr, neg bool) (frag, *Error) {
 			if err != nil {
 				return nil, err
 			}
-			return frag{not + "str.match(", l, ", ", re, ")"}, nil
+			return append(frag{not + "str.match(", l, ", ", re, ")"}, c.guards("=~", e.l, e.r, l, nil)...), nil
 		}
 	case isNull:
 		null := !e.not
 		if neg {
 			null = !null
 		}
+		if v, ok := e.e.(varRef); ok {
+			// a node or a value an OPTIONAL MATCH left absent (#282)
+			f, err := c.value(v)
+			if err != nil {
+				return nil, err
+			}
+			if null {
+				return frag{"absent(", f, ")"}, nil
+			}
+			return frag{"not absent(", f, ")"}, nil
+		}
 		r, ok := e.e.(propRef)
 		if !ok {
-			return nil, errAt(e.pos, "IS NULL tests a property")
+			return nil, errAt(e.pos, "IS NULL tests a property or a variable")
 		}
 		n, err := c.nodeRef(varRef{pos: r.pos, name: r.v})
 		if err != nil {
@@ -1674,6 +1697,14 @@ func (c *compiler) column(it returnItem) (column, *Error) {
 			return col, errAt(fn.pos, "count(*) with nothing matched")
 		case len(fn.args) != 1:
 			return col, errAt(fn.pos, "%s() takes one argument", fn.name)
+		case agg == "count" && !fn.distinct && c.optionalNode(fn.args[0]) != nil:
+			// Cypher's count skips a null: sum what the node's braces bind to 1, absent without a match
+			part := c.opts[c.optionalNode(fn.args[0]).opt-1]
+			if part.seen == "" {
+				part.seen = c.fresh("_seen")
+			}
+			col.text, col.agg = frag{"sum(?" + part.seen + ")"}, true
+			return col, nil
 		default:
 			f, err := c.term(fn.args[0])
 			if err != nil {
@@ -1704,6 +1735,65 @@ func (c *compiler) column(it returnItem) (column, *Error) {
 	}
 	col.text = f
 	return col, nil
+}
+
+// optionalNode is the node e names when an OPTIONAL MATCH declared it, nil otherwise.
+func (c *compiler) optionalNode(e expr) *nodeVar {
+	if v, ok := e.(varRef); ok {
+		if n := c.nodes[v.name]; n != nil && n.opt > 0 {
+			return n
+		}
+	}
+	return nil
+}
+
+// nullable reports whether e may be absent where Cypher's would be null (#282): a node or a value an
+// OPTIONAL MATCH binds, a property one of its nodes has, a property a label's column holds (a source
+// may leave it unstated), and a value a WITH carried (an optional's, or an aggregate's over nothing).
+// A node's key and a property read through Props or a Derived relation are matches, never absent.
+func (c *compiler) nullable(e expr) bool {
+	switch e := e.(type) {
+	case varRef:
+		if n := c.nodes[e.name]; n != nil {
+			return n.absent || n.opt > 0 && n.opt != c.inPart
+		}
+		return c.values[e.name] != ""
+	case propRef:
+		n := c.nodes[e.v]
+		if n == nil {
+			return false
+		}
+		if n.absent || n.opt > 0 && n.opt != c.inPart {
+			return true
+		}
+		_, identity, kv, err := c.resolveProp(n, e)
+		return err == nil && !identity && !kv
+	}
+	return false
+}
+
+// guards are the not absent(...) a test over nullable operands needs to answer as Cypher's does, where
+// a comparison with null is unknown and filters its row: jaala's absent equals absent and differs
+// from anything else, so = needs both sides guarded and <> or a text test each nullable one. An
+// operand computed by a function gives no row over absent already, so only a variable is guarded.
+func (c *compiler) guards(op string, l, r expr, lf, rf frag) frag {
+	var g frag
+	guard := func(e expr, f frag) {
+		if c.nullable(e) && isVar(f) {
+			g = append(g, ", not absent(", f, ")")
+		}
+	}
+	switch op {
+	case "=":
+		if c.nullable(l) && c.nullable(r) {
+			guard(l, lf)
+			guard(r, rf)
+		}
+	case "!=", "<>", "STARTS WITH", "ENDS WITH", "CONTAINS", "=~":
+		guard(l, lf)
+		guard(r, rf)
+	}
+	return g
 }
 
 func isVar(f frag) bool {

@@ -187,9 +187,9 @@ func TestCypherBindsParameters(t *testing.T) {
 // name, and a program that runs out of budget says so as query's would.
 func TestCypherRefusesWithThePlaceAndTheGap(t *testing.T) {
 	c := dialCode(t, codePack(codeGraph("Func")), mcp.Options{})
-	res := call(t, c, "cypher", map[string]any{"query": "MATCH (a:Func)\nOPTIONAL MATCH (a)-[:CALLS]->(b) RETURN a, b"})
+	res := call(t, c, "cypher", map[string]any{"query": "MATCH (a:Func)\nUNWIND [1, 2] AS x RETURN a, x"})
 	text := res.Content[0].Text
-	for _, want := range []string{"jaala#282", "line 2, column 1:\n  OPTIONAL MATCH (a)-[:CALLS]->(b) RETURN a, b\n  ^\n", "Write the query without it"} {
+	for _, want := range []string{"jaala#283", "line 2, column 1:\n  UNWIND [1, 2] AS x RETURN a, x\n  ^\n", "Write the query without it"} {
 		if !res.IsError || !strings.Contains(text, want) {
 			t.Errorf("want %q in the refusal:\n%s", want, text)
 		}

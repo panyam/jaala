@@ -95,6 +95,10 @@ func translateSouffle(q Query, bind map[Var][]ns.Value, prefix string) (souffleT
 	if q.After != nil {
 		return souffleTranslation{}, unsupported("after")
 	}
+	if hasOptionalIn(q) {
+		// its empty clause binds absent where the column may be text, which Soufflé has no sentinel for
+		return souffleTranslation{}, unsupported("an optional")
+	}
 	q = souffleFacts(q)
 	q, err := souffleClosures(q)
 	if err != nil {

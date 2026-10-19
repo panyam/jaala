@@ -1,0 +1,3 @@
+fixture: deps
+query: package(?p), owner(?p, "platform"), optional { test(?t, ?p) } => ?p, count(distinct ?t)
+expect: [[config, "0"], [log, "0"], [metrics, "0"], [util, "1"]]

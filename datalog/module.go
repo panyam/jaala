@@ -128,6 +128,9 @@ func resolveAll(v *ns.Vocabulary) (*resolution, error) {
 		}
 		rules, err := ParseRules(m.Text)
 		if err == nil {
+			rules, err = lowerOptionalRules(rules, "m"+strconv.Itoa(i), v)
+		}
+		if err == nil {
 			rules, err = lowerRules(rules, "m"+strconv.Itoa(i))
 		}
 		if err == nil {

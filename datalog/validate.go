@@ -35,7 +35,10 @@ func validateBound(q Query, reg *ns.Vocabulary, vars []Var) error {
 	for _, v := range vars {
 		bind[v] = []ns.Value{ns.Absent()}
 	}
-	q, err := lowerBodyAggregates(q, "")
+	q, err := lowerOptionals(q, "", reg)
+	if err == nil {
+		q, err = lowerBodyAggregates(q, "")
+	}
 	if err != nil {
 		return err
 	}

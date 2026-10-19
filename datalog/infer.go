@@ -162,6 +162,9 @@ func (t *typer) ofHead(rel string, j int, seen map[string]bool) ns.ArgType {
 		}
 		var at ns.ArgType
 		bare := false
+		if hv.Const != nil && hv.Const.Absent {
+			continue // absent fits any type and any domain: an optional's empty clause abstains (#282)
+		}
 		if hv.Const != nil {
 			domain = unionSorted(domain, []string{hv.Const.S})
 			if hv.Const.Num == nil {
@@ -430,7 +433,10 @@ type ColumnKind struct {
 // query's rules and the modules it links. An aggregate is a number whatever it reduces: count(?ref)
 // counts parts, it does not name one.
 func ColumnKinds(q Query, reg *ns.Vocabulary) ([]ColumnKind, error) {
-	q, err := lowerClosures(q) // an engine walk is typed by the relation it walks (#280)
+	q, err := lowerOptionals(q, "", reg) // an optional's variables are typed by the rules it becomes (#282)
+	if err == nil {
+		q, err = lowerClosures(q) // an engine walk is typed by the relation it walks (#280)
+	}
 	if err == nil {
 		q, err = Link(q, reg)
 	}

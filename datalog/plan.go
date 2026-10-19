@@ -126,6 +126,9 @@ func modesText(bi ns.Builtin, a *Atom) string {
 // whereRule names a rule for a checkModes message.
 func whereRule(r Rule) string {
 	if isAggHelper(r.Head.Relation) {
+		if strings.HasPrefix(r.Head.Relation, "optional"+aggSep) {
+			return r.text // an optional's rules carry it as written (#282)
+		}
 		return "the aggregate " + r.text // a body aggregate's rule carries the literal as written
 	}
 	return fmt.Sprintf("rule %q", displayName(r.Head.Relation))

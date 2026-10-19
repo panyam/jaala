@@ -56,9 +56,10 @@ func (frontEnd) Instructions() string {
 # MATCH patterns, WHERE, WITH, UNION, and RETURN with DISTINCT, count, min, max, sum, collect,
 # ORDER BY, SKIP and LIMIT, and a variable length -[:T*1..6]->, any length, or shortestPath(...)
 # in MATCH. p = (a)-[:T*]->(b) binds each path of one relationship, read with length(p), nodes(p),
-# relationships(p) and x IN nodes(p). A node is its key, so RETURN n answers n's key.
+# relationships(p) and x IN nodes(p). OPTIONAL MATCH after a MATCH keeps the row with null where
+# it fails (test it with x IS NULL). A node is its key, so RETURN n answers n's key.
 # Strings are 'quoted'.
-# Not supported: OPTIONAL MATCH, relationship variables, UNWIND and lists, CASE, writes.
+# Not supported: relationship variables, UNWIND and lists, CASE, writes.
 # Reply with the query alone.
 `
 }

@@ -96,3 +96,18 @@ func TestOnlyAnEqualityToTextBindsFirst(t *testing.T) {
 		}
 	}
 }
+
+// A goal's equality to text that reads as a number stays a comparison: = compares a number with text
+// by their text, so over a column nothing types "5" equals a 5, which binding ?w to the text and
+// joining on it, strictly, missed in the planned evaluator alone.
+func TestAnEqualityToNumericTextStaysAComparison(t *testing.T) {
+	for _, q := range []string{`weight(?n, ?w), ?w = "5" => ?n`, `node(?n), weight(?n, ?w), "5" = ?w => ?n`} {
+		if got := col(eval(t, graph(), q), "n"); got != "x" {
+			t.Errorf("%s = %s, want x", q, got)
+		}
+	}
+	// control: text that isn't a number is still bound, and answers the same
+	if got := col(eval(t, graph(), `edge(?a, ?b), ?b = "c" => ?a`), "a"); got != "b" {
+		t.Errorf("control: %s", got)
+	}
+}

@@ -190,5 +190,10 @@ func equalsText(l Literal) (Var, *ns.Value, bool) {
 	if v.Var == "" || v.Var == "_" || strings.ContainsRune(string(v.Var), 0) || v.Expr != nil || k.Const == nil || k.Const.Num != nil || k.Const.Absent {
 		return "", nil, false
 	}
+	if _, err := strconv.ParseFloat(k.Const.S, 64); err == nil {
+		// = compares a number with text by their text, so "5" equals a 5 in a column nothing types,
+		// which a join, unifying strictly, wouldn't (found under #282's tests)
+		return "", nil, false
+	}
 	return v.Var, k.Const, true
 }

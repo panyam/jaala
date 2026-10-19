@@ -6,7 +6,7 @@ harg ::= "?" vname (": " decl)? | constant | aggregate | arith
 decl ::= "string" | "number" | "number[" unit "]" | ident | ident " " domain | domain
 domain ::= "{" (string (", " string)*) "}"
 literals ::= literal ((", " | ",\n  ") literal)*
-literal ::= fact | "not " atom | comparison | bodyagg
+literal ::= fact | "not " atom | comparison | bodyagg | optional
 fact ::= atom (" as ?" vname)?
 atom ::= relation "(" (term (", " term)*)? ")"
 comparison ::= sum " " cmpop " " sum
@@ -21,6 +21,7 @@ arith ::= product ((" + " | " - ") product)+ | unary ((" * " | " / ") unary)+ | 
 dcall ::= ident ("." ident)+ "(" (sum (", " sum)*) ")"
 bodyagg ::= "?" vname " = " aggregate " : { " (inner (", " inner)*) " }"
 inner ::= fact | "not " atom | comparison
+optional ::= "optional { " (inner (", " inner)*) " }"
 aggregate ::= aggfn "(" "distinct "? "?" vname ")"
 aggfn ::= "count" | "min" | "max" | "sum" | "avg" | "list"
 goal ::= literals (" => " (column (", " column)*) tail)?

@@ -1,0 +1,3 @@
+fixture: deps
+query: owner(?p, "web"), optional { imports(?p, ?d), owner(?d, "security") } => ?p, ?d
+expect: [[api, auth], [app, absent], [legacy, absent]]

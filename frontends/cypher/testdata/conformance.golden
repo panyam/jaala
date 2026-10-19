@@ -202,10 +202,10 @@ MATCH (a)-[:IMPORTS*..20]->(b) RETURN b
   -> graph.closure("imports", ?a, ?b, 1, 20, _) => ?b
 
 OPTIONAL MATCH (a:Package) RETURN a
-  -> at 1:1 cypher: not supported yet: OPTIONAL MATCH and null values (jaala#282): write the match without OPTIONAL, or as a second query
+  -> at 1:1 cypher: not supported yet: this OPTIONAL MATCH (jaala#400): an OPTIONAL MATCH before any MATCH: start with a MATCH
 
 MATCH (a:Package) OPTIONAL MATCH (a)-[:IMPORTS]->(b) WHERE b.license = 'MIT' RETURN a, b
-  -> at 1:19 cypher: not supported yet: OPTIONAL MATCH and null values (jaala#282): write the match without OPTIONAL, or as a second query
+  -> pkg(?a, _), optional { imports(?a, ?b), pkg(?b, ?b_license), ?b_license = "MIT" } => ?a, ?b
 
 MATCH (a:Package) UNWIND [1, 2] AS x RETURN a, x
   -> at 1:19 cypher: not supported yet: lists and maps as values (jaala#283): UNWIND

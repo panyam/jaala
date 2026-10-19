@@ -36,7 +36,7 @@ func errAt(p Pos, format string, args ...any) *Error {
 var (
 	gapEdgeVars  = gap{279, "binding a relationship to a variable"}
 	gapPaths     = gap{398, "these paths as values"}
-	gapOptional  = gap{282, "OPTIONAL MATCH and null values"}
+	gapOptional  = gap{400, "this OPTIONAL MATCH"}
 	gapLists     = gap{283, "lists and maps as values"}
 	gapFunctions = gap{284, "this function"}
 	gapWrites    = gap{287, "writing to the graph"}

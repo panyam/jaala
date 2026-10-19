@@ -109,7 +109,7 @@ RETURN a.name AS name, n ORDER BY n DESC`, nil)
 	// name | n
 	// "app" | "3"
 	// "api" | "2"
-	// cypher: $pkg is read inside a WITH stage, a UNION part, an OR, a pattern test or a variable-length relationship, which datalog.Bind can't reach: compile with cypher.Params
+	// cypher: $pkg is read inside a WITH stage, a UNION part, an OR, a pattern test, a variable-length relationship or an OPTIONAL MATCH, which datalog.Bind can't reach: compile with cypher.Params
 	// cypher_with1(?d) :- pkg("api", _), graph.closure("imports", "api", ?d, 1, 0, _);
 	// cypher_with1(?d) => ?d
 }
@@ -135,6 +135,27 @@ UNION MATCH (p:Package) WHERE p.license IS NULL RETURN p.name AS name`, nil)
 	// "app"
 }
 
+// OPTIONAL MATCH keeps a row whose optional part doesn't match, with null
+// (jaala's absent) in its place, and count over an optional node counts only
+// its matches, as Cypher's skips a null.
+func Example_cypherOptional() {
+	runCypher(`MATCH (p:Package) OPTIONAL MATCH (p)-[:IMPORTS]->(d) RETURN p.name AS name, d.name AS imports`, nil)
+	runCypher(`MATCH (p:Package) OPTIONAL MATCH (p)<-[:IMPORTS]-(i) RETURN p.name AS name, count(i) AS importers`, nil)
+	// Output:
+	// pkg(?p, _), optional { imports(?p, ?d) } => ?p, ?d
+	// name | imports
+	// "api" | "log"
+	// "app" | "api"
+	// "log" | "util"
+	// "util" | absent
+	// pkg(?p, _), optional { imports(?i, ?p), ?_seen = 1 * 1 } => ?p, sum(?_seen)
+	// name | importers
+	// "api" | "1"
+	// "app" | "0"
+	// "log" | "1"
+	// "util" | "1"
+}
+
 // Cypher a program can't express yet is refused with the issue that would
 // let it, so a model or a caller knows to rewrite rather than retry.
 func Example_cypherGap() {
@@ -142,7 +163,7 @@ func Example_cypherGap() {
 	if err != nil {
 		panic(err)
 	}
-	q := `MATCH (p:Package) OPTIONAL MATCH (p)-[:IMPORTS]->(q) RETURN p, q`
+	q := `MATCH (p:Package) UNWIND [1, 2] AS x RETURN p, x`
 	p, err := cypher.Compile(v, depsGraph, q)
 	var ce *cypher.Error
 	if errors.As(err, &ce) {
@@ -150,10 +171,10 @@ func Example_cypherGap() {
 	}
 	fmt.Print(cypher.Explain(q, p, err))
 	// Output:
-	// gap #282
-	// cypher: not supported yet: OPTIONAL MATCH and null values (jaala#282): write the match without OPTIONAL, or as a second query
+	// gap #283
+	// cypher: not supported yet: lists and maps as values (jaala#283): UNWIND
 	// line 1, column 19:
-	//   MATCH (p:Package) OPTIONAL MATCH (p)-[:IMPORTS]->(q) RETURN p, q
+	//   MATCH (p:Package) UNWIND [1, 2] AS x RETURN p, x
 	//                     ^
 	// Write the query without it.
 }
