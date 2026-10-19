@@ -212,13 +212,13 @@ func (t *typer) ofHead(rel string, j int, seen map[string]bool) ns.ArgType {
 }
 
 // aggregateType is what an aggregate yields over a variable of type vt: list a string, count a
-// number of no unit, and sum, min and max a number in the unit the variable carries. It names no
+// number of no unit, and sum, avg, min and max a number in the unit the variable carries. It names no
 // entity, whatever it reduces: count(?ref) counts parts, it doesn't name one.
 func aggregateType(a Aggregate, vt varType) ns.ArgType {
 	switch a.Func {
 	case "list":
 		return ns.ArgType{Type: ns.TypeString}
-	case "sum", "min", "max":
+	case "sum", "avg", "min", "max":
 		if vt.Type == ns.TypeNumber {
 			return ns.ArgType{Type: ns.TypeNumber, Unit: vt.Unit}
 		}
@@ -327,7 +327,7 @@ func (t *typer) signature(rel string) ([]ns.ArgSig, error) {
 }
 
 // aggregateFixes reports whether a head aggregate at position j decides its column's type the way a
-// declaration would (#78): count and list always, sum, min and max only over a typed number, whose
+// declaration would (#78): count and list always, sum, avg, min and max only over a typed number, whose
 // unit they carry. Over an untyped column those three still yield numbers, but in a unit nobody stated.
 func (t *typer) aggregateFixes(rel string, j int) bool {
 	for _, r := range t.rules[rel] {

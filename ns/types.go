@@ -92,7 +92,7 @@ type ArgSig struct {
 	ArgType
 	// Inferred is set on a derived relation's argument whose type no rule head declares, so a host
 	// can show a reader which types the author stated and which the engine worked out. A head
-	// aggregate whose function decides its type (count a number, list a string, sum, min and max a
+	// aggregate whose function decides its type (count a number, list a string, sum, avg, min and max a
 	// number over a typed number) counts as declared.
 	Inferred bool
 	// Input marks an argument the relation takes from its caller rather than producing (jaala#200),

@@ -468,7 +468,7 @@ func unboundOperand(c Compare, bnd *binding) *CheckError {
 
 // unknownAggregateErr is the CheckError for an aggregate function jaala doesn't have.
 func unknownAggregateErr(f string) *CheckError {
-	return checkErr(KindUnknown, fmt.Sprintf("query: unknown aggregate %q (want count/min/max/sum/list)", f)).fix("use count, min, max, sum or list")
+	return checkErr(KindUnknown, fmt.Sprintf("query: unknown aggregate %q (want count/min/max/sum/avg/list)", f)).fix("use count, min, max, sum, avg or list")
 }
 
 // localFix points an unknown call's Fix at the program's own rule it likely means (#341), since the

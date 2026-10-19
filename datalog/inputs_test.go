@@ -66,6 +66,8 @@ func TestACallMustBindTheArgumentsItsRuleTakes(t *testing.T) {
 		{locAt + `e(?n) :- at(?n, _, "a.go", ?l); e(?n) => ?n`, `at's ?line is an input argument, and the call in rule "e" doesn't bind it`},
 		{locAt + `home(?n, _, _, _, _), not at(?n, _, "a.go", 15) => ?n`, `at takes an argument from its caller, so the query can't negate it`},
 		{locAt + `at(?n, ?r, "a.go", 15) => count(?n)`, `the query counts its bindings, and at, which takes an argument from its caller, binds variables its head drops`},
+		{locAt + `at(?n, ?r, "a.go", 15) => sum(?n)`, `the query counts its bindings, and at, which takes an argument from its caller, binds variables its head drops`},
+		{locAt + `at(?n, ?r, "a.go", 15) => avg(?n)`, `the query counts its bindings, and at, which takes an argument from its caller, binds variables its head drops`},
 		// Shapes it doesn't inline keep today's message.
 		{`r(?x, ?l) :- r(?x, ?m), hit(?x, ?m), ?m < ?l; r(?x, 3) => ?x`, `rule "r" head variable ?l is not bound by a positive body relation`}, // one rule, recursive
 		{`a(?n, ?l) :- home(?n, _, _, ?s, _), ?s <= ?l; a(?n, ?l) :- hit(?n, ?l); a(?n, 3) => ?n`, `rule "a" head variable ?l is not bound by a positive body relation`},

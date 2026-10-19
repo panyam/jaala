@@ -23,7 +23,7 @@ func checkComparisonUnits(q Query, reg *ns.Vocabulary) error {
 	}
 	for _, h := range q.Having {
 		left := ""
-		if a := h.Left.Agg; a != nil && (a.Func == "sum" || a.Func == "min" || a.Func == "max") {
+		if a := h.Left.Agg; a != nil && (a.Func == "sum" || a.Func == "avg" || a.Func == "min" || a.Func == "max") {
 			left = t.unitOf(Term{Var: a.Var}, q.Goal, nil)
 		}
 		if err := unlikeUnits("having", Compare{Left: h.Left, Op: h.Op, Right: h.Right}, left, t.unitOf(h.Right, q.Goal, nil)); err != nil {

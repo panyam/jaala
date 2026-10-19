@@ -200,7 +200,7 @@ type Row struct {
 	// for witnesses (see Witnesses). It is nil otherwise, and on an aggregate row.
 	Witness []*Witness
 	// Why says why an aggregate column is absent, keyed like Bind: "no rows" (a group over nothing),
-	// "no numbers" (min or max over text) or "mixed units: A, V" (min, max or sum over numbers in
+	// "no numbers" (min, max or avg over text) or "mixed units: A, V" (min, max, sum or avg over numbers in
 	// different units, #80). A host shows it beside the absent value. It is nil when no column is
 	// absent, and an aggregate a rule stores keeps only its value, so it's set on a goal's own
 	// aggregates.

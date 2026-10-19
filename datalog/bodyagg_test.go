@@ -163,7 +163,7 @@ func TestABodyAggregateRefusals(t *testing.T) {
 		{`part(?r), ?c = count(?n) : { pin(?r, ?n, _), ?n != ?q }, ?q = "GND" => ?r`, `shares ?q with the rest of its body, so a relation outside the braces must bind it`},
 		{`part(?r), ?c = count(?n) : { pin(_, ?n, _), ?r != ?n } => ?r, ?c`, `shares ?r with the rest of its body, so a relation inside the braces must bind it too`},
 		{`part(?r), ?c = count(?z) : { pin(?r, ?n, _) } => ?r`, `aggregates ?z, which no relation in its braces binds`},
-		{`part(?r), ?c = avg(?n) : { pin(?r, ?n, _) } => ?r`, `unknown aggregate "avg"`},
+		{`part(?r), ?c = median(?n) : { pin(?r, ?n, _) } => ?r`, `unknown aggregate "median"`},
 		{`part(?r), ?c = count(?n) : { pin(?r, ?n, _) }, ?c = sum(?n) : { pin(?r, _, ?n) } => ?r`, `two aggregates bind ?c`},
 		{`part(?r), ?c = count(?n) : { pni(?r, ?n, _) } => ?r`, `query: the aggregate ?c = count(?n) : { pni(?r, ?n, _) } reads unknown relation "pni"`},
 		{`part(?r), ?c = count(?n) : { pin(?r, ?n) } => ?r`, `relation "pin" takes 3 args, got 2`},

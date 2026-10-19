@@ -675,9 +675,9 @@ With a plain column left out of the `order by`, two rows could tie on every colu
 
 The row passed to `datalog.After` lacks a column the `order by` sorts on. For a query run from Go.
 
-`query: unknown aggregate … (want count/min/max/sum/list)`
+`query: unknown aggregate … (want count/min/max/sum/avg/list)`
 
-The aggregates are `count`, `min`, `max`, `sum` and `list`.
+The aggregates are `count`, `min`, `max`, `sum`, `avg` and `list`.
 
 {{ demo "demos/errors/unknown-aggregate.yaml" }}
 

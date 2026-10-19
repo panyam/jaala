@@ -27,6 +27,7 @@ func Example_card() {
 	// # ~type is inferred from the relation's rules, "in" marks an argument the caller must bind, [, arg] is optional.
 	// # A predicate says what it needs bound before it runs: "filter" needs every argument.
 	// absent(value) filter # reports whether the field carried no value at all, which is different from an empty string and from zero; `not absent(?x)` reads "this field is stated"
+	// coalesce(value, fallback, result) needs value+fallback # binds the value, or the fallback when the value is absent
 	// imports(from, to)
 	// pkg(name, license)
 	//

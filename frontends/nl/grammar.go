@@ -100,7 +100,7 @@ func programRules() []rule {
 		{"bodyagg", seq{lit("?"), ref("vname"), lit(" = "), ref("aggregate"), lit(" : { "), list(ref("inner"), ", "), lit(" }")}},
 		{"inner", alt{ref("fact"), seq{lit("not "), ref("atom")}, ref("comparison")}},
 		{"aggregate", seq{ref("aggfn"), lit("("), opt(lit("distinct ")), lit("?"), ref("vname"), lit(")")}},
-		{"aggfn", alt{lit("count"), lit("min"), lit("max"), lit("sum"), lit("list")}},
+		{"aggfn", alt{lit("count"), lit("min"), lit("max"), lit("sum"), lit("avg"), lit("list")}},
 		{"goal", seq{ref("literals"), opt(seq{lit(" => "), list(ref("column"), ", "), ref("tail")})}},
 		{"column", alt{seq{lit("?"), ref("vname")}, ref("aggregate"), ref("arith")}},
 		{"tail", seq{

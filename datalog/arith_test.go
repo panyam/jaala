@@ -251,7 +251,7 @@ func TestArithmeticInAHeadOrTheProjection(t *testing.T) {
 		{`res(?p, ?r) => ?p, ?r * ?q`, `nothing binds what num.mul needs first`},
 		// ?q is unbound, so num.mul solves it from the column: v takes its caller's value (#200).
 		{`v(?p, ?r * ?q) :- res(?p, ?r); v(?p, ?x) => ?x`, `v's ?r * q is an input argument, and the call in the query doesn't bind it`},
-		{`res(?p, ?r) => ?p, avg(?r)`, `unknown aggregate "avg"`},
+		{`res(?p, ?r) => ?p, median(?r)`, `unknown aggregate "median"`},
 	} {
 		if _, err := both(mustParse(t, c.q), baseFor(std(ohmsLaw()))); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%s: %v, want it to say %q", c.q, err, c.want)

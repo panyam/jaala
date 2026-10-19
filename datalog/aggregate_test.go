@@ -169,7 +169,7 @@ func TestAggregatingRuleRefusals(t *testing.T) {
 		{`deg(?n, count(?m)) :- edge(?n, ?m); deg(?n, count(?m)) :- edge(?m, ?n); deg(?n, ?d) => ?n`, `rule "deg" aggregates, so it must be the relation's only rule (2 define it)`},
 		{`deg(?n, count(?m)) :- edge(?n, ?m); deg(?n, ?m) :- edge(?m, ?n); deg(?n, ?d) => ?n`, `rule "deg" aggregates, so it must be the relation's only rule`},
 		{`deg(?n, count(?q)) :- edge(?n, ?m); deg(?n, ?d) => ?n`, `count aggregates ?q, which no relation binds`},
-		{`deg(?n, avg(?m)) :- edge(?n, ?m); deg(?n, ?d) => ?n`, `unknown aggregate "avg"`},
+		{`deg(?n, median(?m)) :- edge(?n, ?m); deg(?n, ?d) => ?n`, `unknown aggregate "median"`},
 		{`deg(?n, count(?q)) :- edge(?n, ?m), not edge(?m, ?q); deg(?n, ?d) => ?n`, `count aggregates ?q, which no relation binds`},
 	} {
 		err := evalErr(graph(), c.q)
@@ -272,6 +272,8 @@ covered(?n: net, count(distinct ?c)) :- component.net(?c, ?n);
 classes(?n: net, list(?k)) :- component.net(?c, ?n), component.class(?c, ?k);
 peak(?n: net, max(?v)) :- net.max_voltage(?n, ?v);
 mpns(?n: net, sum(?m)) :- component.net(?c, ?n), component.mpn(?c, ?m);
+mean(?n: net, avg(?v)) :- net.max_voltage(?n, ?v);
+mpnmean(?n: net, avg(?m)) :- component.net(?c, ?n), component.mpn(?c, ?m);
 `, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -283,7 +285,9 @@ mpns(?n: net, sum(?m)) :- component.net(?c, ?n), component.mpn(?c, ?m);
 		"net.classes": {"net.classes(n: net, arg1: string)", false},
 		"net.peak":    {"net.peak(n: net, arg1: number[V])", false},
 		// control: sum over an untyped column is still a number, but in a unit nobody stated.
-		"net.mpns": {"net.mpns(n: net, arg1: number)", true},
+		"net.mpns":    {"net.mpns(n: net, arg1: number)", true},
+		"net.mean":    {"net.mean(n: net, arg1: number[V])", false},
+		"net.mpnmean": {"net.mpnmean(n: net, arg1: number)", true},
 	} {
 		e, err := r.Lookup(path)
 		if err != nil {

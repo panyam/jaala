@@ -34,7 +34,7 @@ import (
 //	projection  = column { "," column } ;
 //	column      = variable | aggregate | expr ;          (* an expr column is labelled as written without ?s, #206 *)
 //	aggregate   = aggfunc "(" [ "distinct" ] variable ")" ; (* grouped by the variable columns *)
-//	aggfunc     = "count" | "min" | "max" | "sum" | "list" ;
+//	aggfunc     = "count" | "min" | "max" | "sum" | "avg" | "list" ;
 //	havings     = having { "," having } ;
 //	having      = aggregate op term ;                 (* filters GROUPS, after the reduce *)
 //	orders      = order { "," order } ;

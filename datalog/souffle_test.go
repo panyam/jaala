@@ -524,8 +524,9 @@ func (tr *souffler) aggregates(body Body, vk map[Var]sKind, keys []Var, terms []
 		if a == nil {
 			continue
 		}
-		if a.Func == "list" {
-			return souffleAggs{}, unsupported("list")
+		if a.Func == "list" || a.Func == "avg" {
+			// Soufflé's mean is a float over integer columns, where jaala's avg is an exact quotient.
+			return souffleAggs{}, unsupported("%s", a.Func)
 		}
 		if a.Func != "count" && vk[a.Var] != sNumber {
 			return souffleAggs{}, unsupported("%s over symbols", a.Func)
@@ -729,8 +730,8 @@ func (tr *souffler) bodyAggregate(a BodyAggregate, shared []Var, vk map[Var]sKin
 		return out
 	}
 	switch {
-	case a.Agg.Func == "list":
-		tr.fail(unsupported("list"))
+	case a.Agg.Func == "list" || a.Agg.Func == "avg":
+		tr.fail(unsupported("%s", a.Agg.Func))
 		return []string{"true"}
 	case a.Agg.Func != "count" && vk[x] != sNumber:
 		tr.fail(unsupported("%s over symbols", a.Agg.Func))

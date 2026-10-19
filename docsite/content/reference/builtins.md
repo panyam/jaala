@@ -106,3 +106,9 @@ Each carries units through the vocabulary's table. The [guide]({{.Site.PathPrefi
 `absent(?x)` holds when `?x` is a field its source didn't state. None of `deps`'s fields are absent, so here it holds for nothing, and the [guide]({{.Site.PathPrefix}}/guide/absent-values/) has an example over facts that do leave fields out:
 
 {{ demo "demos/reference/builtins-absent.yaml" }}
+
+## `coalesce`
+
+`coalesce(?x, ?fallback, ?v)` binds `?v` to `?x`, or to `?fallback` when `?x` is absent. Both must be bound first, absent counting as a value. An expression can call it, `?v = coalesce(?x, 0)`, and it nests for more fallbacks: `coalesce(?a, coalesce(?b, ?c))`. No package has more than 5000 lines, so `big`'s min is absent and the fallback answers:
+
+{{ demo "demos/reference/builtins-coalesce.yaml" }}
