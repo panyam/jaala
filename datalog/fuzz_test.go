@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/panyam/jaala/internal/corpus"
 	"github.com/panyam/jaala/ns"
 )
 
@@ -41,7 +42,7 @@ var fuzzSeeds = []string{
 // fuzzVocabulary is the corpus's schema over one fixed small graph, with the path module.
 func fuzzVocabulary(t testing.TB) *ns.Vocabulary {
 	t.Helper()
-	v := std(genGraph(rand.New(rand.NewSource(7))).source())
+	v := std(corpus.Graph(rand.New(rand.NewSource(7))).Source())
 	if err := v.AddModule("hop", LanguageName, reachModule, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -55,8 +56,8 @@ func addSeeds(f *testing.F) {
 	}
 	for seed := int64(1); seed <= 100; seed++ {
 		rnd := rand.New(rand.NewSource(seed))
-		facts := genGraph(rnd)
-		f.Add(newGenerator(rnd, facts).program().String())
+		facts := corpus.Graph(rnd)
+		f.Add(corpus.New(rnd, facts).Program().String())
 	}
 }
 

@@ -646,7 +646,11 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   as a subset the same way. A new evaluator or option belongs in `both()` too. `seminaive_test.go` adds a
   seeded random-graph corpus, and `plan_test.go` a clause-order shuffle property.
 - **The generated corpus (`generate_test.go`, #87) runs random programs through `agree`**, the
-  comparison `both()` makes, without the panic. Each program runs plain and under `Witnesses()`, and a
+  comparison `both()` makes, without the panic. `internal/corpus` draws each seed's graph and program
+  and shrinks a case (`corpus.Shrink`, `Break`), and `generate_test.go` compares, so a store module
+  (#411's `stores/bolt`) runs the same seeds against its own Source rather than a copy of the
+  generator; it writes the engine's closure and paths names itself, which
+  `TestTheCorpusSpellsTheEnginesNames` holds to datalog's. Each program runs plain and under `Witnesses()`, and a
   disagreement is shrunk before it's reported (`JAALA_GEN_SEED=n` replays one). It skips under
   `-race` (`raceDetector`, set by `race_test.go`/`norace_test.go`, #143) unless replaying one seed or
   `JAALA_GEN_UNDER_RACE` is set: it evaluates one program at a time and the engine starts no
@@ -668,7 +672,7 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   `corpusCase` compares a mixed seed with its units left off, and a single unit as it is (answers
   compare by text). A unitless graph's programs write arithmetic now and then (#209: `+ - *`,
   negation, `num.add(…)`, in comparisons and as `?y = expr`, sometimes before its binders, never in a
-  recursive rule), drawn from a stream of its own (`generator.arith`, from `newGenerator`, which reads
+  recursive rule), drawn from a stream of its own (`generator.arith`, from `corpus.New`, which reads
   the units before `corpusCase` drops them) so other seeds' programs don't move. A computed `?y` is
   what a head or the goal reads more often than not: a filter alone hid a wrong `num.add` at 5000
   seeds.

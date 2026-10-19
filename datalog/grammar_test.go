@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/panyam/jaala/internal/corpus"
 	"github.com/panyam/jaala/internal/gbnf"
 )
 
@@ -24,7 +25,7 @@ func TestTheGrammarAcceptsEveryProgramAsJaalaSpellsIt(t *testing.T) {
 	var texts []string
 	for seed := int64(1); seed <= int64(envInt("JAALA_GEN_SEEDS", 300)); seed++ {
 		rnd := rand.New(rand.NewSource(seed))
-		texts = append(texts, newGenerator(rnd, genGraph(rnd)).program().String())
+		texts = append(texts, corpus.New(rnd, corpus.Graph(rnd)).Program().String())
 	}
 	texts = append(texts, fuzzSeeds...)
 	docs := demoPrograms(t)

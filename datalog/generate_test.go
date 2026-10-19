@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"hash/fnv"
 	"iter"
 	"math/rand"
 	"os"
@@ -15,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/panyam/jaala/internal/corpus"
 	"github.com/panyam/jaala/ns"
 )
 
@@ -29,950 +29,8 @@ import (
 // JAALA_GEN_SEEDS sets how many seeds run (selfcheck.sh runs thousands), and JAALA_GEN_SEED=n
 // replays the one seed a failure names.
 
-// genType is a column's type. Node columns hold node names, number columns weights; a program keeps
-// them apart, so a constant is never refused for its type (#65) and a comparison never orders a
-// number against a word.
-type genType int
-
-const (
-	genNode genType = iota
-	genNum
-)
-
-// genTypes walks a body's bound variables in a fixed order: ranging over the map draws in Go's
-// random order, so one seed would generate different programs (#226).
-var genTypes = []genType{genNode, genNum}
-
-// genRel is a relation a program reads: one of the graph's, or one it derives. Derived relations are
-// layered. A body reads its own layer only positively (recursion, mutual within a layer) and lower
-// layers freely, so every program stratifies. An aggregating relation sits alone in its layer, since
-// stratify makes its body edges strict.
-type genRel struct {
-	name  string
-	cols  []genType
-	layer int
-	agg   bool
-}
-
-var genGraphRels = []genRel{
-	{name: "edge", cols: []genType{genNode, genNode}, layer: -1},
-	{name: "node", cols: []genType{genNode}, layer: -1},
-	{name: "weight", cols: []genType{genNode, genNum}, layer: -1},
-}
-
-// genLit is a body literal: an atom, a negated atom, an aggregate over a body of its own, or (rel
-// empty) the comparison args[0] op args[1]. Args are printed terms: "?x", "_", `"v1"`, "3".
-type genLit struct {
-	neg  bool
-	rel  string
-	args []string
-	op   string
-	agg  *genAgg
-	fact string   // the variable `as` binds the atom's fact to (#279), "" for none
-	opt  []genLit // optional { opt } (#282), the literal's only content
-}
-
-// genAgg is `result = fn : { body }` (#71).
-type genAgg struct {
-	result, fn string
-	body       []genLit
-}
-
-func (l genLit) String() string {
-	if l.opt != nil {
-		return "optional { " + joinLits(l.opt) + " }"
-	}
-	if l.agg != nil {
-		return l.agg.result + " = " + l.agg.fn + " : { " + joinLits(l.agg.body) + " }"
-	}
-	if l.rel == "" {
-		return l.args[0] + " " + l.op + " " + l.args[1]
-	}
-	s := l.rel + "(" + strings.Join(l.args, ", ") + ")"
-	if l.neg {
-		s = "not " + s
-	}
-	if l.fact != "" {
-		s += " as " + l.fact
-	}
-	return s
-}
-
-type genRule struct {
-	head string
-	args []string // terms or aggregates, "count(distinct ?b)"
-	body []genLit
-}
-
-func (r genRule) String() string {
-	return r.head + "(" + strings.Join(r.args, ", ") + ") :- " + joinLits(r.body)
-}
-
-type genGoal struct {
-	body   []genLit
-	sel    []string
-	having string
-	order  string
-	limit  int
-	bind   map[string][]string // variable (no "?") -> node names the host binds it to
-}
-
-type genProgram struct {
-	rules  []genRule
-	goal   genGoal
-	shapes []string
-}
-
-func (p genProgram) String() string {
-	var b strings.Builder
-	for _, r := range p.rules {
-		b.WriteString(r.String() + "; ")
-	}
-	g := p.goal
-	b.WriteString(joinLits(g.body) + " => " + strings.Join(g.sel, ", "))
-	if g.having != "" {
-		b.WriteString(" having " + g.having)
-	}
-	if g.order != "" {
-		b.WriteString(" order by " + g.order)
-	}
-	if g.limit > 0 {
-		b.WriteString(" limit " + strconv.Itoa(g.limit))
-	}
-	return b.String()
-}
-
-func joinLits(lits []genLit) string {
-	out := make([]string, len(lits))
-	for i, l := range lits {
-		out[i] = l.String()
-	}
-	return strings.Join(out, ", ")
-}
-
-// genFacts is randomGraph's shape kept as data, so shrinking can drop an edge or a node.
-type genFacts struct {
-	n       int
-	edges   [][2]int
-	weights []int
-	units   []string // each weight's unit, "" for none; nil when no weight has one (#192)
-}
-
-func genGraph(rnd *rand.Rand) genFacts {
-	f := genFacts{n: 3 + rnd.Intn(6)}
-	p := 0.1 + rnd.Float64()*0.25
-	for i := 0; i < f.n; i++ {
-		f.weights = append(f.weights, rnd.Intn(10))
-		for j := 0; j < f.n; j++ {
-			if rnd.Float64() < p {
-				f.edges = append(f.edges, [2]int{i, j})
-			}
-		}
-	}
-	f.units = genUnits(f)
-	return f
-}
-
-// genUnits gives a graph's weights units now and then (#192): most graphs none, some every weight
-// in volts, and some a mix of volts, amps and none. It draws from a source seeded by the graph
-// itself, so a seed's program is what it was before units.
-func genUnits(f genFacts) []string {
-	h := fnv.New64a()
-	fmt.Fprint(h, f.n, f.edges, f.weights)
-	rnd := rand.New(rand.NewSource(int64(h.Sum64())))
-	var units []string
-	switch p := rnd.Float64(); {
-	case p < 0.7:
-		return nil
-	case p < 0.85:
-		units = slices.Repeat([]string{"V"}, f.n)
-	default:
-		units = make([]string, f.n)
-		for i := range units {
-			units[i] = []string{"V", "A", ""}[rnd.Intn(3)]
-		}
-	}
-	// Half of these spell their volts other ways now and then, which the Base folds back to V as it
-	// reads them (#205). Drawn after the units, so a graph's units are what they were.
-	if rnd.Float64() < 0.5 {
-		for i, u := range units {
-			if u == "V" {
-				units[i] = voltSpellings[rnd.Intn(len(voltSpellings))]
-			}
-		}
-	}
-	return units
-}
-
-// voltSpellings are the ways a weight in volts is served (#205): as it is, prefixed (w V as w*1000
-// mV or w/1000 kV) and as a product the vocabulary names V. Each folds to w V exactly.
-var voltSpellings = []string{"V", "mV", "kV", "A*ohm"}
-
-// folded is the unit u reads as once the Base folds it, V for each of voltSpellings.
-func folded(u string) string {
-	if slices.Contains(voltSpellings, u) {
-		return "V"
-	}
-	return u
-}
-
-// mixedUnits reports whether the weights carry more than one unit, or a unit beside none, which
-// Soufflé can't express: its numbers have no units. A unit counts as it reads once folded, so mV and
-// V are one.
-func (f genFacts) mixedUnits() bool {
-	for _, u := range f.units {
-		if folded(u) != folded(f.units[0]) {
-			return true
-		}
-	}
-	return false
-}
-
-// prefixed reports whether a weight is served in a unit the Base folds (#205).
-func (f genFacts) prefixed() bool {
-	for _, u := range f.units {
-		if folded(u) != u {
-			return true
-		}
-	}
-	return false
-}
-
-func (f genFacts) source() *ns.MemSource {
-	src := ns.NewMemSource().Declare("edge", "from", "to").Declare("node", "name").Declare("weight", "node", "w")
-	name := func(i int) ns.Value { return ns.S(fmt.Sprintf("v%d", i)) }
-	for i := 0; i < f.n; i++ {
-		src.Add("node", ns.Tuple{Vals: []ns.Value{name(i)}, Cites: []string{fmt.Sprintf("node:%d", i)}})
-		unit := ""
-		if f.units != nil {
-			unit = f.units[i]
-		}
-		w := float64(f.weights[i])
-		switch unit {
-		case "mV":
-			w *= 1000
-		case "kV":
-			w /= 1000
-		}
-		src.Add("weight", ns.Tuple{Vals: []ns.Value{name(i), ns.NU(w, unit)}})
-	}
-	for k, e := range f.edges {
-		src.Add("edge", ns.Tuple{Vals: []ns.Value{name(e[0]), name(e[1])}, Cites: []string{fmt.Sprintf("edge:%d-%d", e[0], e[1])}, ID: edgeID(k)})
-	}
-	return src
-}
-
-// edgeID is the k-th edge's id: e<k>, but every third has none, so the engine names it (#279).
-func edgeID(k int) string {
-	if k%3 == 0 {
-		return ""
-	}
-	return fmt.Sprintf("e%d", k)
-}
-
-func (f genFacts) String() string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "nodes v0..v%d, weights %v, edges", f.n-1, f.weights)
-	if f.units != nil {
-		b.Reset()
-		fmt.Fprintf(&b, "nodes v0..v%d, weights %v in units %q, edges", f.n-1, f.weights, f.units)
-	}
-	for _, e := range f.edges {
-		fmt.Fprintf(&b, " v%d->v%d", e[0], e[1])
-	}
-	return b.String()
-}
-
-type generator struct {
-	rnd    *rand.Rand
-	nodes  int
-	rels   []genRel
-	vars   int
-	shapes map[string]bool
-	// arith draws the expressions a numeric comparison writes (#209), from a stream of its own so a
-	// seed's program is what it was before them, wherever none is written. Nil for a graph whose
-	// weights carry units: V times V is 25 V^2, which Soufflé, comparing by text, reads as 25.
-	arith *rand.Rand
-	// recursive is set while a recursive rule's body is drawn, which writes no expression: a computing
-	// rule that reaches itself is refused (#207).
-	recursive bool
-	// facts draws where an edge binds its fact and where a program reads one (#279), from a stream of
-	// its own, as arith does, so a seed binding none is the program it was; nfacts numbers them.
-	facts  *rand.Rand
-	nfacts int
-	// avgs turns a drawn sum into an avg now and then (#284), from a stream of its own, so a seed
-	// writing no sum is the program it was.
-	avgs *rand.Rand
-	// closures turns a literal of two nodes into graph.closure over its relation now and then (#281),
-	// from a stream of its own, as facts does; nclosures numbers the hops it binds.
-	closures  *rand.Rand
-	nclosures int
-	// walks turns a literal of two nodes that closures left alone into graph.paths now and then (#280),
-	// from a stream of its own, so a seed's closures are the ones it drew before; npaths numbers the
-	// paths it binds.
-	walks  *rand.Rand
-	npaths int
-	// optionals wraps an atom over a graph relation in optional { } now and then (#282), from a stream
-	// of its own.
-	optionals *rand.Rand
-	// lists makes the goal read back a list a rule collected now and then (#283), from a stream of its
-	// own; listRules are those rules, which program adds.
-	lists     *rand.Rand
-	listRules []genRule
-}
-
-// newGenerator draws a program for facts from rnd. Arithmetic depends on the graph's units as drawn,
-// before corpusCase drops mixed ones, so the corpus and the Soufflé step generate one program.
-func newGenerator(rnd *rand.Rand, facts genFacts) *generator {
-	g := &generator{rnd: rnd, nodes: facts.n}
-	h := fnv.New64a()
-	fmt.Fprint(h, "facts", facts.n, facts.edges, facts.weights)
-	g.facts = rand.New(rand.NewSource(int64(h.Sum64())))
-	h = fnv.New64a()
-	fmt.Fprint(h, "avgs", facts.n, facts.edges, facts.weights)
-	g.avgs = rand.New(rand.NewSource(int64(h.Sum64())))
-	h = fnv.New64a()
-	fmt.Fprint(h, "closures", facts.n, facts.edges, facts.weights)
-	g.closures = rand.New(rand.NewSource(int64(h.Sum64())))
-	h = fnv.New64a()
-	fmt.Fprint(h, "walks", facts.n, facts.edges, facts.weights)
-	g.walks = rand.New(rand.NewSource(int64(h.Sum64())))
-	h = fnv.New64a()
-	fmt.Fprint(h, "optionals", facts.n, facts.edges, facts.weights)
-	g.optionals = rand.New(rand.NewSource(int64(h.Sum64())))
-	h = fnv.New64a()
-	fmt.Fprint(h, "lists", facts.n, facts.edges, facts.weights)
-	g.lists = rand.New(rand.NewSource(int64(h.Sum64())))
-	if facts.units == nil {
-		h := fnv.New64a()
-		fmt.Fprint(h, "arith", facts.n, facts.edges, facts.weights)
-		g.arith = rand.New(rand.NewSource(int64(h.Sum64())))
-	}
-	return g
-}
-
-func (g *generator) chance(p float64) bool { return g.rnd.Float64() < p }
-func (g *generator) pick(n int) int        { return g.rnd.Intn(n) }
-
-// constant names a node one past the graph now and then, so a constant can match nothing.
-func (g *generator) constant(t genType) string {
-	if t == genNum {
-		return strconv.Itoa(g.pick(10))
-	}
-	return fmt.Sprintf(`"v%d"`, g.pick(g.nodes+1))
-}
-
-func (g *generator) fresh() string {
-	g.vars++
-	return fmt.Sprintf("?x%d", g.vars)
-}
-
-// genBody is a body being built and the variables its positive literals have bound so far, by type.
-// Literals are added in an order Naive can run as written: a comparison or a negation only reads
-// variables already bound.
-type genBody struct {
-	lits     []genLit
-	facts    []string // the facts its edges bind (#279)
-	bound    map[genType][]string
-	results  map[string]bool // what a body aggregate binds
-	computed []string        // what ?y = expr binds (#209), which a head or the goal reads now and then
-}
-
-func newBody() *genBody { return &genBody{bound: map[genType][]string{}} }
-
-func (b *genBody) all() []string { return append(slices.Clone(b.bound[genNode]), b.bound[genNum]...) }
-
-// bind puts constant c in place of literal i's argument j, so a demand rewrite sees a bound call. A
-// variable that appeared only there is no longer bound.
-func (b *genBody) bind(i, j int, c string) {
-	old := b.lits[i].args[j]
-	b.lits[i].args[j] = c
-	for _, l := range b.lits {
-		if !l.neg && slices.Contains(l.args, old) {
-			return
-		}
-	}
-	for t, vars := range b.bound {
-		b.bound[t] = slices.DeleteFunc(vars, func(v string) bool { return v == old })
-	}
-}
-
-func (g *generator) atom(b *genBody, r genRel, neg bool) {
-	args := make([]string, len(r.cols))
-	type binding struct {
-		t genType
-		v string
-	}
-	var fresh []binding
-	for i, t := range r.cols {
-		vars := b.bound[t]
-		switch {
-		case g.chance(0.1):
-			args[i] = g.constant(t)
-		case g.chance(0.08):
-			args[i] = "_"
-		case len(vars) > 0 && (neg || g.chance(0.6)):
-			args[i] = vars[g.pick(len(vars))]
-		case neg:
-			args[i] = "_"
-		default:
-			args[i] = g.fresh()
-			fresh = append(fresh, binding{t, args[i]})
-		}
-	}
-	lit := genLit{neg: neg, rel: r.name, args: args}
-	if !neg && r.name == "edge" && g.facts != nil && g.facts.Float64() < 0.2 {
-		g.nfacts++
-		lit.fact = fmt.Sprintf("?f%d", g.nfacts)
-		b.facts = append(b.facts, lit.fact)
-		g.shapes["bound fact"] = true
-	}
-	b.lits = append(b.lits, lit)
-	for _, f := range fresh {
-		b.bound[f.t] = append(b.bound[f.t], f.v)
-	}
-	if neg {
-		g.shapes["negation"] = true
-	}
-}
-
-// binding makes sure a variable of type t is bound, adding node(?x) or weight(?n, ?w) when none is.
-func (g *generator) binding(b *genBody, t genType) string {
-	if vars := b.bound[t]; len(vars) > 0 {
-		v := vars[g.pick(len(vars))]
-		if t == genNum {
-			v = g.computed(b, v)
-		}
-		return v
-	}
-	v := g.fresh()
-	if t == genNode {
-		b.lits = append(b.lits, genLit{rel: "node", args: []string{v}})
-	} else {
-		n := "_"
-		if nodes := b.bound[genNode]; len(nodes) > 0 {
-			n = nodes[g.pick(len(nodes))]
-		}
-		b.lits = append(b.lits, genLit{rel: "weight", args: []string{n, v}})
-	}
-	b.bound[t] = append(b.bound[t], v)
-	return v
-}
-
-func (g *generator) compare(b *genBody) {
-	t := genNode
-	if len(b.bound[genNum]) > 0 && g.chance(0.5) {
-		t = genNum
-	}
-	vars := b.bound[t]
-	if len(vars) == 0 {
-		return
-	}
-	l, r := vars[g.pick(len(vars))], g.constant(t)
-	if len(vars) > 1 && g.chance(0.5) {
-		r = vars[g.pick(len(vars))]
-	}
-	ops := []string{"=", "!=", "!=", "<"}
-	if t == genNum {
-		ops = []string{"=", "!=", "<", "<=", ">", ">="}
-	}
-	op := ops[g.pick(len(ops))]
-	if t == genNum && g.arith != nil && !g.recursive && g.arith.Float64() < 0.4 {
-		l = g.expression(vars, l)
-		g.shapes["arithmetic"] = true
-		if g.arith.Float64() < 0.5 {
-			// ?y = expr computes into a fresh variable, which the rest of the body can read.
-			g.computeInto(b, l)
-			return
-		}
-		g.place(b, genLit{args: []string{l, r}, op: op})
-		return
-	}
-	b.lits = append(b.lits, genLit{args: []string{l, r}, op: op})
-}
-
-// computeInto adds ?y = e for a fresh ?y, which the rest of the body can read.
-func (g *generator) computeInto(b *genBody, e string) {
-	y := g.fresh()
-	g.place(b, genLit{args: []string{y, e}, op: "="})
-	b.bound[genNum] = append(b.bound[genNum], y)
-	b.computed = append(b.computed, y)
-}
-
-// place adds a computing literal at the end, or now and then earlier, before what binds its
-// operands: every evaluator holds it until they're bound (deferComparisons, #5), and the planner
-// orders it by its modes.
-func (g *generator) place(b *genBody, l genLit) {
-	i := len(b.lits)
-	if g.arith.Float64() < 0.3 {
-		i = g.arith.Intn(len(b.lits) + 1)
-	}
-	b.lits = slices.Insert(b.lits, i, l)
-}
-
-// compute adds a computed number to a body that binds one, now and then, so a head or the goal can
-// show what arithmetic answers rather than only what it filters.
-func (g *generator) compute(b *genBody) {
-	if vars := b.bound[genNum]; g.arith != nil && !g.recursive && len(vars) > 0 && g.arith.Float64() < 0.15 {
-		g.computeInto(b, g.expression(vars, vars[g.arith.Intn(len(vars))]))
-		g.shapes["arithmetic"] = true
-	}
-}
-
-// computed is a computed variable of b, now and then, to read in place of v.
-func (g *generator) computed(b *genBody, v string) string {
-	if len(b.computed) > 0 && g.arith != nil && g.arith.Float64() < 0.6 {
-		return b.computed[g.arith.Intn(len(b.computed))]
-	}
-	return v
-}
-
-// expression writes arithmetic over v and the number variables vars (#209): a sum, a difference, a
-// product, a negation or a function call, nested now and then. No division: Soufflé's numbers are
-// integers.
-func (g *generator) expression(vars []string, v string) string {
-	operand := func() string {
-		if g.arith.Float64() < 0.5 {
-			return vars[g.arith.Intn(len(vars))]
-		}
-		return strconv.Itoa(g.arith.Intn(5))
-	}
-	var e string
-	switch g.arith.Intn(6) {
-	case 0:
-		e = v + " + " + operand()
-	case 1:
-		e = v + " - " + operand()
-	case 2:
-		e = v + " * " + operand()
-	case 3:
-		e = "-" + v
-	case 4:
-		e = "num.add(" + v + ", " + operand() + ")"
-	default:
-		e = "(" + v + " + " + operand() + ") * " + operand()
-	}
-	return e
-}
-
-// readable is what a body in layer may read: the graph and lower layers always, its own layer only
-// positively and only when recursive.
-func (g *generator) readable(layer int, positive, recursive bool) []genRel {
-	out := slices.Clone(genGraphRels)
-	for _, r := range g.rels {
-		if r.layer < layer || (positive && recursive && r.layer == layer && !r.agg) {
-			out = append(out, r)
-		}
-	}
-	return out
-}
-
-func (g *generator) body(layer int, recursive bool) *genBody {
-	b := newBody()
-	n := 1 + g.pick(3)
-	same := -1
-	if recursive {
-		same = g.pick(n)
-	}
-	for i := 0; i < n; i++ {
-		from := g.readable(layer, true, false)
-		if i == same {
-			from = nil
-			for _, r := range g.rels {
-				if r.layer == layer {
-					from = append(from, r)
-				}
-			}
-		}
-		r := from[g.pick(len(from))]
-		g.atom(b, r, false)
-		if i != same {
-			g.closure(b, r)
-		}
-	}
-	if g.chance(0.08) {
-		g.bodyAggregate(b, layer)
-	}
-	if len(b.all()) > 0 && g.chance(0.25) {
-		from := g.readable(layer, false, false)
-		g.atom(b, from[g.pick(len(from))], true)
-	}
-	if g.chance(0.3) {
-		g.compare(b)
-	}
-	g.compareFacts(b)
-	g.compute(b)
-	g.optional(b)
-	return b
-}
-
-// optional now and then makes an atom over a graph relation, one not the body's first positive
-// literal, optional (#282): its row holds whether the atom matches, what only it binds absent when it
-// doesn't. A derived relation stays outside, since an optional over one the clause reaches itself
-// through doesn't stratify.
-func (g *generator) optional(b *genBody) {
-	if g.optionals == nil || g.optionals.Float64() >= 0.15 {
-		return
-	}
-	var at []int
-	first := true
-	for i, l := range b.lits {
-		if l.rel == "" || l.neg || l.agg != nil || l.opt != nil {
-			continue
-		}
-		if first {
-			first = false
-			continue
-		}
-		if l.fact == "" && slices.ContainsFunc(genGraphRels, func(r genRel) bool { return r.name == l.rel }) {
-			at = append(at, i)
-		}
-	}
-	if len(at) == 0 {
-		return
-	}
-	i := at[g.optionals.Intn(len(at))]
-	b.lits[i] = genLit{opt: []genLit{b.lits[i]}}
-	g.shapes["optional"] = true
-}
-
-// closure now and then makes the literal of two nodes just drawn a walk of its relation (#281), min 1
-// to 3 steps and max none or a few more, binding the hops it took to a number half the time. A body
-// never walks its own relation, which stratification refuses.
-func (g *generator) closure(b *genBody, r genRel) {
-	l := &b.lits[len(b.lits)-1]
-	if g.closures == nil || len(r.cols) != 2 || r.cols[0] != genNode || r.cols[1] != genNode || l.fact != "" {
-		return
-	}
-	if g.closures.Float64() >= 0.12 {
-		g.paths(b, r)
-		return
-	}
-	lo, hi := 1+g.closures.Intn(3), 0
-	if g.closures.Float64() < 0.6 {
-		hi = lo + g.closures.Intn(3)
-	}
-	hops := "_"
-	if g.closures.Float64() < 0.5 {
-		g.nclosures++
-		hops = fmt.Sprintf("?h%d", g.nclosures)
-		b.bound[genNum] = append(b.bound[genNum], hops)
-	}
-	l.rel, l.args = closureName, []string{strconv.Quote(r.name), l.args[0], l.args[1], strconv.Itoa(lo), strconv.Itoa(hi), hops}
-	g.shapes["closure"] = true
-}
-
-// paths now and then makes the literal of two nodes just drawn a paths call over its relation (#280):
-// any mode, min 0 to 2 steps and max none or a few more (a walk always has one), binding the path more
-// often than not, and then half the time reading its length.
-func (g *generator) paths(b *genBody, r genRel) {
-	if g.walks == nil || g.walks.Float64() >= 0.1 {
-		return
-	}
-	l := &b.lits[len(b.lits)-1]
-	mode := pathModes[g.walks.Intn(len(pathModes))]
-	lo, hi := g.walks.Intn(3), 0
-	if mode == "walk" || g.walks.Float64() < 0.7 {
-		hi = max(lo, 1) + g.walks.Intn(3)
-	}
-	path := "_"
-	var length *genLit
-	if g.walks.Float64() < 0.6 {
-		g.npaths++
-		path = fmt.Sprintf("?p%d", g.npaths)
-		b.bound[genNode] = append(b.bound[genNode], path)
-		if g.walks.Float64() < 0.5 {
-			n := fmt.Sprintf("?pl%d", g.npaths)
-			length = &genLit{rel: "path.length", args: []string{path, n}}
-			b.bound[genNum] = append(b.bound[genNum], n)
-		}
-	}
-	l.rel, l.args = pathsName, []string{strconv.Quote(r.name), l.args[0], l.args[1], strconv.Quote(mode), strconv.Itoa(lo), strconv.Itoa(hi), path}
-	if length != nil {
-		b.lits = append(b.lits, *length)
-	}
-	g.shapes["paths"] = true
-}
-
-// listRead now and then collects each node's edges into a list with a rule, and has the goal require
-// a node it bound to be in some node's list, reading its length half the time (#283): a list built by
-// one relation and read back through list.* in another.
-func (g *generator) listRead(b *genBody) {
-	nodes := b.bound[genNode]
-	if g.lists == nil || len(nodes) == 0 || g.lists.Float64() >= 0.12 {
-		return
-	}
-	k := len(g.listRules) + 1
-	rel, l := fmt.Sprintf("ls%d", k), fmt.Sprintf("?l%d", k)
-	g.listRules = append(g.listRules, genRule{head: rel, args: []string{"?la", "list(?lb)"},
-		body: []genLit{{rel: "edge", args: []string{"?la", "?lb"}}}})
-	b.lits = append(b.lits, genLit{rel: rel, args: []string{"_", l}},
-		genLit{rel: "list.member", args: []string{l, "_", nodes[g.lists.Intn(len(nodes))]}})
-	if g.lists.Float64() < 0.5 {
-		n := fmt.Sprintf("?ln%d", k)
-		b.lits = append(b.lits, genLit{rel: "list.length", args: []string{l, n}})
-		b.bound[genNum] = append(b.bound[genNum], n)
-	}
-	g.shapes["list read"] = true
-}
-
-// compareFacts now and then requires two of the facts b binds to differ, or to be one, as a Cypher
-// match keeps its relationships apart (#279).
-func (g *generator) compareFacts(b *genBody) {
-	if len(b.facts) < 2 || g.facts.Float64() >= 0.6 {
-		return
-	}
-	i := g.facts.Intn(len(b.facts))
-	j := (i + 1 + g.facts.Intn(len(b.facts)-1)) % len(b.facts)
-	op := "!="
-	if g.facts.Float64() < 0.3 {
-		op = "="
-	}
-	b.lits = append(b.lits, genLit{args: []string{b.facts[i], b.facts[j]}, op: op})
-}
-
-// bodyAggregate adds `?v = fn : { ... }` (#71) over relations below layer, sharing up to two of the
-// variables b has bound, and binds ?v as a number. Each shared variable is bound by a relation inside
-// the braces, and none is another aggregate's value, since the braces' domain is what the rest of the
-// body binds without one.
-func (g *generator) bodyAggregate(b *genBody, layer int) {
-	inner := newBody()
-	var shared []string
-	for _, t := range genTypes {
-		for _, v := range b.bound[t] {
-			if !b.results[v] && len(shared) < 2 && g.chance(0.5) {
-				inner.bound[t] = append(inner.bound[t], v)
-				shared = append(shared, v)
-			}
-		}
-	}
-	from := g.readable(layer, false, false)
-	for i := 1 + g.pick(2); i > 0; i-- {
-		g.atom(inner, from[g.pick(len(from))], false)
-	}
-	fn := g.aggregate(inner, g.chance(0.1))
-	for _, t := range genTypes {
-		for _, v := range inner.bound[t] {
-			if !slices.Contains(shared, v) || slices.ContainsFunc(inner.lits, func(l genLit) bool { return slices.Contains(l.args, v) }) {
-				continue
-			}
-			if t == genNode {
-				inner.lits = append(inner.lits, genLit{rel: "node", args: []string{v}})
-			} else {
-				inner.lits = append(inner.lits, genLit{rel: "weight", args: []string{"_", v}})
-			}
-		}
-	}
-	if g.chance(0.3) {
-		g.compare(inner)
-	}
-	v := g.fresh()
-	b.lits = append(b.lits, genLit{agg: &genAgg{result: v, fn: fn, body: inner.lits}})
-	b.bound[genNum] = append(b.bound[genNum], v)
-	if b.results == nil {
-		b.results = map[string]bool{}
-	}
-	b.results[v] = true
-	g.shapes["body aggregate"] = true
-}
-
-func (g *generator) rule(r genRel, recursive bool) genRule {
-	g.recursive = recursive
-	b := g.body(r.layer, recursive)
-	g.recursive = false
-	args := make([]string, len(r.cols))
-	for i, t := range r.cols {
-		if g.chance(0.05) {
-			args[i] = g.constant(t)
-		} else {
-			args[i] = g.binding(b, t)
-		}
-	}
-	return genRule{head: r.name, args: args, body: b.lits}
-}
-
-// aggRule is an aggregating relation's one rule: node group columns, then number columns reduced.
-func (g *generator) aggRule(r genRel) genRule {
-	b := g.body(r.layer, false)
-	args := make([]string, len(r.cols))
-	for i, t := range r.cols {
-		if t == genNode {
-			args[i] = g.binding(b, genNode)
-			continue
-		}
-		args[i] = g.aggregate(b, false)
-	}
-	g.shapes["head aggregate"] = true
-	return genRule{head: r.name, args: args, body: b.lits}
-}
-
-func (g *generator) aggregate(b *genBody, list bool) string {
-	fns := []string{"count", "count distinct", "sum", "min", "max"}
-	if list {
-		fns = append(fns, "list", "list distinct")
-	}
-	fn := fns[g.pick(len(fns))]
-	if fn == "sum" && g.avgs.Float64() < 0.4 {
-		fn = "avg"
-		g.shapes["avg"] = true
-	}
-	var v string
-	switch fn {
-	case "sum", "avg", "min", "max":
-		v = g.binding(b, genNum)
-	default:
-		all := b.all()
-		if len(all) == 0 {
-			v = g.binding(b, genNode)
-		} else {
-			v = all[g.pick(len(all))]
-		}
-	}
-	if f, ok := strings.CutSuffix(fn, " distinct"); ok {
-		return f + "(distinct " + v + ")"
-	}
-	return fn + "(" + v + ")"
-}
-
-func (g *generator) program() genProgram {
-	g.shapes = map[string]bool{}
-	layer, prevAgg, n := 0, false, 1+g.pick(4)
-	for i := 0; i < n; i++ {
-		agg := g.chance(0.2)
-		if i > 0 && (agg || prevAgg || !g.chance(0.3)) {
-			layer++
-		}
-		r := genRel{name: fmt.Sprintf("r%d", i), layer: layer, agg: agg}
-		if agg {
-			for j := g.pick(3); j > 0; j-- {
-				r.cols = append(r.cols, genNode)
-			}
-			for j := 1 + g.pick(2); j > 0; j-- {
-				r.cols = append(r.cols, genNum)
-			}
-		} else {
-			for j := 1 + g.pick(3); j > 0; j-- {
-				t := genNode
-				if g.chance(0.2) {
-					t = genNum
-				}
-				r.cols = append(r.cols, t)
-			}
-		}
-		g.rels = append(g.rels, r)
-		prevAgg = agg
-	}
-	var p genProgram
-	for _, r := range g.rels {
-		if r.agg {
-			p.rules = append(p.rules, g.aggRule(r))
-			continue
-		}
-		for j := 1 + g.pick(3); j > 0; j-- {
-			recursive := (j > 1 || g.chance(0.05)) && g.chance(0.6)
-			if recursive {
-				g.shapes["recursion"] = true
-			}
-			p.rules = append(p.rules, g.rule(r, recursive))
-		}
-	}
-	g.listRules = nil
-	p.goal = g.goal()
-	p.rules = append(p.rules, g.listRules...)
-	for s := range g.shapes {
-		p.shapes = append(p.shapes, s)
-	}
-	slices.Sort(p.shapes)
-	return p
-}
-
-func (g *generator) goal() genGoal {
-	b := newBody()
-	for i := 1 + g.pick(2); i > 0; i-- {
-		r := g.rels[g.pick(len(g.rels))]
-		if g.chance(0.2) {
-			r = genGraphRels[g.pick(len(genGraphRels))]
-		}
-		g.atom(b, r, false)
-		if g.chance(0.3) {
-			b.bind(len(b.lits)-1, 0, g.constant(r.cols[0]))
-			g.shapes["bound goal"] = true
-		}
-	}
-	if g.chance(0.1) {
-		g.bodyAggregate(b, len(g.rels)+1)
-	}
-	all := b.all()
-	if len(all) > 0 && g.chance(0.2) {
-		from := g.readable(len(g.rels)+1, false, false)
-		g.atom(b, from[g.pick(len(from))], true)
-	}
-	if g.chance(0.2) {
-		g.compare(b)
-	}
-	g.compareFacts(b)
-	g.compute(b)
-	g.listRead(b)
-	goal := genGoal{}
-	if g.chance(0.35) {
-		g.shapes["goal aggregate"] = true
-		if nodes := b.bound[genNode]; len(nodes) > 0 && g.chance(0.6) {
-			goal.sel = append(goal.sel, nodes[g.pick(len(nodes))])
-		}
-		for i := 1 + g.pick(2); i > 0; i-- {
-			goal.sel = append(goal.sel, g.aggregate(b, true))
-		}
-		if g.chance(0.2) {
-			goal.having = goal.sel[len(goal.sel)-1] + " >= " + strconv.Itoa(1+g.pick(2))
-		}
-	} else {
-		all := b.all()
-		if len(all) == 0 {
-			all = []string{g.binding(b, genNode)}
-		}
-		for _, v := range all {
-			if len(goal.sel) == 0 || (g.chance(0.5) && !slices.Contains(goal.sel, v)) {
-				goal.sel = append(goal.sel, v)
-			}
-		}
-		if y := g.computed(b, ""); y != "" && !slices.Contains(goal.sel, y) {
-			goal.sel = append(goal.sel, y)
-		}
-		if len(b.facts) > 0 && g.facts.Float64() < 0.7 {
-			goal.sel = append(goal.sel, b.facts[g.facts.Intn(len(b.facts))])
-		}
-	}
-	goal.body = b.lits
-	if g.chance(0.15) {
-		goal.order = goal.sel[g.pick(len(goal.sel))] + " desc"
-	}
-	if g.chance(0.1) {
-		goal.limit = 1 + g.pick(3)
-	}
-	if nodes := b.bound[genNode]; len(nodes) > 0 && g.chance(0.1) {
-		// Mostly one value, which is a constant in the goal; otherwise a set of none, two or three (#132).
-		n := 1
-		if g.chance(0.4) {
-			n = []int{0, 2, 3}[g.pick(3)]
-			g.shapes["set-bound goal"] = true
-		}
-		vals := []string{}
-		for range n {
-			vals = append(vals, fmt.Sprintf("v%d", g.pick(g.nodes)))
-		}
-		goal.bind = map[string][]string{strings.TrimPrefix(nodes[g.pick(len(nodes))], "?"): vals}
-		g.shapes["bound goal"] = true
-	}
-	return goal
-}
-
-// genCase is one program over one graph, evaluated plain or under Witnesses, which turns inlining
-// and factoring off, so the two runs take different rewrites.
-type genCase struct {
-	prog      genProgram
-	facts     genFacts
-	witnessed bool
-}
+// genCase is the corpus's case: a program, its graph, and whether it runs under Witnesses.
+type genCase = corpus.Case
 
 type genOutcome int
 
@@ -987,15 +45,11 @@ const (
 // slowing the corpus down. The evaluators' work differs, so the comparison itself runs unbudgeted.
 const genBudget = 200_000
 
-func (c genCase) String() string {
-	return fmt.Sprintf(" shrunk program: %s\n facts: %s\n bind: %v, witnessed: %v", c.prog, c.facts, c.prog.goal.bind, c.witnessed)
-}
-
-func (c genCase) opts() []Option {
+func caseOpts(c genCase) []Option {
 	var opts []Option
-	if len(c.prog.goal.bind) > 0 {
+	if len(c.Prog.Bind()) > 0 {
 		bind := map[Var][]ns.Value{}
-		for v, names := range c.prog.goal.bind {
+		for v, names := range c.Prog.Bind() {
 			bind[Var(v)] = []ns.Value{}
 			for _, n := range names {
 				bind[Var(v)] = append(bind[Var(v)], ns.S(n))
@@ -1003,58 +57,58 @@ func (c genCase) opts() []Option {
 		}
 		opts = append(opts, Bind(bind))
 	}
-	if c.witnessed {
+	if c.Witnessed {
 		opts = append(opts, Witnesses())
 	}
 	return opts
 }
 
-func (c genCase) check() (genOutcome, string) {
-	text := c.prog.String()
+func checkCase(c genCase) (genOutcome, string) {
+	text := c.Prog.String()
 	q, err := Parse(text)
 	if err != nil {
 		return genInvalid, err.Error()
 	}
-	b := baseFor(folding(c.facts.source())) // prefixed weights read folded (#205, #303)
+	b := baseFor(folding(c.Facts.Source())) // prefixed weights read folded (#205, #303)
 	if err := Validate(q, b.reg); err != nil {
 		return genInvalid, err.Error()
 	}
 	var over *BudgetExceeded
-	if _, err := (Naive{}).Eval(bg, q, b, append(c.opts(), Budget(genBudget))...); errors.As(err, &over) {
+	if _, err := (Naive{}).Eval(bg, q, b, append(caseOpts(c), Budget(genBudget))...); errors.As(err, &over) {
 		return genSkipped, ""
 	}
-	want, diff, werr := agree(q, b, c.opts()...)
+	want, diff, werr := agree(q, b, caseOpts(c)...)
 	if diff != "" {
 		return genDisagreed, diff
 	}
 	countUnitAnswers(want)
-	if c.facts.prefixed() {
+	if c.Facts.Prefixed() {
 		if diff := checkFolded(want); diff != "" {
 			return genDisagreed, diff
 		}
 	}
-	if diff := agreeLookingUp(q, b, want, werr, c.opts()); diff != "" {
+	if diff := agreeLookingUp(q, b, want, werr, caseOpts(c)); diff != "" {
 		return genDisagreed, diff
 	}
-	if diff := agreeFederated(q, b, want, werr, c.opts()); diff != "" {
+	if diff := agreeFederated(q, b, want, werr, caseOpts(c)); diff != "" {
 		return genDisagreed, diff
 	}
-	if diff := agreePushed(q, b, want, werr, c.opts()); diff != "" {
+	if diff := agreePushed(q, b, want, werr, caseOpts(c)); diff != "" {
 		return genDisagreed, diff
 	}
-	if diff := agreePartitioned(q, b, want, werr, c.opts()); diff != "" {
+	if diff := agreePartitioned(q, b, want, werr, caseOpts(c)); diff != "" {
 		return genDisagreed, diff
 	}
-	if diff := agreeStreamed(q, b, want, werr, c.opts()); diff != "" {
+	if diff := agreeStreamed(q, b, want, werr, caseOpts(c)); diff != "" {
 		return genDisagreed, diff
 	}
-	if diff := agreeOverlaid(q, b, want, werr, c.opts()); diff != "" {
+	if diff := agreeOverlaid(q, b, want, werr, caseOpts(c)); diff != "" {
 		return genDisagreed, diff
 	}
-	if diff := agreeAt(q, b, c.opts(), len(text)); diff != "" {
+	if diff := agreeAt(q, b, caseOpts(c), len(text)); diff != "" {
 		return genDisagreed, diff
 	}
-	if diff := agreeAcross(q, b, c.opts(), len(text)); diff != "" {
+	if diff := agreeAcross(q, b, caseOpts(c), len(text)); diff != "" {
 		return genDisagreed, diff
 	}
 	return genAgreed, ""
@@ -1134,8 +188,8 @@ func checkFolded(rows []Row) string {
 	inV := false
 	for _, r := range rows {
 		for v, val := range r.Bind {
-			if folded(val.BaseUnit) != val.BaseUnit {
-				return fmt.Sprintf("answer column %s holds %s %s, a spelling the Base folds to %s", v, val.S, val.BaseUnit, folded(val.BaseUnit))
+			if corpus.Folded(val.BaseUnit) != val.BaseUnit {
+				return fmt.Sprintf("answer column %s holds %s %s, a spelling the Base folds to %s", v, val.S, val.BaseUnit, corpus.Folded(val.BaseUnit))
 			}
 			inV = inV || val.BaseUnit == "V"
 		}
@@ -1537,132 +591,10 @@ func agreeOver(q Query, b, lb *Base, how string, want []Row, werr error, opts []
 // shrink drops rules, literals, goal clauses, edges and nodes one at a time while the case still
 // disagrees, and returns the smallest case it reached with its disagreement.
 func shrink(c genCase, diff string) (genCase, string) {
-	return shrinkWhile(c, diff, func(s genCase) (bool, string) {
-		out, d := s.check()
+	return corpus.Shrink(c, diff, func(s genCase) (bool, string) {
+		out, d := checkCase(s)
 		return out == genDisagreed, d
 	})
-}
-
-func shrinkWhile(c genCase, diff string, fails func(genCase) (bool, string)) (genCase, string) {
-	for {
-		smaller := false
-		for _, s := range c.smaller() {
-			if ok, d := fails(s); ok {
-				c, diff, smaller = s, d, true
-				break
-			}
-		}
-		if !smaller {
-			return c, diff
-		}
-	}
-}
-
-func (c genCase) smaller() []genCase {
-	var out []genCase
-	with := func(edit func(p *genProgram, f *genFacts)) {
-		s := c
-		s.prog = c.prog.clone()
-		s.facts = genFacts{n: c.facts.n, edges: slices.Clone(c.facts.edges), weights: slices.Clone(c.facts.weights), units: slices.Clone(c.facts.units)}
-		edit(&s.prog, &s.facts)
-		out = append(out, s)
-	}
-	for i := range c.prog.rules {
-		with(func(p *genProgram, _ *genFacts) { p.rules = slices.Delete(p.rules, i, i+1) })
-	}
-	// A derived relation read in a body can become a graph relation of its arity, so a relation only
-	// read there can then be dropped. Only derived to graph, so every step makes the case smaller.
-	for i, r := range c.prog.rules {
-		for j, l := range r.body {
-			for _, base := range genGraphRels {
-				if l.rel != "" && !slices.ContainsFunc(genGraphRels, func(g genRel) bool { return g.name == l.rel }) && len(base.cols) == len(l.args) {
-					with(func(p *genProgram, _ *genFacts) { p.rules[i].body[j].rel = base.name })
-				}
-			}
-		}
-	}
-	heads := map[string]bool{}
-	for _, r := range c.prog.rules {
-		if !heads[r.head] {
-			heads[r.head] = true
-			with(func(p *genProgram, _ *genFacts) { p.drop(r.head) })
-		}
-	}
-	for i, r := range c.prog.rules {
-		for j := range r.body {
-			if len(r.body) > 1 {
-				with(func(p *genProgram, _ *genFacts) { p.rules[i].body = slices.Delete(p.rules[i].body, j, j+1) })
-			}
-		}
-	}
-	g := c.prog.goal
-	for j := range g.body {
-		if len(g.body) > 1 {
-			with(func(p *genProgram, _ *genFacts) { p.goal.body = slices.Delete(p.goal.body, j, j+1) })
-		}
-	}
-	for j := range g.sel {
-		if len(g.sel) > 1 {
-			with(func(p *genProgram, _ *genFacts) { p.goal.sel = slices.Delete(p.goal.sel, j, j+1) })
-		}
-	}
-	if g.having != "" {
-		with(func(p *genProgram, _ *genFacts) { p.goal.having = "" })
-	}
-	if g.order != "" {
-		with(func(p *genProgram, _ *genFacts) { p.goal.order = "" })
-	}
-	if g.limit > 0 {
-		with(func(p *genProgram, _ *genFacts) { p.goal.limit = 0 })
-	}
-	if len(g.bind) > 0 {
-		with(func(p *genProgram, _ *genFacts) { p.goal.bind = nil })
-	}
-	if c.witnessed {
-		with(func(*genProgram, *genFacts) {})
-		out[len(out)-1].witnessed = false
-	}
-	for i := range c.facts.edges {
-		with(func(_ *genProgram, f *genFacts) { f.edges = slices.Delete(f.edges, i, i+1) })
-	}
-	if c.facts.n > 1 {
-		with(func(_ *genProgram, f *genFacts) {
-			f.n--
-			f.weights = f.weights[:f.n]
-			if f.units != nil {
-				f.units = f.units[:f.n]
-			}
-			f.edges = slices.DeleteFunc(f.edges, func(e [2]int) bool { return e[0] == f.n || e[1] == f.n })
-		})
-	}
-	return out
-}
-
-// drop removes relation rel: its rules and every literal that reads it. A goal left with nothing
-// asks for the nodes instead.
-func (p *genProgram) drop(rel string) {
-	reads := func(l genLit) bool {
-		return l.rel == rel || l.agg != nil && slices.ContainsFunc(l.agg.body, func(in genLit) bool { return in.rel == rel })
-	}
-	p.rules = slices.DeleteFunc(p.rules, func(r genRule) bool { return r.head == rel })
-	for i := range p.rules {
-		p.rules[i].body = slices.DeleteFunc(p.rules[i].body, reads)
-	}
-	p.goal.body = slices.DeleteFunc(p.goal.body, reads)
-	if len(p.goal.body) == 0 {
-		p.goal = genGoal{body: []genLit{{rel: "node", args: []string{"?g"}}}, sel: []string{"?g"}}
-	}
-}
-
-func (p genProgram) clone() genProgram {
-	c := p
-	c.rules = make([]genRule, len(p.rules))
-	for i, r := range p.rules {
-		c.rules[i] = genRule{head: r.head, args: slices.Clone(r.args), body: slices.Clone(r.body)}
-	}
-	c.goal.body = slices.Clone(p.goal.body)
-	c.goal.sel = slices.Clone(p.goal.sel)
-	return c
 }
 
 // knownDisagreements are disagreements filed and not yet fixed, recognised by their message, so the
@@ -1714,14 +646,14 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 	withUnits := 0
 	for seed := first; seed < first+int64(seeds); seed++ {
 		rnd := rand.New(rand.NewSource(seed))
-		facts := genGraph(rnd)
-		prog := newGenerator(rnd, facts).program()
-		if facts.units != nil {
+		facts := corpus.Graph(rnd)
+		prog := corpus.New(rnd, facts).Program()
+		if facts.HasUnits() {
 			withUnits++
 		}
 		for _, witnessed := range []bool{false, true} {
-			c := genCase{prog: prog, facts: facts, witnessed: witnessed}
-			switch out, diff := c.check(); out {
+			c := genCase{Prog: prog, Facts: facts, Witnessed: witnessed}
+			switch out, diff := checkCase(c); out {
 			case genSkipped:
 				skipped++
 			case genInvalid:
@@ -1740,7 +672,7 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 					mode = "witnessed"
 				}
 				compared["program/"+mode]++
-				for _, s := range prog.shapes {
+				for _, s := range prog.Shapes() {
 					compared[s+"/"+mode]++
 				}
 			}
@@ -1868,13 +800,22 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 // The shrinker has to reach the smallest case that still fails, or a reported disagreement buries
 // its cause in a dozen rules. Failing here means "a valid program with a rule that negates", whose
 // smallest form is one rule, a one-literal goal, and one node with no edges.
+// The corpus writes the engine's names for closures and paths itself, since it can't import
+// production datalog's unexported ones; a rename here must reach it.
+func TestTheCorpusSpellsTheEnginesNames(t *testing.T) {
+	if corpus.ClosureName != closureName || corpus.PathsName != pathsName || !slices.Equal(corpus.PathModes, pathModes) {
+		t.Errorf("corpus writes %s, %s and modes %v; the engine reads %s, %s and %v",
+			corpus.ClosureName, corpus.PathsName, corpus.PathModes, closureName, pathsName, pathModes)
+	}
+}
+
 // A seed generates one program, so JAALA_GEN_SEED=n replays what a run reported (#226).
 func TestASeedGeneratesOneProgram(t *testing.T) {
 	gen := func(seed int64) string {
 		rnd := rand.New(rand.NewSource(seed))
-		facts := genGraph(rnd)
-		p := newGenerator(rnd, facts).program()
-		return fmt.Sprintf("%s\n bind: %v\n facts: %s", p, p.goal.bind, facts)
+		facts := corpus.Graph(rnd)
+		p := corpus.New(rnd, facts).Program()
+		return fmt.Sprintf("%s\n bind: %v\n facts: %s", p, p.Bind(), facts)
 	}
 	aggregates := 0
 	for seed := int64(1); seed <= int64(envInt("JAALA_GEN_SEEDS", 300)); seed++ {
@@ -1895,27 +836,20 @@ func TestASeedGeneratesOneProgram(t *testing.T) {
 
 func TestShrinkReachesTheSmallestFailingCase(t *testing.T) {
 	negates := func(c genCase) (bool, string) {
-		if out, _ := c.check(); out == genInvalid {
+		if out, _ := checkCase(c); out == genInvalid {
 			return false, ""
 		}
-		for _, r := range c.prog.rules {
-			for _, l := range r.body {
-				if l.neg {
-					return true, ""
-				}
-			}
-		}
-		return false, ""
+		return c.Prog.Negates(), ""
 	}
 	for seed := int64(1); seed <= 40; seed++ {
 		rnd := rand.New(rand.NewSource(seed))
-		facts := genGraph(rnd)
-		c := genCase{prog: newGenerator(rnd, facts).program(), facts: facts, witnessed: true}
-		if ok, _ := negates(c); !ok || len(c.prog.rules) < 3 || len(c.facts.edges) == 0 {
+		facts := corpus.Graph(rnd)
+		c := genCase{Prog: corpus.New(rnd, facts).Program(), Facts: facts, Witnessed: true}
+		if ok, _ := negates(c); !ok || c.Prog.Rules() < 3 || c.Facts.Edges() == 0 {
 			continue
 		}
-		small, _ := shrinkWhile(c, "", negates)
-		if len(small.prog.rules) != 1 || len(small.prog.goal.body) != 1 || small.facts.n != 1 || len(small.facts.edges) != 0 || small.witnessed {
+		small, _ := corpus.Shrink(c, "", negates)
+		if small.Prog.Rules() != 1 || small.Prog.GoalLiterals() != 1 || small.Facts.Nodes() != 1 || small.Facts.Edges() != 0 || small.Witnessed {
 			t.Errorf("seed %d shrank to\n%s\nwant one rule, one goal literal, one node, no edges, not witnessed", seed, small)
 		}
 		return
@@ -1927,7 +861,7 @@ func TestShrinkReachesTheSmallestFailingCase(t *testing.T) {
 // that matches nothing would let the bug through as known, and a fixed bug should leave the list.
 func TestKnownDisagreementsStillDisagree(t *testing.T) {
 	for _, k := range knownDisagreements {
-		out, diff := k.repro.check()
+		out, diff := checkCase(k.repro)
 		if out != genDisagreed {
 			t.Errorf("#%d: the repro no longer disagrees (outcome %d %s); if #%d is fixed, drop it from knownDisagreements\n%s", k.issue, out, diff, k.issue, k.repro)
 			continue
@@ -1959,15 +893,15 @@ func TestBrokenProgramsFailTheSameWay(t *testing.T) {
 	checked, failed := 0, 0
 	for seed := int64(1); seed <= int64(seeds); seed++ {
 		rnd := rand.New(rand.NewSource(seed))
-		facts := genGraph(rnd)
-		prog := newGenerator(rnd, facts).program()
-		for i, broken := range breakProgram(prog, rnd) {
+		facts := corpus.Graph(rnd)
+		prog := corpus.New(rnd, facts).Program()
+		for i, broken := range corpus.Break(prog, rnd) {
 			text := broken.String()
 			q, err := Parse(text)
 			if err != nil {
 				continue // refused by the parser, the same for every evaluator
 			}
-			b := baseFor(std(facts.source()))
+			b := baseFor(std(facts.Source()))
 			var errs []string
 			var first error
 			for _, ev := range []Evaluator{Naive{}, SemiNaive{WrittenOrder: true}, SemiNaive{}} {
@@ -2006,45 +940,4 @@ func TestBrokenProgramsFailTheSameWay(t *testing.T) {
 		t.Fatalf("control: only %d broken programs reached the evaluators", checked)
 	}
 	t.Logf("%d broken programs, each refused alike by all three evaluators", checked)
-}
-
-// breakProgram returns three wrong versions of p, each changing one literal that names a relation:
-// one argument fewer, one more, and a name nothing defines.
-func breakProgram(p genProgram, rnd *rand.Rand) []genProgram {
-	type site struct{ rule, lit int } // rule -1 is the goal
-	var sites []site
-	for i, r := range p.rules {
-		for j, l := range r.body {
-			if l.rel != "" && len(l.args) > 1 {
-				sites = append(sites, site{i, j})
-			}
-		}
-	}
-	for j, l := range p.goal.body {
-		if l.rel != "" && len(l.args) > 1 {
-			sites = append(sites, site{-1, j})
-		}
-	}
-	if len(sites) == 0 {
-		return nil
-	}
-	s := sites[rnd.Intn(len(sites))]
-	var out []genProgram
-	for _, change := range []func(*genLit){
-		func(l *genLit) { l.args = l.args[:len(l.args)-1] },
-		func(l *genLit) { l.args = append(l.args, `"extra"`) },
-		func(l *genLit) { l.rel = "nothing_" + l.rel },
-	} {
-		c := p.clone()
-		body := c.goal.body
-		if s.rule >= 0 {
-			body = c.rules[s.rule].body
-		}
-		l := body[s.lit]
-		l.args = slices.Clone(l.args)
-		change(&l)
-		body[s.lit] = l
-		out = append(out, c)
-	}
-	return out
 }
