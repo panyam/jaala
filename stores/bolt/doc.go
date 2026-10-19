@@ -42,7 +42,11 @@
 // spelling and counts the matches, and is refused where a constant or join isn't exact, since the
 // engine can't check a summary's matches. A page orders by _ord, the hex of a node id's UTF-8, which
 // every server orders as jaala orders text; Neo4j ordered a parameter's strings by UTF-16 unit, though
-// its stored ids came out right. Options.LookupsOnly turns all of it off.
+// its stored ids came out right. A walk of a type's relation (a recursive rule, a graph.closure) is
+// one query: the server finds every node reached from the starts, Neo4j by a variable-length match
+// it prunes to a breadth-first search, Memgraph by its BFS, and returns the facts leaving them. A
+// walk bound on a property, and a step of several literals, are walked level by level by the
+// engine. Options.LookupsOnly turns all of it off.
 //
 // It is a module of its own, as the front ends are, so the Neo4j driver reaches only its importers.
 package bolt

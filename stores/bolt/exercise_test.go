@@ -118,8 +118,8 @@ func TestExercise(t *testing.T) {
 						t.Errorf("%s %s/%s: bolt answers %q (%v), memory %q", sv.name, gr.name, qq.name, rows(got), err, rows(want))
 					}
 				}
-				table = append(table, fmt.Sprintf("  %-9s %-6s %-13s %-7s %4d rows  shipped %5d -> %-5d of %-5d %3d pushes %2d summaries %2d pages %4d lookups %3d batches",
-					sv.name, gr.name, qq.name, same, len(got), before.shipped, st.shipped, held, st.pushes, st.summaries, st.pages, st.lookups, st.batches))
+				table = append(table, fmt.Sprintf("  %-9s %-6s %-13s %-7s %4d rows  shipped %5d -> %-5d of %-5d %3d pushes %2d summaries %2d pages %2d walks %4d lookups %3d batches",
+					sv.name, gr.name, qq.name, same, len(got), before.shipped, st.shipped, held, st.pushes, st.summaries, st.pages, st.walks, st.lookups, st.batches))
 			}
 		}
 		// A session: edit the code graph over the server, then commit it.

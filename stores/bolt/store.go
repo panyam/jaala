@@ -32,8 +32,8 @@ type Options struct {
 // relationships of that type, and the graph's Props relation the nodes' other properties. It reads
 // a relation whole as a stream (ns.StreamSource), looks a call up by its bound values (ns.LookupSource,
 // ns.BatchLookupSource), says which of those an index answers (ns.IndexedLookups), evaluates a join,
-// a count and a page on the server (ns.PushSource, ns.SummarySource), and writes a change set
-// (Apply). See the package doc for how facts are laid out.
+// a count and a page on the server (ns.PushSource, ns.SummarySource), walks a type's relation from
+// its starts in one query (ns.WalkSource), and writes a change set (Apply). See the package doc for how facts are laid out.
 //
 // A Store is safe for concurrent use, as its driver is.
 type Store struct {
