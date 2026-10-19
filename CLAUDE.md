@@ -2,7 +2,7 @@
 
 A Datalog engine for graph-shaped data, extracted from agni. Three packages: `ns/`, the contract
 (the namespace tree, value and signature types, members, suggestions, the `Language` hook);
-`stdlib/`, the standard vocabulary (`str.*`, `num.*`, `absent`, the glob and regex compilers); and
+`stdlib/`, the standard vocabulary (`str.*`, `num.*`, `absent` and `coalesce` (#284), the glob and regex compilers); and
 `datalog/`, the engine (parsing, linking, `Check`'s resolution and inference, evaluation). Read
 `ns/doc.go`, then `datalog/doc.go`. `frontends/` holds what turns text other than jaala's syntax into a
 program that checks, and no engine-only host imports it: `frontends/nl`, the plain-language front end
@@ -685,8 +685,10 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   literal is compatible with the unit other clauses agree on. Text constants and incompatible
   types or units leave the column untyped. Constants alone do not mark a column declared, so an
   undeclared numeric column stays `Inferred`.
-- **`min`, `max` and `sum` reduce numbers, and with none they answer `absent` and 0** (`accumulator`,
-  #122), over a text column or over nothing, in a goal and in a rule head alike; `count` is 0 and
+- **`min`, `max`, `sum` and `avg` reduce numbers, and with none they answer `absent`, 0 for `sum`**
+  (`accumulator`, #122; `avg`, #284, is the exact sum over how many numbers, counting bindings as
+  `sum` does, so `countsBindings` and Soufflé's `unsupported("avg")` list it: Soufflé's `mean` is a
+  float), over a text column or over nothing, in a goal and in a rule head alike; `count` is 0 and
   `list` the empty text. Never `""`, which reads as a value and keys as one (#62). Soufflé gives no
   tuple for a min over nothing, so its translator writes `souffleAbsent` there and skips, guards and
   reads back that sentinel as jaala treats absent. Over numbers in different units all three are

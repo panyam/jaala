@@ -5,7 +5,7 @@ prev: {url: "/jaala/guide/negation/", title: "Negation"}
 next: {url: "/jaala/guide/ordering/", title: "Ordering"}
 ---
 
-An aggregate in the projection turns the goal's rows into one row per group. The plain variables in the projection make up the group's key, and each aggregate reduces the rows that share a key. The aggregates are `count`, `sum`, `min`, `max` and `list`, and each takes one variable.
+An aggregate in the projection turns the goal's rows into one row per group. The plain variables in the projection make up the group's key, and each aggregate reduces the rows that share a key. The aggregates are `count`, `sum`, `avg`, `min`, `max` and `list`, and each takes one variable.
 
 ## Groups
 
@@ -29,13 +29,17 @@ A group exists only when some row has its key, so a package with no tests has no
 
 {{ demo "demos/guide/aggregation-min-max.yaml" }}
 
-A group with no numbers in that column has no least or greatest, so `min` and `max` answer `absent`, and `sum` answers 0, as it would over no rows at all (below). That happens over a text column, like package names ([#122](https://github.com/panyam/jaala/issues/122)). `absent` sorts first and is never equal to the empty string, and a comparison like `?m < 5` or `having min(?p) < 5` is false for it, so it can't pass for a number:
+`avg` is the group's sum over how many numbers it added. Like `sum` it counts every row, so a number two rows share counts twice, and `avg(distinct ?n)` averages the distinct numbers instead ([#284](https://github.com/panyam/jaala/issues/284)):
+
+{{ demo "demos/guide/aggregation-avg.yaml" }}
+
+A group with no numbers in that column has no least or greatest, so `min`, `max` and `avg` answer `absent`, and `sum` answers 0, as it would over no rows at all (below). That happens over a text column, like package names ([#122](https://github.com/panyam/jaala/issues/122)). `absent` sorts first and is never equal to the empty string, and a comparison like `?m < 5` or `having min(?p) < 5` is false for it, so it can't pass for a number:
 
 {{ demo "demos/guide/aggregation-min-text.yaml" }}
 
 ## Units
 
-A number can carry a unit (`5V`, `0.5A`), and `sum`, `min` and `max` read it. Over numbers in one unit the answer keeps that unit. Over numbers in different units there's no answer: the largest of 5 volts, half an amp and ten thousand ohms isn't a question, so all three are `absent` ([#80](https://github.com/panyam/jaala/issues/80)), the way a comparison between volts and amps never holds. A number without a unit goes with the group's, as it does in a comparison, and `count` and `list` don't look at units at all:
+A number can carry a unit (`5V`, `0.5A`), and `sum`, `avg`, `min` and `max` read it. Over numbers in one unit the answer keeps that unit. Over numbers in different units there's no answer: the largest of 5 volts, half an amp and ten thousand ohms isn't a question, so all four are `absent` ([#80](https://github.com/panyam/jaala/issues/80)), the way a comparison between volts and amps never holds. A number without a unit goes with the group's, as it does in a comparison, and `count` and `list` don't look at units at all:
 
 {{ demo "demos/guide/aggregation-units.yaml" }}
 
@@ -61,7 +65,7 @@ A comparison in the goal can't do this, since it runs on each row before there's
 
 ## An aggregate over nothing
 
-With no plain variables in the projection, the whole answer is a single group, and that group exists even when no row matched. So an aggregate over nothing still answers one row, with `count` and `sum` at zero and `min` and `max` absent:
+With no plain variables in the projection, the whole answer is a single group, and that group exists even when no row matched. So an aggregate over nothing still answers one row, with `count` and `sum` at zero and `min`, `max` and `avg` absent:
 
 {{ demo "demos/guide/aggregation-empty.yaml" }}
 
@@ -71,7 +75,7 @@ With no plain variables in the projection, the whole answer is a single group, a
 
 {{ demo "demos/guide/aggregation-body-count.yaml" }}
 
-That makes it the way to count zero, which a group in the projection or a rule's head can't. Over no bindings the value is what an aggregate over nothing answers: `count` and `sum` 0, `min` and `max` absent, and `list` empty. It works in a rule as well as in the goal, so `util`, which imports nothing, has no heaviest import:
+That makes it the way to count zero, which a group in the projection or a rule's head can't. Over no bindings the value is what an aggregate over nothing answers: `count` and `sum` 0, `min`, `max` and `avg` absent, and `list` empty. It works in a rule as well as in the goal, so `util`, which imports nothing, has no heaviest import:
 
 {{ demo "demos/guide/aggregation-body-rule.yaml" }}
 
@@ -84,4 +88,4 @@ A rule's head can aggregate, as in `fan_in(?q, count(?p)) :- imports(?p, ?q);`, 
 - It has to be its relation's only rule, since two rules each producing a count for the same key would give the key two counts.
 - Its body sits in a lower stratum than anything that reads the relation, the same as for `not`, so the count is never taken over a relation that's still growing. jaala refuses a cycle through an aggregating rule for the same reason it refuses one through `not`.
 
-Its aggregate column reports a type whenever the function decides one: a number for `count`, text for `list`, and a number for `sum`, `min` and `max` over a column already typed as a number. Over an untyped column those three stay untyped.
+Its aggregate column reports a type whenever the function decides one: a number for `count`, text for `list`, and a number for `sum`, `avg`, `min` and `max` over a column already typed as a number. Over an untyped column those four stay untyped.

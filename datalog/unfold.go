@@ -23,7 +23,7 @@ import (
 //     (see projects). has_tp(?n) :- pin(?tp, ?n), ... holds a net once, and inlined, each probe of a
 //     net re-lists its test points (#139). Demand still reaches it, deduplicated (see magic).
 //   - No aggregate of the goal, or of the rule whose body holds the call, counts bindings: count,
-//     sum and list without distinct. A derived relation is a set, so has_tp(?n) yields each net once,
+//     sum, avg and list without distinct. A derived relation is a set, so has_tp(?n) yields each net once,
 //     but its inlined body yields a net once per test point on it, and `=> count(?n)` would count
 //     those. Any other rule body is safe, since its head is a set, and min, max and distinct
 //     aggregates never count duplicates.
@@ -261,7 +261,7 @@ func countsBindings(sel []Term, having []Compare) bool {
 		aggs = append(aggs, h.Left.Agg)
 	}
 	for _, a := range aggs {
-		if a != nil && !a.Distinct && (a.Func == "count" || a.Func == "sum" || a.Func == "list") {
+		if a != nil && !a.Distinct && (a.Func == "count" || a.Func == "sum" || a.Func == "avg" || a.Func == "list") {
 			return true
 		}
 	}

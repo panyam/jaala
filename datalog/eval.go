@@ -1588,7 +1588,7 @@ func validateAggOrVar(t Term, pv map[Var]bool) error {
 
 func validAggFunc(f string) bool {
 	switch f {
-	case "count", "min", "max", "sum", "list":
+	case "count", "min", "max", "sum", "avg", "list":
 		return true
 	}
 	return false

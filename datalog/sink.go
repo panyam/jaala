@@ -115,9 +115,9 @@ type accumulator struct {
 	bindings int                 // count: every binding, bound or not
 	keys     map[string]ns.Value // count and list distinct: one value per key, the one ordering first
 	list     []ns.Value          // list: every value
-	sum      exactSum
-	seen     map[float64]bool // sum distinct
-	best     float64          // min, max
+	sum      exactSum            // sum, avg
+	seen     map[float64]bool    // sum and avg distinct
+	best     float64             // min, max
 	numbers  int
 	nan      bool
 	units    []string
@@ -158,7 +158,7 @@ func (acc *accumulator) addN(val ns.Value, ok bool, n int) {
 	}
 	x := *val.Num
 	switch acc.a.Func {
-	case "sum":
+	case "sum", "avg":
 		if acc.a.Distinct {
 			if acc.seen[x] {
 				return
@@ -212,9 +212,10 @@ func (acc *accumulator) addExtremes(n int, ext []ns.Extreme) {
 }
 
 // result is the aggregate's value, and why when it is absent (Row.Why): count is how many; list joins
-// the values in answer order; min, max and sum reduce the numbers, which over none is 0 for sum and
-// absent for min and max (#122), and over numbers in different units is absent for all three (#80).
-// Otherwise the result carries the group's unit.
+// the values in answer order; min, max, sum and avg reduce the numbers, which over none is 0 for sum
+// and absent for the others (#122), and over numbers in different units is absent for all four (#80).
+// Otherwise the result carries the group's unit. avg is the exact sum over how many numbers it
+// added, so it doesn't depend on arrival either (#284).
 func (acc *accumulator) result() (ns.Value, string) {
 	switch acc.a.Func {
 	case "count":
@@ -255,6 +256,8 @@ func (acc *accumulator) result() (ns.Value, string) {
 	switch {
 	case acc.a.Func == "sum":
 		r = acc.sum.value()
+	case acc.a.Func == "avg":
+		r = acc.sum.value() / float64(acc.numbers)
 	case acc.nan:
 		r = math.NaN()
 	}

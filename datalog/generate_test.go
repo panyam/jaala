@@ -296,6 +296,9 @@ type generator struct {
 	// its own, as arith does, so a seed binding none is the program it was; nfacts numbers them.
 	facts  *rand.Rand
 	nfacts int
+	// avgs turns a drawn sum into an avg now and then (#284), from a stream of its own, so a seed
+	// writing no sum is the program it was.
+	avgs *rand.Rand
 }
 
 // newGenerator draws a program for facts from rnd. Arithmetic depends on the graph's units as drawn,
@@ -305,6 +308,9 @@ func newGenerator(rnd *rand.Rand, facts genFacts) *generator {
 	h := fnv.New64a()
 	fmt.Fprint(h, "facts", facts.n, facts.edges, facts.weights)
 	g.facts = rand.New(rand.NewSource(int64(h.Sum64())))
+	h = fnv.New64a()
+	fmt.Fprint(h, "avgs", facts.n, facts.edges, facts.weights)
+	g.avgs = rand.New(rand.NewSource(int64(h.Sum64())))
 	if facts.units == nil {
 		h := fnv.New64a()
 		fmt.Fprint(h, "arith", facts.n, facts.edges, facts.weights)
@@ -659,9 +665,13 @@ func (g *generator) aggregate(b *genBody, list bool) string {
 		fns = append(fns, "list", "list distinct")
 	}
 	fn := fns[g.pick(len(fns))]
+	if fn == "sum" && g.avgs.Float64() < 0.4 {
+		fn = "avg"
+		g.shapes["avg"] = true
+	}
 	var v string
 	switch fn {
-	case "sum", "min", "max":
+	case "sum", "avg", "min", "max":
 		v = g.binding(b, genNum)
 	default:
 		all := b.all()
@@ -1585,7 +1595,7 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 			}
 		}
 	}
-	shapes := []string{"program", "recursion", "negation", "head aggregate", "goal aggregate", "body aggregate", "bound goal", "set-bound goal", "arithmetic", "bound fact"}
+	shapes := []string{"program", "recursion", "negation", "head aggregate", "goal aggregate", "body aggregate", "bound goal", "set-bound goal", "arithmetic", "bound fact", "avg"}
 	var counts, issues []string
 	for _, sh := range shapes {
 		counts = append(counts, fmt.Sprintf("%s %d/%d", sh, compared[sh+"/plain"], compared[sh+"/witnessed"]))
@@ -1605,6 +1615,9 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 	}
 	if compared["bound fact/plain"] == 0 || compared["bound fact/witnessed"] == 0 {
 		t.Errorf("control: no program bound an edge's fact (#279)")
+	}
+	if compared["avg/plain"] == 0 || compared["avg/witnessed"] == 0 {
+		t.Errorf("control: no program averaged (#284)")
 	}
 	if lookedUpPrograms == 0 {
 		t.Errorf("control: no program made a lookup through a Source answering them")

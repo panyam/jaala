@@ -246,7 +246,7 @@ func (l *lowerer) aggregate(a BodyAggregate, elsewhere, bound map[Var]bool, dom 
 }
 
 // aggregateFixed is the type an aggregate's function fixes whatever it reduces: count a number, list
-// text. sum, min and max take their input's, which the typer works out.
+// text. sum, avg, min and max take their input's, which the typer works out.
 func aggregateFixed(fn string) (ns.ArgType, bool) {
 	switch fn {
 	case "count":

@@ -1,0 +1,3 @@
+fixture: deps
+query: loc(?p, ?n), owner(?p, ?t) => ?t, avg(?n), sum(?n), count(?n)
+expect: [[data, "950", "1900", "2"], [platform, "175", "700", "4"], [security, "800", "800", "1"], [web, "800", "2400", "3"]]
