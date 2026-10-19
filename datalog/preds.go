@@ -99,6 +99,9 @@ func (b *Base) extendAtom(atom *Atom, bnd *binding, yield func(*binding) error) 
 	if isClosure(rel) {
 		return b.extendClosure(atom, bnd, yield)
 	}
+	if isWalk(rel) {
+		return b.extendPaths(atom, bnd, yield)
+	}
 	if bi, ok := predicateIn(b.reg, rel); ok {
 		return extendBuiltin(bi, atom, bnd, b, yield)
 	}
@@ -155,7 +158,7 @@ func (b *Base) checkArgValues(atom *Atom, s ns.Schema) error {
 // a solve happens to arrive is checking it sometimes.
 func (b *Base) checkAtom(atom *Atom) error {
 	rel := atom.Relation
-	if isClosure(rel) {
+	if isWalk(rel) {
 		return b.checkClosure(atom, b.idbArity)
 	}
 	if bi, ok := predicateIn(b.reg, rel); ok {

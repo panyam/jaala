@@ -258,16 +258,16 @@ func TestMaterializeFillsTheStore(t *testing.T) {
 func TestMaterializeKeepsAModuleMember(t *testing.T) {
 	mem := reversedLine(10)
 	v := std(mem)
-	if err := v.AddModule("path", LanguageName, reachModule, ""); err != nil {
+	if err := v.AddModule("hop", LanguageName, reachModule, ""); err != nil {
 		t.Fatal(err)
 	}
 	src := &versioned{MemSource: mem, v: "1"}
 	store := &counted{}
-	if err := (SemiNaive{}).Materialize(bg, Query{}, storedBase(v, src, store), []string{"path.reach"}); err != nil {
+	if err := (SemiNaive{}).Materialize(bg, Query{}, storedBase(v, src, store), []string{"hop.reach"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := store.Relation("path.reach", "1"); !ok {
-		t.Errorf("path.reach wasn't stored")
+	if _, ok := store.Relation("hop.reach", "1"); !ok {
+		t.Errorf("hop.reach wasn't stored")
 	}
 }
 

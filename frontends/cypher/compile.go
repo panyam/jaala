@@ -59,7 +59,7 @@ func Compile(v *ns.Vocabulary, g Graph, text string, opts ...Option) (Program, e
 	if err != nil {
 		return Program{}, err
 	}
-	w := &world{v: v, g: g, params: map[string]string{}, helpers: map[string]bool{}}
+	w := &world{v: v, g: g, params: map[string]string{}, helpers: map[string]bool{}, edgePaths: st.edgePaths}
 	for _, o := range opts {
 		o(w)
 	}
@@ -851,7 +851,7 @@ func edgeAtom(e Edge, args []any, from, to any) frag {
 // of a helper relation when r has several types, either direction, or a variable length.
 func (c *compiler) relLiteral(r relPat, from, to *nodeVar) (frag, *Error) {
 	if r.v != "" && r.varLen {
-		return nil, gapPaths.at(r.pos, "a variable bound to a variable-length relationship")
+		return nil, gapPaths.at(r.pos, "a variable bound to a variable-length relationship: bind the path, p = (...), and read relationships(p)")
 	}
 	es, argss, err := c.edges(r)
 	if err != nil {
@@ -861,7 +861,7 @@ func (c *compiler) relLiteral(r relPat, from, to *nodeVar) (frag, *Error) {
 	if r.dir == -1 {
 		src, dst = dst, src
 	}
-	if !r.varLen && len(es) == 1 && r.dir != 0 {
+	if !r.varLen && r.path == "" && len(es) == 1 && r.dir != 0 {
 		return edgeAtom(es[0], argss[0], src, dst), nil
 	}
 	// step(x, y) is one hop: the type's relation itself when there is one type read one way, or a
@@ -890,17 +890,30 @@ func (c *compiler) relLiteral(r relPat, from, to *nodeVar) (frag, *Error) {
 	} else {
 		src, dst = keyArg{from}, keyArg{to}
 	}
-	if !r.varLen {
+	if !r.varLen && r.path == "" {
 		return step(src, dst), nil
 	}
 	if r.max != -1 && r.max < r.min {
 		return nil, errAt(r.pos, "the range *%d..%d is empty", r.min, r.max)
 	}
-	// A variable length walks one step's relation with graph.closure: the helper above when there is
-	// one, the type's own relation when it has two arguments, from and to, and otherwise a helper of one
-	// hop.
+	// A variable length walks one step's relation with graph.closure, and a path variable's with
+	// graph.paths: the helper above when there is one, the type's own relation when it has two
+	// arguments, from and to, and otherwise a helper of one hop. A path relationships() reads walks a
+	// helper of three, the edge's fact between its ends.
 	walked := helper
 	switch e := es[0]; {
+	case r.edges:
+		walked = c.helper("wire")
+		for i, e := range es {
+			c.addRule(rule{head: frag{walked + "(?x, ?r, ?y)"}, body: []frag{append(edgeAtom(e, argss[i], "?x", "?y"), " as ?r")}})
+			if r.dir == 0 {
+				c.addRule(rule{head: frag{walked + "(?x, ?r, ?y)"}, body: []frag{append(edgeAtom(e, argss[i], "?y", "?x"), " as ?r")}})
+			}
+		}
+		src, dst = keyArg{from}, keyArg{to}
+		if r.dir == -1 {
+			src, dst = dst, src
+		}
 	case helper != "":
 	case len(argss[0]) == 2:
 		walked = e.Relation
@@ -911,8 +924,18 @@ func (c *compiler) relLiteral(r relPat, from, to *nodeVar) (frag, *Error) {
 		walked = c.helper("step")
 		c.addRule(rule{head: frag{walked + "(?x, ?y)"}, body: []frag{step("?x", "?y")}})
 	}
-	upTo := max(r.max, 0) // graph.closure reads 0 as no bound
-	return frag{fmt.Sprintf("graph.closure(%q, ", walked), src, ", ", dst, fmt.Sprintf(", %d, %d, _)", r.min, upTo)}, nil
+	lo, upTo := r.min, max(r.max, 0) // graph.closure and graph.paths read 0 as no bound
+	if !r.varLen {
+		lo, upTo = 1, 1
+	}
+	if r.path != "" {
+		mode := "trail" // Cypher's: no relationship twice
+		if r.selector == "shortest" {
+			mode = "shortest"
+		}
+		return frag{fmt.Sprintf("graph.paths(%q, ", walked), src, ", ", dst, fmt.Sprintf(", %q, %d, %d, ?%s)", mode, lo, upTo, c.values[r.path])}, nil
+	}
+	return frag{fmt.Sprintf("graph.closure(%q, ", walked), src, ", ", dst, fmt.Sprintf(", %d, %d, _)", lo, upTo)}, nil
 }
 
 // value is e as an operand of a comparison: a constant, a parameter, a variable or arithmetic over
@@ -1024,7 +1047,10 @@ func (c *compiler) value(e expr) (frag, *Error) {
 		case "type", "startnode", "endnode":
 			return nil, gapEdgeVars.at(e.pos, "%s()", e.name)
 		case "length", "nodes", "relationships":
-			return nil, gapPaths.at(e.pos, "%s()", e.name)
+			if p, ok := c.pathArg(e); ok {
+				return frag{pathFuncs[strings.ToLower(e.name)] + "(?" + p + ")"}, nil
+			}
+			return nil, errAt(e.pos, "%s() reads a path variable, bound by p = (...)", e.name)
 		case "labels", "keys", "properties", "range", "size", "head", "last", "tail":
 			return nil, gapLists.at(e.pos, "%s()", e.name)
 		}
@@ -1038,6 +1064,23 @@ func (c *compiler) value(e expr) (frag, *Error) {
 		return nil, e.err
 	}
 	return nil, errAt(e.at(), "a test can't be a value here")
+}
+
+// pathFuncs are Cypher's functions of a path, which stdlib's path.* compute from the path's value
+// (#280): relationships() lists its edges' facts, which a path variable relationships() reads walks.
+var pathFuncs = map[string]string{"length": "path.length", "nodes": "path.nodes", "relationships": "path.edges"}
+
+// pathArg is the jaala variable of the one value variable e is called on, a path bound by p = (...) or
+// carried by a WITH.
+func (c *compiler) pathArg(e call) (string, bool) {
+	if len(e.args) != 1 {
+		return "", false
+	}
+	v, ok := e.args[0].(varRef)
+	if !ok || c.values[v.name] == "" {
+		return "", false
+	}
+	return c.values[v.name], true
 }
 
 // textFuncs are Cypher's string functions that stdlib's str.* compute (#360), each a relation with
@@ -1143,6 +1186,17 @@ func (c *compiler) condition(e expr, neg bool) (frag, *Error) {
 			}
 			pred := map[string]string{"STARTS WITH": "str.prefix", "ENDS WITH": "str.suffix", "CONTAINS": "str.contains"}[e.op]
 			return frag{not + pred + "(", l, ", ", r, ")"}, nil
+		case "IN":
+			// x IN nodes(p): the path passes through x
+			p, ok := c.pathArg(e.r.(call))
+			if !ok {
+				return nil, errAt(e.pos, "nodes() reads a path variable, bound by p = (...)")
+			}
+			x, err := c.term(e.l)
+			if err != nil {
+				return nil, err
+			}
+			return frag{not + "path.node(?" + p + ", _, ", x, ")"}, nil
 		case "=~":
 			s, ok := e.r.(strLit)
 			if !ok {
@@ -1499,6 +1553,9 @@ func (c *compiler) dnfOf(e expr, neg bool) ([][]cond, *Error) {
 				r: binary{pos: e.pos, op: "AND", l: negate{pos: e.pos, e: e.l}, r: e.r}}
 			return c.dnfOf(x, neg)
 		case "IN":
+			if f, ok := e.r.(call); ok && strings.EqualFold(f.name, "nodes") {
+				return [][]cond{{{e: e, neg: neg}}}, nil // a test of its own, path.node
+			}
 			list, ok := e.r.(listLit)
 			if !ok {
 				return nil, gapLists.at(e.pos, "IN over anything but a list written in the query")

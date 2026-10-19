@@ -13,7 +13,7 @@ import (
 
 // graph.closure("imports", ?x, ?y, 1, 6, ?d) holds when ?y is reachable from ?x in 1 to 6 steps of the
 // binary relation imports, base or derived, ?d the fewest such steps (#281). Max 0 is no bound, and
-// min 0 lets ?x reach itself in none. Each answer cites one path of ?d steps, and its witness has a
+// min 0 lets ?x reach itself in none when the relation holds it (#280). Each answer cites one path of ?d steps, and its witness has a
 // child per step. The engine walks breadth first from whichever end is bound, once per node and depth
 // below min, so it costs the nodes and steps within the bound, where a recursive rule with a depth
 // counter would derive every walk.
@@ -31,11 +31,64 @@ const closurePrefix = "\x00c:"
 // closureRelation is the closure over step.
 func closureRelation(step string) string { return closurePrefix + step }
 
-// stepOf is the relation a closure walks, and whether rel is a closure.
-func stepOf(rel string) (string, bool) { return strings.CutPrefix(rel, closurePrefix) }
+// An engineWalk is a call the engine answers by walking a relation itself: graph.closure (#281) and
+// graph.paths (#280). A call is written as a relation named by the walk's prefix and the relation it
+// walks, its arguments as written, so every check reads the step relation from the name.
+type engineWalk struct {
+	name, prefix string
+	builtin      ns.Builtin
+	fix          string
+	lo           int   // the argument holding min, max the one after it
+	arities      []int // the step relation's arities it walks
+}
+
+var closureWalk = &engineWalk{name: closureName, prefix: closurePrefix, builtin: closureBuiltin, fix: closureFix, lo: 3, arities: []int{2}}
+
+// engineWalks are the walks a query can call.
+var engineWalks []*engineWalk
+
+func init() { engineWalks = []*engineWalk{closureWalk, pathsWalk} }
+
+// walkOf is the walk a relation name calls and the relation it walks.
+func walkOf(rel string) (*engineWalk, string, bool) {
+	for _, w := range engineWalks {
+		if step, ok := strings.CutPrefix(rel, w.prefix); ok {
+			return w, step, true
+		}
+	}
+	return nil, "", false
+}
+
+// walkCalled is the walk a query calls by name, or nil.
+func walkCalled(name string) *engineWalk {
+	for _, w := range engineWalks {
+		if w.name == name {
+			return w
+		}
+	}
+	return nil
+}
+
+// stepOf is the relation an engine walk walks, and whether rel is one.
+func stepOf(rel string) (string, bool) {
+	_, step, ok := walkOf(rel)
+	return step, ok
+}
 
 // isClosure reports whether rel is a closure.
 func isClosure(rel string) bool { return strings.HasPrefix(rel, closurePrefix) }
+
+// isWalk reports whether rel is an engine walk: a closure or a paths call.
+func isWalk(rel string) bool {
+	_, _, ok := walkOf(rel)
+	return ok
+}
+
+// walkName is how a query calls the engine walk rel.
+func walkName(rel string) string {
+	w, _, _ := walkOf(rel)
+	return w.name
+}
 
 // closureBuiltin is what a closure is to the checks and the planner: a generator run from either end,
 // or from every value the step relation leads from when neither is bound, with its relation and bounds
@@ -47,12 +100,15 @@ var closureBuiltin = ns.Builtin{
 	Labels: []string{"relation", "from", "to", "min", "max", "hops"},
 	Types:  []ns.ArgType{{Type: ns.TypeString}, {}, {}, {Type: ns.TypeNumber}, {Type: ns.TypeNumber}, {Type: ns.TypeNumber}},
 	Doc:    "?to is reachable from ?from in min to max steps of the relation (max 0 for no bound), ?hops the fewest, walked from whichever end is bound",
-	Gen: func(context.Context, ns.Source, []ns.Arg, func([]ns.Value, []string) error) error {
-		return errors.New("query: internal: graph.closure is run by the engine")
-	},
+	Gen:    engineRun,
 }
 
-// relationsRead is what a call to rel reads: rel, and for a closure its step relation too.
+// engineRun is an engine walk's Gen, set so it reads as a generator and never called.
+func engineRun(context.Context, ns.Source, []ns.Arg, func([]ns.Value, []string) error) error {
+	return errors.New("query: internal: an engine walk is run by the engine")
+}
+
+// relationsRead is what a call to rel reads: rel, and for an engine walk its step relation too.
 func relationsRead(rel string) []string {
 	if step, ok := stepOf(rel); ok {
 		return []string{rel, step}
@@ -60,10 +116,10 @@ func relationsRead(rel string) []string {
 	return []string{rel}
 }
 
-// predicateIn is rel's predicate in reg, or for a closure closureBuiltin.
+// predicateIn is rel's predicate in reg, or for an engine walk its builtin.
 func predicateIn(reg *ns.Vocabulary, rel string) (ns.Builtin, bool) {
-	if isClosure(rel) {
-		return closureBuiltin, true
+	if w, _, ok := walkOf(rel); ok {
+		return w.builtin, true
 	}
 	return reg.Predicate(rel)
 }
@@ -132,80 +188,98 @@ func lowerClosureLiteral(l Literal) (Literal, error) {
 		agg := *l.Agg
 		agg.Body = body
 		l.Agg = &agg
-	case l.Pos != nil && l.Pos.Relation == closureName:
+	case l.Pos != nil && walkCalled(l.Pos.Relation) != nil:
 		l.Pos, err = lowerClosureAtom(l.Pos)
-	case l.Neg != nil && l.Neg.Relation == closureName:
+	case l.Neg != nil && walkCalled(l.Neg.Relation) != nil:
 		l.Neg, err = lowerClosureAtom(l.Neg)
 	}
 	return l, err
 }
 
 func lowerClosureAtom(a *Atom) (*Atom, error) {
-	if n := len(a.Args); n != closureBuiltin.Arity {
-		return a, checkErr(KindArity, fmt.Sprintf("query: %s takes 6 args, got %d", closureName, n)).call(closureName, n).fix(closureFix)
+	w := walkCalled(a.Relation)
+	if n := len(a.Args); n != w.builtin.Arity {
+		return a, checkErr(KindArity, fmt.Sprintf("query: %s takes %d args, got %d", w.name, w.builtin.Arity, n)).call(w.name, n).fix(w.fix)
 	}
 	rel := a.Args[0].Const
 	if rel == nil || rel.Num != nil || rel.Absent || rel.S == "" {
-		return a, checkErr(KindType, fmt.Sprintf("query: %s's relation must be a text constant naming one, not %s", closureName, a.Args[0])).call(closureName, len(a.Args)).argument(0, a.Args[0].String()).fix(closureFix)
+		return a, checkErr(KindType, fmt.Sprintf("query: %s's relation must be a text constant naming one, not %s", w.name, a.Args[0])).call(w.name, len(a.Args)).argument(0, a.Args[0].String()).fix(w.fix)
 	}
 	if a.Fact != "" {
-		return a, factErr(a, fmt.Sprintf("query: %s is a predicate, whose matches are no stored facts, so \"as ?%s\" names none", closureName, a.Fact), "drop `as ?"+string(a.Fact)+"`")
+		return a, factErr(a, fmt.Sprintf("query: %s is a predicate, whose matches are no stored facts, so \"as ?%s\" names none", w.name, a.Fact), "drop `as ?"+string(a.Fact)+"`")
 	}
 	out := *a
-	out.Relation = closureRelation(rel.S)
+	out.Relation = w.prefix + rel.S
 	return &out, nil
 }
 
 const closureFix = `write graph.closure("relation", ?from, ?to, min, max, ?hops), max 0 for no bound and _ for hops you don't read`
 
-// checkClosure checks a closure as written: its step relation is a binary relation, base or derived
-// (derived holds the program's own, by arity), that takes nothing from its caller, and its constant
-// bounds are steps.
+// checkClosure checks an engine walk as written: its step relation is a relation of an arity it walks,
+// base or derived (derived holds the program's own, by arity), that takes nothing from its caller, its
+// constant bounds are steps, and a paths call's constant mode is one.
 func (b *Base) checkClosure(a *Atom, derived map[string]int) error {
-	step, _ := stepOf(a.Relation)
+	w, step, _ := walkOf(a.Relation)
 	if strings.HasPrefix(step, walkPrefix) {
-		return nil // walkSteps checked it, after the closure as written was
+		return nil // walkSteps checked it, after the call as written was
 	}
 	call := func(kind ErrorKind, msg string) *CheckError {
-		return checkErr(kind, msg).call(closureName, len(a.Args)).argument(0, a.Args[0].String())
+		return checkErr(kind, msg).call(w.name, len(a.Args)).argument(0, a.Args[0].String())
 	}
 	n, ok := derived[step]
 	if !ok {
 		if _, isPred := b.reg.Predicate(step); isPred {
-			return call(KindDefinition, fmt.Sprintf("query: %s can't walk %s, a predicate: it walks a relation's facts", closureName, step)).fix("walk a relation, or a rule that calls " + step)
+			return call(KindDefinition, fmt.Sprintf("query: %s can't walk %s, a predicate: it walks a relation's facts", w.name, step)).fix("walk a relation, or a rule that calls " + step)
 		}
 		s, found := b.schemaOf(step)
 		if !found {
-			e := b.unknownErr(&Atom{Relation: step, Args: a.Args[1:3]}, "query: %s over %s", closureName)
-			e.Relation, e.Args = closureName, len(a.Args)
+			e := b.unknownErr(&Atom{Relation: step, Args: a.Args[1:3]}, "query: %s over %s", w.name)
+			e.Relation, e.Args = w.name, len(a.Args)
 			return e
 		}
 		n = s.Arity
 	}
-	if n != 2 {
-		return call(KindArity, fmt.Sprintf("query: %s needs a relation of 2 args, from and to; %s takes %d", closureName, displayName(step), n)).fix("write a rule of two arguments that reads " + displayName(step) + " and walk that")
+	if !slices.Contains(w.arities, n) {
+		if w == closureWalk {
+			return call(KindArity, fmt.Sprintf("query: %s needs a relation of 2 args, from and to; %s takes %d", w.name, displayName(step), n)).fix("write a rule of two arguments that reads " + displayName(step) + " and walk that")
+		}
+		return call(KindArity, fmt.Sprintf("query: %s needs a relation of 2 args, from and to, or 3, from, edge and to; %s takes %d", w.name, displayName(step), n)).fix("write a rule of two or three arguments that reads " + displayName(step) + " and walk that")
 	}
 	if _, ok := b.inputRels[step]; ok {
-		return call(KindDefinition, fmt.Sprintf("query: %s can't walk %s, which takes an argument from its caller", closureName, displayName(step)))
+		return call(KindDefinition, fmt.Sprintf("query: %s can't walk %s, which takes an argument from its caller", w.name, displayName(step)))
+	}
+	var mode *ns.Value
+	if w == pathsWalk && a.Args[3].Const != nil {
+		mode = a.Args[3].Const
+		if _, err := pathMode(*mode); err != nil {
+			return err
+		}
 	}
 	var lo, hi *ns.Value
-	if t := a.Args[3]; t.Const != nil {
+	if t := a.Args[w.lo]; t.Const != nil {
 		lo = t.Const
 	}
-	if t := a.Args[4]; t.Const != nil {
+	if t := a.Args[w.lo+1]; t.Const != nil {
 		hi = t.Const
 	}
 	if lo != nil || hi != nil {
-		if _, _, err := closureBounds(lo, hi); err != nil {
+		_, h, err := w.bounds(lo, hi)
+		if err != nil {
 			return err
+		}
+		if mode != nil && mode.S == "walk" && hi != nil && h == 0 {
+			return errWalkUnbounded()
 		}
 	}
 	return nil
 }
 
-// closureBounds reads a closure's bounds, either nil when not yet known: a whole number of steps, min
-// at least 0, and max 0 for none or at least min.
-func closureBounds(lo, hi *ns.Value) (int, int, error) {
+// closureBounds reads a closure's bounds, as bounds does.
+func closureBounds(lo, hi *ns.Value) (int, int, error) { return closureWalk.bounds(lo, hi) }
+
+// bounds reads a walk's bounds, either nil when not yet known: a whole number of steps, min at least 0,
+// and max 0 for none or at least min.
+func (w *engineWalk) bounds(lo, hi *ns.Value) (int, int, error) {
 	steps := func(v *ns.Value) (int, bool) {
 		if v == nil {
 			return 0, true
@@ -217,11 +291,11 @@ func closureBounds(lo, hi *ns.Value) (int, int, error) {
 	}
 	l, ok := steps(lo)
 	if !ok {
-		return 0, 0, checkErr(KindType, fmt.Sprintf("query: %s's min must be a whole number of steps, 0 or more, not %s", closureName, lo.S)).call(closureName, 6).argument(3, lo.S)
+		return 0, 0, checkErr(KindType, fmt.Sprintf("query: %s's min must be a whole number of steps, 0 or more, not %s", w.name, lo.S)).call(w.name, w.builtin.Arity).argument(w.lo, lo.S)
 	}
 	h, ok := steps(hi)
 	if !ok || (hi != nil && h != 0 && h < l) {
-		return 0, 0, checkErr(KindType, fmt.Sprintf("query: %s's max must be a whole number of steps, 0 for no bound or at least min, not %s", closureName, hi.S)).call(closureName, 6).argument(4, hi.S)
+		return 0, 0, checkErr(KindType, fmt.Sprintf("query: %s's max must be a whole number of steps, 0 for no bound or at least min, not %s", w.name, hi.S)).call(w.name, w.builtin.Arity).argument(w.lo+1, hi.S)
 	}
 	return l, h, nil
 }
@@ -306,7 +380,7 @@ func (b *Base) extendClosure(atom *Atom, bnd *binding, yield func(*binding) erro
 			return nil
 		}
 		if b.witnessing() {
-			bnd.last = closureWitness(row[:], steps)
+			bnd.last = closureWitness(closureName, row[:], steps)
 		}
 		err = yield(bnd)
 		bnd.reset(m)
@@ -378,8 +452,14 @@ func (b *Base) closure(step string, start ns.Value, fwd bool, lo, hi int, target
 	}
 	err := func() error {
 		if lo == 0 {
-			if err := arrive(0, 0); err != nil {
+			on, err := b.onStep(step, start)
+			if err != nil {
 				return err
+			}
+			if on {
+				if err := arrive(0, 0); err != nil {
+					return err
+				}
 			}
 		}
 		frontier := []int{0}
@@ -427,7 +507,7 @@ func walkSteps(b *Base, q Query) Query {
 		byHead[r.Head.Relation] = append(byHead[r.Head.Relation], r)
 	}
 	walked := func(a *Atom) *Atom {
-		step, ok := stepOf(a.Relation)
+		w, step, ok := walkOf(a.Relation)
 		if !ok || strings.HasPrefix(step, walkPrefix) {
 			return a
 		}
@@ -445,7 +525,7 @@ func walkSteps(b *Base, q Query) Query {
 		}
 		b.run.closureWalks[walkPrefix+step] = rules
 		out := *a
-		out.Relation = closureRelation(walkPrefix + step)
+		out.Relation = w.prefix + walkPrefix + step
 		return &out
 	}
 	body := func(bd Body) Body {
@@ -471,12 +551,19 @@ func walkSteps(b *Base, q Query) Query {
 	return q
 }
 
-// walksThrough reports whether a closure can walk r's one atom for its relation: r's head is two
+// walksThrough reports whether a walk can walk r's one atom for its relation: r's head is two or three
 // distinct variables, its body one positive atom over a base relation reading each once.
 func (b *Base) walksThrough(r Rule) bool {
 	h := r.Head.Args
-	if len(h) != 2 || h[0].Var == "" || h[1].Var == "" || h[0].Var == h[1].Var || r.aggregates() || len(r.Body.Literals) != 1 {
+	if len(h) < 2 || len(h) > 3 || r.aggregates() || len(r.Body.Literals) != 1 {
 		return false
+	}
+	heads := map[Var]bool{}
+	for _, t := range h {
+		if t.Var == "" || heads[t.Var] {
+			return false
+		}
+		heads[t.Var] = true
 	}
 	a := r.Body.Literals[0].Pos
 	if a == nil || isFact(a.Relation) || isPushed(a.Relation) {
@@ -491,7 +578,12 @@ func (b *Base) walksThrough(r Rule) bool {
 			seen[t.Var]++
 		}
 	}
-	return seen[h[0].Var] == 1 && seen[h[1].Var] == 1
+	for v := range heads {
+		if seen[v] != 1 {
+			return false
+		}
+	}
+	return true
 }
 
 // closureVar is the variable a closure's step binds to the next node, and closureFrom the start a
@@ -499,14 +591,38 @@ func (b *Base) walksThrough(r Rule) bool {
 const (
 	closureVar  = Var("\x00c")
 	closureFrom = Var("\x00c.from")
+	closureEdge = Var("\x00c.edge") // a three-argument step's edge, for graph.paths
 )
+
+// stepArgs are the arguments of a call to a step relation of arity n from from to to, an edge variable
+// between them when it has three.
+func stepArgs(n int, from, to Term) []Term {
+	if n == 3 {
+		return []Term{from, {Var: closureEdge}, to}
+	}
+	return []Term{from, to}
+}
+
+// stepArity is the arity of the relation a walk steps through.
+func (b *Base) stepArity(step string) int {
+	if rules, ok := b.run.closureWalks[step]; ok {
+		return len(rules[0].Head.Args)
+	}
+	if n, ok := b.idbArity[step]; ok {
+		return n
+	}
+	if s, ok := b.schemaOf(step); ok {
+		return s.Arity
+	}
+	return 2
+}
 
 // closureStarts is every value a fact of step leads from, and with ends every value one leads to too,
 // once each, in the order the facts come.
 func (b *Base) closureStarts(step string, ends bool) ([]ns.Value, error) {
 	var out []ns.Value
 	seen := map[string]bool{}
-	err := b.extendAtom(&Atom{Relation: step, Args: []Term{{Var: closureFrom}, {Var: closureVar}}}, newBinding(), func(sb *binding) error {
+	err := b.extendAtom(&Atom{Relation: step, Args: stepArgs(b.stepArity(step), Term{Var: closureFrom}, Term{Var: closureVar})}, newBinding(), func(sb *binding) error {
 		vars := []Var{closureFrom}
 		if ends {
 			vars = append(vars, closureVar)
@@ -523,6 +639,25 @@ func (b *Base) closureStarts(step string, ends bool) ([]ns.Value, error) {
 	return out, err
 }
 
+// errOnStep stops onStep's read at the first fact.
+var errOnStep = errors.New("query: closure found a fact")
+
+// onStep reports whether a fact of step leads from node or to it: a node reaches itself in no steps
+// only when the relation holds it, as when neither end is bound and the walk starts from what the
+// facts hold (closureStarts), so binding an end, as demand does, can't add a path.
+func (b *Base) onStep(step string, node ns.Value) (bool, error) {
+	for _, fwd := range []bool{true, false} {
+		err := b.closureNeighbours(step, node, fwd, func(ns.Value, closureStep) error { return errOnStep })
+		if errors.Is(err, errOnStep) {
+			return true, nil
+		}
+		if err != nil {
+			return false, err
+		}
+	}
+	return false, nil
+}
+
 // closureNeighbours calls each with every node one fact of step leads to from node, out or back, and
 // that fact.
 func (b *Base) closureNeighbours(step string, node ns.Value, fwd bool, each func(ns.Value, closureStep) error) error {
@@ -534,34 +669,49 @@ func (b *Base) closureNeighbours(step string, node ns.Value, fwd bool, each func
 		}
 		return nil
 	}
-	at := Term{Const: &node}
-	args := []Term{at, {Var: closureVar}}
+	at, next := Term{Const: &node}, Term{Var: closureVar}
 	if !fwd {
-		args[0], args[1] = args[1], at
+		at, next = next, at
 	}
-	return b.extendAtom(&Atom{Relation: step, Args: args}, newBinding(), func(sb *binding) error {
+	arity := b.stepArity(step)
+	return b.extendAtom(&Atom{Relation: step, Args: stepArgs(arity, at, next)}, newBinding(), func(sb *binding) error {
 		n := sb.value(closureVar)
-		vals := []ns.Value{node, n}
-		if !fwd {
-			vals[0], vals[1] = n, node
-		}
-		s := closureStep{vals: vals, cites: slices.Clone(sb.cites)}
+		s := closureStep{vals: stepValues(arity, node, n, sb, fwd), cites: slices.Clone(sb.cites)}
 		if b.witnessing() {
 			s.wit = sb.last
 			if s.wit == nil {
-				s.wit = leaf(step, vals, s.cites)
+				s.wit = leaf(step, s.vals, s.cites)
 			}
 		}
 		return each(n, s)
 	})
 }
 
+// stepValues is a step's fact in from, (edge,) to order, read from sb: node where the walk is, n where
+// it goes.
+func stepValues(arity int, node, n ns.Value, sb *binding, fwd bool) []ns.Value {
+	from, to := node, n
+	if !fwd {
+		from, to = n, node
+	}
+	if arity == 3 {
+		return []ns.Value{from, sb.value(closureEdge), to}
+	}
+	return []ns.Value{from, to}
+}
+
 // walkRule is closureNeighbours through one rule walksThrough accepted: its atom, the head's first
-// variable node and its second the next node when walking out, the other way round walking back.
+// variable node and its last the next node when walking out, the other way round walking back, and a
+// middle one the edge.
 func (b *Base) walkRule(r Rule, node ns.Value, fwd bool, each func(ns.Value, closureStep) error) error {
-	at, next := r.Head.Args[0].Var, r.Head.Args[1].Var
+	h := r.Head.Args
+	at, next := h[0].Var, h[len(h)-1].Var
 	if !fwd {
 		at, next = next, at
+	}
+	edge := Var("\x00none")
+	if len(h) == 3 {
+		edge = h[1].Var
 	}
 	a := *r.Body.Literals[0].Pos
 	a.Args = slices.Clone(a.Args)
@@ -571,15 +721,13 @@ func (b *Base) walkRule(r Rule, node ns.Value, fwd bool, each func(ns.Value, clo
 			a.Args[i] = Term{Const: &node}
 		case next:
 			a.Args[i] = Term{Var: closureVar}
+		case edge:
+			a.Args[i] = Term{Var: closureEdge}
 		}
 	}
 	return b.extendAtom(&a, newBinding(), func(sb *binding) error {
 		n := sb.value(closureVar)
-		vals := []ns.Value{node, n}
-		if !fwd {
-			vals[0], vals[1] = n, node
-		}
-		return each(n, closureStep{vals: vals, cites: slices.Clone(sb.cites)})
+		return each(n, closureStep{vals: stepValues(len(h), node, n, sb, fwd), cites: slices.Clone(sb.cites)})
 	})
 }
 
@@ -673,8 +821,8 @@ func stepBefore(a, b closureStep) bool {
 
 // closureWitness is a closure answer's witness: the call as graph.closure, with a child per step of its
 // path in walk order, and the path's citations.
-func closureWitness(vals []ns.Value, path []closureStep) *Witness {
-	w := &Witness{Relation: closureName, Values: slices.Clone(vals)}
+func closureWitness(name string, vals []ns.Value, path []closureStep) *Witness {
+	w := &Witness{Relation: name, Values: slices.Clone(vals)}
 	for _, s := range path {
 		w.Children = append(w.Children, s.wit)
 		w.Cites = append(w.Cites, s.cites...)

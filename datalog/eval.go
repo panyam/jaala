@@ -607,7 +607,7 @@ func (b *Base) checkWrittenArity(q Query) error {
 			if a == nil || mixed[a.Relation] {
 				continue
 			}
-			if isClosure(a.Relation) {
+			if isWalk(a.Relation) {
 				if err := b.checkClosure(a, derived); err != nil {
 					return err
 				}

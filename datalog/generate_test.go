@@ -303,6 +303,11 @@ type generator struct {
 	// from a stream of its own, as facts does; nclosures numbers the hops it binds.
 	closures  *rand.Rand
 	nclosures int
+	// walks turns a literal of two nodes that closures left alone into graph.paths now and then (#280),
+	// from a stream of its own, so a seed's closures are the ones it drew before; npaths numbers the
+	// paths it binds.
+	walks  *rand.Rand
+	npaths int
 }
 
 // newGenerator draws a program for facts from rnd. Arithmetic depends on the graph's units as drawn,
@@ -318,6 +323,9 @@ func newGenerator(rnd *rand.Rand, facts genFacts) *generator {
 	h = fnv.New64a()
 	fmt.Fprint(h, "closures", facts.n, facts.edges, facts.weights)
 	g.closures = rand.New(rand.NewSource(int64(h.Sum64())))
+	h = fnv.New64a()
+	fmt.Fprint(h, "walks", facts.n, facts.edges, facts.weights)
+	g.walks = rand.New(rand.NewSource(int64(h.Sum64())))
 	if facts.units == nil {
 		h := fnv.New64a()
 		fmt.Fprint(h, "arith", facts.n, facts.edges, facts.weights)
@@ -585,7 +593,11 @@ func (g *generator) body(layer int, recursive bool) *genBody {
 // never walks its own relation, which stratification refuses.
 func (g *generator) closure(b *genBody, r genRel) {
 	l := &b.lits[len(b.lits)-1]
-	if g.closures == nil || len(r.cols) != 2 || r.cols[0] != genNode || r.cols[1] != genNode || l.fact != "" || g.closures.Float64() >= 0.12 {
+	if g.closures == nil || len(r.cols) != 2 || r.cols[0] != genNode || r.cols[1] != genNode || l.fact != "" {
+		return
+	}
+	if g.closures.Float64() >= 0.12 {
+		g.paths(b, r)
 		return
 	}
 	lo, hi := 1+g.closures.Intn(3), 0
@@ -600,6 +612,38 @@ func (g *generator) closure(b *genBody, r genRel) {
 	}
 	l.rel, l.args = closureName, []string{strconv.Quote(r.name), l.args[0], l.args[1], strconv.Itoa(lo), strconv.Itoa(hi), hops}
 	g.shapes["closure"] = true
+}
+
+// paths now and then makes the literal of two nodes just drawn a paths call over its relation (#280):
+// any mode, min 0 to 2 steps and max none or a few more (a walk always has one), binding the path more
+// often than not, and then half the time reading its length.
+func (g *generator) paths(b *genBody, r genRel) {
+	if g.walks == nil || g.walks.Float64() >= 0.1 {
+		return
+	}
+	l := &b.lits[len(b.lits)-1]
+	mode := pathModes[g.walks.Intn(len(pathModes))]
+	lo, hi := g.walks.Intn(3), 0
+	if mode == "walk" || g.walks.Float64() < 0.7 {
+		hi = max(lo, 1) + g.walks.Intn(3)
+	}
+	path := "_"
+	var length *genLit
+	if g.walks.Float64() < 0.6 {
+		g.npaths++
+		path = fmt.Sprintf("?p%d", g.npaths)
+		b.bound[genNode] = append(b.bound[genNode], path)
+		if g.walks.Float64() < 0.5 {
+			n := fmt.Sprintf("?pl%d", g.npaths)
+			length = &genLit{rel: "path.length", args: []string{path, n}}
+			b.bound[genNum] = append(b.bound[genNum], n)
+		}
+	}
+	l.rel, l.args = pathsName, []string{strconv.Quote(r.name), l.args[0], l.args[1], strconv.Quote(mode), strconv.Itoa(lo), strconv.Itoa(hi), path}
+	if length != nil {
+		b.lits = append(b.lits, *length)
+	}
+	g.shapes["paths"] = true
 }
 
 // compareFacts now and then requires two of the facts b binds to differ, or to be one, as a Cypher
@@ -1628,7 +1672,7 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 			}
 		}
 	}
-	shapes := []string{"program", "recursion", "negation", "head aggregate", "goal aggregate", "body aggregate", "bound goal", "set-bound goal", "arithmetic", "bound fact", "avg", "closure"}
+	shapes := []string{"program", "recursion", "negation", "head aggregate", "goal aggregate", "body aggregate", "bound goal", "set-bound goal", "arithmetic", "bound fact", "avg", "closure", "paths"}
 	var counts, issues []string
 	for _, sh := range shapes {
 		counts = append(counts, fmt.Sprintf("%s %d/%d", sh, compared[sh+"/plain"], compared[sh+"/witnessed"]))
@@ -1648,6 +1692,9 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 	}
 	if compared["closure/plain"] == 0 || compared["closure/witnessed"] == 0 {
 		t.Errorf("control: no program walked a relation with graph.closure (#281)")
+	}
+	if compared["paths/plain"] == 0 || compared["paths/witnessed"] == 0 {
+		t.Errorf("control: no program listed paths with graph.paths (#280)")
 	}
 	if compared["bound fact/plain"] == 0 || compared["bound fact/witnessed"] == 0 {
 		t.Errorf("control: no program bound an edge's fact (#279)")

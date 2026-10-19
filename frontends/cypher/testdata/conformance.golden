@@ -153,16 +153,22 @@ MATCH (a)-[r:IMPORTS]->(b) RETURN r
   -> at 1:35 cypher: not supported yet: binding a relationship to a variable (jaala#279): r is a relationship: return or compare its endpoints instead
 
 MATCH p = (a)-[:IMPORTS]->(b) RETURN p
-  -> at 1:7 cypher: not supported yet: paths as values (jaala#280): a path variable (p = ...)
+  -> graph.paths("imports", ?a, ?b, "trail", 1, 1, ?p) => ?p
 
 MATCH p = shortestPath((a:Package)-[*]-(b:Package)) RETURN p
-  -> at 1:7 cypher: not supported yet: paths as values (jaala#280): a path variable (p = ...)
+  -> cypher_step1(?x, ?y) :- imports(?x, ?y);
+cypher_step1(?x, ?y) :- imports(?y, ?x);
+cypher_step1(?x, ?y) :- deps.depends_on(?x, ?y);
+cypher_step1(?x, ?y) :- deps.depends_on(?y, ?x);
+pkg(?a, _), pkg(?b, _), graph.paths("cypher_step1", ?a, ?b, "shortest", 1, 0, ?p) => ?p
 
 MATCH (a:Package), (b:Package) RETURN allShortestPaths((a)-[*]-(b))
-  -> at 1:39 cypher: not supported yet: paths as values (jaala#280): allShortestPaths as a value, a path
+  -> at 1:39 cypher: not supported yet: these paths as values (jaala#398): allShortestPaths as a value, a path
 
 MATCH p = SHORTEST 1 (a:Package)-[:IMPORTS]-+(b:Package) RETURN p
-  -> at 1:7 cypher: not supported yet: paths as values (jaala#280): a path variable (p = ...)
+  -> cypher_step1(?x, ?y) :- imports(?x, ?y);
+cypher_step1(?x, ?y) :- imports(?y, ?x);
+pkg(?a, _), pkg(?b, _), graph.paths("cypher_step1", ?a, ?b, "shortest", 1, 0, ?p) => ?p
 
 MATCH ALL SHORTEST (a:Package)-[:IMPORTS]-+(b) RETURN b
   -> cypher_step1(?x, ?y) :- imports(?x, ?y);
@@ -178,10 +184,10 @@ cypher_step1(?x, ?y) :- deps.depends_on(?x, ?y);
 pkg(?a, _), graph.closure("cypher_step1", ?a, ?b, 1, 3, _) => ?b
 
 MATCH (a:Package) ((x)-[:IMPORTS]->(y)){1,3} (b) RETURN b
-  -> at 1:19 cypher: not supported yet: paths as values (jaala#280): a quantified path pattern
+  -> at 1:19 cypher: not supported yet: these paths as values (jaala#398): a quantified path pattern
 
 MATCH ((x)-[:IMPORTS]->(y) WHERE x.name <> y.name)+ RETURN x
-  -> at 1:7 cypher: not supported yet: paths as values (jaala#280): a quantified path pattern
+  -> at 1:7 cypher: not supported yet: these paths as values (jaala#398): a quantified path pattern
 
 MATCH (a:Package)-[:IMPORTS]->{2}(b) RETURN b
   -> pkg(?a, _), graph.closure("imports", ?a, ?b, 2, 2, _) => ?b

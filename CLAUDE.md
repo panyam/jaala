@@ -183,7 +183,12 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   (each a stand-in, `nodeVar.of`, so reading one's column inside reads it there), `COUNT { }` a
   body aggregate (so a node with no match counts 0), a variable length (`*m..n`, a
   quantifier, `shortestPath` or a path selector, the last two keeping only the nodes) `graph.closure`
-  over the type's relation or a `cypher_step` helper (#281). Each `WITH` closes a stage (`stage.go`): a `compiler` per stage on a shared
+  over the type's relation or a `cypher_step` helper (#281), and a path variable over one relationship
+  (`p = (a)-[:T*]->(b)`, `declarePath`) `graph.paths` as a trail, or `"shortest"` under
+  `shortestPath`/`SHORTEST 1` (#280), over a `cypher_wire(?x, ?r, ?y)` helper binding each edge's
+  fact when the query reads `relationships(p)` (the parser records which, `edgePaths`), since a
+  fact relation can't be walked through `walkSteps`; `length`, `nodes`, `relationships` and
+  `x IN nodes(p)` are `path.*` calls (`pathFuncs`). Each `WITH` closes a stage (`stage.go`): a `compiler` per stage on a shared
   `world`, the stage a `cypher_with` rule whose head is what it hands on, a carried node keeping
   its labels with its label atom written only when a column is read (`nodeAtm.lazy`). A `UNION` is
   one `cypher_union` relation, a part that aggregates first a `cypher_part` rule. `CALL p(args)
@@ -192,7 +197,8 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   `replace`, `split(s, sep)[i]` and text `+` are str.* calls (`textFuncs`, `isText` reads the
   schema's types). A `$param` is a goal variable (`Program.Bind`), refused inside any rule, or with
   `Params` a constant everywhere. Anything outside the subset is an `*Error` whose `Gap` names the
-  issue (#279 to #289, #364 for CALL { } and an order or limit in a WITH or union part), tested by position in
+  issue (#279 to #289, #364 for CALL { } and an order or limit in a WITH or union part, #398 for
+  the paths #280 left: ALL SHORTEST, SHORTEST k, several relationships, quantified path patterns), tested by position in
   `TestGapsAreRefusedByName`; its known differences from a Cypher engine (distinct rows,
   reachability rather than trails, a Props read as a match) are in `doc.go`. `TestEval` scores the
   guide's questions in Cypher with `nl.Eval` (`internal/guide` is the fixture both front ends'
@@ -405,7 +411,8 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   (`fact`).
 - **`graph.closure("rel", ?from, ?to, min, max, ?hops)` is the engine's** (`closure.go`, #281): a
   breadth-first walk of a binary relation over (node, depth capped at min) states, `?hops` the fewest
-  steps, max 0 none. `lowerClosures` (before `Link`, and per module before `resolveRule`, whose
+  steps, max 0 none, min 0 a node itself only when a fact holds it (`onStep`, #280: otherwise a bound
+  end, as demand binds it, answered what a walk from every start didn't). `lowerClosures` (before `Link`, and per module before `resolveRule`, whose
   `renameAtom` renames the step inside the name and the first argument) writes it as `\x00c:rel`
   with its six arguments, so everything that classifies by name reads it: `predicateIn` (never call
   `reg.Predicate` directly in production datalog, except for a step or a head) makes it a generator of
@@ -419,6 +426,24 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   `ns` reserves the name. The corpus draws closures from a stream of its own (`generator.closures`),
   Soufflé reads them as a depth-counting walk and a `min` (`souffleClosures`), and `agreeAcross`
   skips them. `stdlib.Hops` is the same walk over a host's step function, `?within` an input.
+- **`graph.paths("rel", ?from, ?to, mode, min, max, ?path)` is the engine's too** (`paths.go`, #280),
+  and shares the closure's plumbing through `engineWalk` (`walkOf`, `isWalk`, `walkName`; a new
+  engine walk is one more entry in `engineWalks`). It binds each path as an `ns.Path`'s text, a JSON
+  list of nodes or, over a relation of three arguments (from, edge, to), `{"nodes", "edges"}`, which
+  stdlib's `path.*` read with no state. Modes walk (needs a max), trail (no fact twice; with edges,
+  no edge either way, `trailKey`), acyclic, simple (acyclic, but may close back on its start, and
+  goes no further once it has), and shortest (breadth first, each node's steps sorted by
+  where they lead, so the path doesn't depend on fact order, and walked out from each start even when
+  `?to` is bound, so every plan picks the same one). `stepsFrom` reads a node's steps once per call,
+  dedups a fact served twice, and the walk counts a unit per step it tries. A `path.*` function gives
+  no row for a value that isn't a path, never an error: the 3000-seed corpus found the demand rewrite
+  handing `path.length` a caller's `"v8"` that Naive never passed. `stdlib.PathValues` registers
+  them under `path` (in `Register`), so a host's own module named `path` resolves a bare `edge` to
+  `path.edge`; jaala's fixtures' module became `hop`. `ColumnKinds` lowers the walks first, so a
+  closure's or a path's ends are typed by the step there too (#281's weren't). The corpus draws paths
+  from `generator.walks`, only where the closure stream left a literal alone, so its closures stay
+  the seeds' own; Soufflé counts them unsupported. `stdlib.Paths` and `EdgePaths` are the same over
+  a host's step.
 - **A rewrite that rebuilds a `Literal` must keep its `at`, and one that rebuilds a `Rule` its
   `text`.** They carry the written position and form a witness follows (`witness.go`); dropping
   either makes that literal vanish from explanations or shows a rule in its rewritten form, with no

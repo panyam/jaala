@@ -18,6 +18,7 @@ type world struct {
 	params    map[string]string // $name, bound by Program.Bind, to its goal variable
 	paramVals map[string]ns.Value
 	helpers   map[string]bool
+	edgePaths map[string]bool // path variables relationships() reads (#280)
 	rules     []rule
 	inRule    bool              // rendering a rule, where a parameter can't go (datalog.Bind binds the goal)
 	fixed     map[*nodeVar]frag // the rule being rendered's node keys an alternative's equality fixes
@@ -299,6 +300,9 @@ func (c *compiler) compileStage(in *stageIn, s stage, where expr) (projected, *E
 				}
 				ns[i] = n
 			}
+			if err := c.declarePath(&pat); err != nil {
+				return projected{}, err
+			}
 			for i, r := range pat.rels {
 				if err := c.declareRel(r); err != nil {
 					return projected{}, err
@@ -493,6 +497,31 @@ func (c *compiler) compileStage(in *stageIn, s stage, where expr) (projected, *E
 	}
 	out.lits = []frag{{head}}
 	return out, nil
+}
+
+// declarePath makes a pattern's path variable a value its one relationship's walk binds (#280): a
+// pattern of one relationship, of one step or a variable length, read with graph.paths as a trail, or
+// one shortest path per pair. A longer pattern, and a selector other than a shortest path, are gaps.
+func (c *compiler) declarePath(pat *pattern) *Error {
+	if pat.path == "" {
+		return nil // a match answers its nodes, which any selector keeps
+	}
+	if _, ok := c.nodes[pat.path]; ok || c.values[pat.path] != "" {
+		return errAt(pat.pathPos, "%s is already bound", pat.path)
+	}
+	if len(pat.rels) != 1 {
+		return gapPaths.at(pat.pathPos, "a path variable over a pattern of %d relationships: bind a path of one relationship, which may have a variable length", len(pat.rels))
+	}
+	if pat.selector != "" && pat.selector != "shortest" {
+		return gapPaths.at(pat.pathPos, "%s paths as values: write shortestPath or SHORTEST 1", strings.ToUpper(pat.selector))
+	}
+	r := &pat.rels[0]
+	if r.v != "" {
+		return gapEdgeVars.at(r.pos, "a relationship variable on a path variable's relationship: read relationships(%s)", pat.path)
+	}
+	r.path, r.selector, r.edges = pat.path, pat.selector, c.edgePaths[pat.path]
+	c.addValue(pat.path)
+	return nil
 }
 
 func (c *compiler) addValue(name string) {

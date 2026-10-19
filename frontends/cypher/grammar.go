@@ -8,7 +8,8 @@ import (
 
 // Grammar is the Cypher this package compiles as a GBNF grammar narrowed to g (#354), for a model
 // decoding under it to write only queries that parse and name g's labels, relationship types and
-// properties: MATCH, WHERE, WITH, UNION, EXISTS { }, and RETURN with its aggregates, ORDER BY, SKIP and
+// properties: MATCH (with a path variable over one relationship, #280), WHERE, WITH, UNION, EXISTS { },
+// and RETURN with its aggregates, ORDER BY, SKIP and
 // LIMIT, with OR, XOR, AND and NOT in openCypher's precedence, in one spelling (keywords upper case,
 // one space between tokens). It leaves out what a model translating a question has no use for and
 // what compiles to no program yet: CALL, a $parameter, a regex, and every construct Compile refuses
@@ -62,8 +63,11 @@ func grammarRules(g Graph) []gbnf.Rule {
 		{Name: "query", E: seq{list(ref("match"), " "),
 			star(seq{lit(" WITH "), list(ref("witem"), ", "), opt(seq{lit(" WHERE "), ref("expr")}), star(seq{lit(" "), ref("match")})}),
 			lit(" "), ref("return")}},
-		{Name: "match", E: seq{lit("MATCH "), list(alt{ref("pattern"), seq{lit("shortestPath("), ref("pattern"), lit(")")}}, ", "), opt(seq{lit(" WHERE "), ref("expr")})}},
+		{Name: "match", E: seq{lit("MATCH "), list(alt{ref("pattern"), seq{lit("shortestPath("), ref("pattern"), lit(")")}, ref("path")}, ", "), opt(seq{lit(" WHERE "), ref("expr")})}},
 		{Name: "pattern", E: seq{ref("node"), gbnf.UpTo(seq{ref("rel"), ref("node")}, 3)}},
+		// a path variable binds a path of one relationship, which may have a variable length (#280)
+		{Name: "path", E: seq{ref("var"), lit(" = "), alt{ref("hop"), seq{lit("shortestPath("), ref("hop"), lit(")")}}}},
+		{Name: "hop", E: seq{ref("node"), ref("rel"), ref("node")}},
 		{Name: "node", E: seq{lit("("), opt(ref("var")), opt(seq{lit(":"), ref("label")}), opt(ref("props")), lit(")")}},
 		{Name: "props", E: seq{lit(" {"), list(seq{ref("pkey"), lit(": "), ref("literal")}, ", "), lit("}")}},
 		{Name: "rel", E: alt{seq{lit("-"), opt(ref("relbody")), lit("->")}, seq{lit("<-"), opt(ref("relbody")), lit("-")}, seq{lit("-"), opt(ref("relbody")), lit("-")}}},
@@ -86,6 +90,7 @@ func grammarRules(g Graph) []gbnf.Rule {
 			seq{alt{lit(" STARTS WITH "), lit(" ENDS WITH "), lit(" CONTAINS ")}, ref("sum")},
 			lit(" IS NULL"), lit(" IS NOT NULL"),
 			seq{lit(" IN ["), list(ref("literal"), ", "), lit("]")},
+			seq{lit(" IN nodes("), ref("var"), lit(")")},
 		})}},
 		{Name: "cmpop", E: alt{lit(" = "), lit(" <> "), lit(" < "), lit(" <= "), lit(" > "), lit(" >= ")}},
 		{Name: "sum", E: seq{ref("product"), star(seq{alt{lit(" + "), lit(" - ")}, ref("product")})}},
@@ -104,6 +109,7 @@ func grammarRules(g Graph) []gbnf.Rule {
 			seq{alt{lit("toLower("), lit("toUpper(")}, ref("expr"), lit(")")},
 			seq{lit("replace("), ref("expr"), lit(", "), ref("expr"), lit(", "), ref("expr"), lit(")")},
 			seq{lit("split("), ref("expr"), lit(", "), ref("expr"), lit(")["), cls("0-9", "01"), lit("]")},
+			seq{alt{lit("length("), lit("nodes("), lit("relationships(")}, ref("var"), lit(")")},
 		}},
 		{Name: "literal", E: alt{ref("string"), ref("number"), lit("true"), lit("false")}},
 		{Name: "string", E: seq{lit("'"), gbnf.UpTo(cls(`^'\\\x00-\x1F`, "ab c-1"), 40), lit("'")}},

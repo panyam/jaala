@@ -209,9 +209,11 @@ func TestSatisfiedReadsEachMode(t *testing.T) {
 // called; its module's other names are free.
 func TestAnEngineNameIsReserved(t *testing.T) {
 	v := MustVocabulary(NewMemSource())
-	err := v.AddPredicate("graph.closure", Filter(1, func([]Value) (bool, error) { return true, nil }))
-	if err == nil || !strings.Contains(err.Error(), `"graph.closure" is the engine's own`) {
-		t.Errorf("err = %v", err)
+	for _, name := range []string{"graph.closure", "graph.paths"} {
+		err := v.AddPredicate(name, Filter(1, func([]Value) (bool, error) { return true, nil }))
+		if err == nil || !strings.Contains(err.Error(), `"`+name+`" is the engine's own`) {
+			t.Errorf("%s: err = %v", name, err)
+		}
 	}
 	if err := v.AddPredicate("graph.reach", Filter(1, func([]Value) (bool, error) { return true, nil })); err != nil {
 		t.Errorf("control: graph.reach: %v", err)

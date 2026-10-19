@@ -100,12 +100,12 @@ func TestARecursiveWitnessHidesTheRewrites(t *testing.T) {
 // A generator's citations keep the order it gave them: a walk's steps stay in walk order.
 func TestAGeneratorsCitationsKeepTheirOrder(t *testing.T) {
 	v := std(graph())
-	if err := v.AddPredicate("path", ns.Builtin{Arity: 2, Modes: [][]bool{{true, false}}, Gen: func(_ context.Context, _ ns.Source, args []ns.Arg, emit func([]ns.Value, []string) error) error {
+	if err := v.AddPredicate("trace", ns.Builtin{Arity: 2, Modes: [][]bool{{true, false}}, Gen: func(_ context.Context, _ ns.Source, args []ns.Arg, emit func([]ns.Value, []string) error) error {
 		return emit([]ns.Value{args[0].Value, ns.S("d")}, []string{"step9", "step1", "step5"})
 	}}); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := SemiNaive{}.Eval(bg, mustParse(t, `path("a", ?z)`), baseFor(v), Witnesses())
+	rows, err := SemiNaive{}.Eval(bg, mustParse(t, `trace("a", ?z)`), baseFor(v), Witnesses())
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("rows = %v, %v", rows, err)
 	}

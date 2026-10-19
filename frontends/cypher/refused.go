@@ -330,24 +330,39 @@ func (p *parser) prefix() *Error {
 // pathSelector reads a selector before a pattern (SHORTEST k, ALL SHORTEST, ANY, ANY SHORTEST, ALL
 // [PATHS]). Each chooses among a pair of nodes' paths, and a match answers the nodes, which every
 // selector keeps, so it compiles as the pattern alone.
-func (p *parser) pathSelector() *Error {
+func (p *parser) pathSelector() (string, *Error) {
 	t := p.peek()
 	if !(t.is("SHORTEST") || t.is("ALL") || t.is("ANY")) || p.peekAt(1).sym("=") {
-		return nil
+		return "", nil
 	}
+	var words []string
 	for {
 		w := p.peek()
 		switch {
-		case w.is("SHORTEST"), w.is("ANY"), w.is("GROUP"), w.is("GROUPS"), w.kind == tNumber:
-		case w.is("ALL"), w.is("PATH"), w.is("PATHS"):
+		case w.is("SHORTEST"), w.is("ANY"), w.is("GROUP"), w.is("GROUPS"), w.kind == tNumber, w.is("ALL"):
+			words = append(words, strings.ToUpper(w.text))
+		case w.is("PATH"), w.is("PATHS"):
 		default:
 			if !w.sym("(") && !(w.kind == tIdent && p.peekAt(1).sym("=")) {
-				return p.unexpected("( to start the pattern")
+				return "", p.unexpected("( to start the pattern")
 			}
-			return nil
+			return selectorOf(words), nil
 		}
 		p.i++
 	}
+}
+
+// selectorOf is what a path selector's words choose for a path variable: "shortest" for one shortest
+// path per pair (SHORTEST 1, ANY SHORTEST), "" for every path (ALL), and otherwise the words, which the
+// compiler refuses (ALL SHORTEST, SHORTEST 2, ANY, a GROUP).
+func selectorOf(words []string) string {
+	switch strings.Join(words, " ") {
+	case "ALL":
+		return ""
+	case "SHORTEST", "SHORTEST 1", "ANY SHORTEST":
+		return "shortest"
+	}
+	return strings.ToLower(strings.Join(words, " "))
 }
 
 // quantifiedPath reads a parenthesized path, ((a)-->(b) [WHERE expr]) and its quantifier, refused.

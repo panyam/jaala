@@ -1,0 +1,3 @@
+fixture: deps
+query: link(?a, ?r, ?b) :- imports(?a, ?b) as ?r; graph.paths("link", "db", "util", "shortest", 1, 0, ?p), path.edge(?p, ?i, ?e), path.edges(?p, ?all) => ?i, ?e, ?all
+expect: [["0", 'imports("db", "log")', '["imports(\"db\", \"log\")","imports(\"log\", \"util\")"]'], ["1", 'imports("log", "util")', '["imports(\"db\", \"log\")","imports(\"log\", \"util\")"]']]

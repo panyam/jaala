@@ -555,7 +555,7 @@ func TestLookupDrillsFromModuleToMemberToDefinition(t *testing.T) {
 		t.Fatal(err)
 	}
 	root, err := r.Lookup("")
-	if err != nil || root.Kind != ns.EntryModule || !reflect.DeepEqual(root.Members, []string{"absent", "coalesce", "component", "entity", "net", "num", "str"}) {
+	if err != nil || root.Kind != ns.EntryModule || !reflect.DeepEqual(root.Members, []string{"absent", "coalesce", "component", "entity", "net", "num", "path", "str"}) {
 		t.Errorf("root = %+v, %v", root, err)
 	}
 	members, err := r.Members("net")

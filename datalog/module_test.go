@@ -47,20 +47,20 @@ func evalRegErr(r *ns.Vocabulary, text string) error {
 }
 
 func TestAModuleMemberIsCalledByItsPath(t *testing.T) {
-	r := withModules(t, "path", reachModule)
-	if got := col(evalReg(t, r, `path.reach("a", ?x) => ?x`), "x"); got != "b,c,d" {
-		t.Errorf("path.reach from a = %s, want b,c,d", got)
+	r := withModules(t, "hop", reachModule)
+	if got := col(evalReg(t, r, `hop.reach("a", ?x) => ?x`), "x"); got != "b,c,d" {
+		t.Errorf("hop.reach from a = %s, want b,c,d", got)
 	}
 }
 
 // A query that calls a module answers exactly, rows and citations, as one with the rules pasted in.
 func TestAModuleAnswersAsTheSameRulesPastedInline(t *testing.T) {
 	r := withModules(t,
-		"path", reachModule,
+		"hop", reachModule,
 		"shape", `sink(?n) :- node(?n), not edge(?n, _);
-		          fan(?n, ?k) :- path.reach(?n, ?k);`)
+		          fan(?n, ?k) :- hop.reach(?n, ?k);`)
 	for _, c := range []struct{ module, inline string }{{
-		`path.reach(?a, ?b) => ?a, ?b`,
+		`hop.reach(?a, ?b) => ?a, ?b`,
 		reachModule + `reach(?a, ?b) => ?a, ?b`,
 	}, {
 		`shape.sink(?n) => ?n`,
@@ -69,7 +69,7 @@ func TestAModuleAnswersAsTheSameRulesPastedInline(t *testing.T) {
 		`shape.fan(?n, ?k) => ?n, count(?k)`,
 		reachModule + `fan(?n, ?k) :- reach(?n, ?k); fan(?n, ?k) => ?n, count(?k)`,
 	}, {
-		`node(?n), not path.reach(?n, "d") => ?n`,
+		`node(?n), not hop.reach(?n, "d") => ?n`,
 		reachModule + `node(?n), not reach(?n, "d") => ?n`,
 	}} {
 		got := evalReg(t, r, c.module)
@@ -183,11 +183,11 @@ func TestAFailedAddModuleRegistersNothing(t *testing.T) {
 }
 
 func TestAQueryCannotDefineASharedPath(t *testing.T) {
-	r := withModules(t, "path", reachModule, "", `top(?x) :- node(?x);`)
+	r := withModules(t, "hop", reachModule, "", `top(?x) :- node(?x);`)
 	for q, want := range map[string]string{
-		`path.extra(?a) :- node(?a); path.extra(?a)`: `rule head "path.extra" is a qualified path`,
-		`path(?a) :- node(?a); path(?a)`:             `rule head "path" is a module`,
-		`top(?a) :- edge(?a, _); top(?a)`:            `rule head "top" redefines a derived relation registered in module ""`,
+		`hop.extra(?a) :- node(?a); hop.extra(?a)`: `rule head "hop.extra" is a qualified path`,
+		`hop(?a) :- node(?a); hop(?a)`:             `rule head "hop" is a module`,
+		`top(?a) :- edge(?a, _); top(?a)`:          `rule head "top" redefines a derived relation registered in module ""`,
 	} {
 		if err := evalRegErr(r, q); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%s: err = %v, want %q", q, err, want)
@@ -248,8 +248,8 @@ func TestCheckResolvesInAnyRegistrationOrderAndReportsUnknownNames(t *testing.T)
 
 // Check runs on first use, and the first use may be several Evals at once.
 func TestConcurrentEvalsShareOneCheck(t *testing.T) {
-	b := baseFor(withModules(t, "path", reachModule))
-	q := mustParse(t, `path.reach("a", ?x) => ?x`)
+	b := baseFor(withModules(t, "hop", reachModule))
+	q := mustParse(t, `hop.reach("a", ?x) => ?x`)
 	errs := make(chan error, 8)
 	for i := 0; i < 8; i++ {
 		go func() {

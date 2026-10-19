@@ -1,0 +1,3 @@
+fixture: deps
+query: graph.paths("imports", "db", "util", "acyclic", 1, 0, ?p), path.length(?p, ?n), not path.node(?p, _, "config") => ?p, ?n
+expect: [['["db","log","util"]', "2"]]

@@ -42,6 +42,8 @@ type parser struct {
 	refused *Error
 	// braces is how many subqueries' { } the parser is inside, where a query may end without RETURN.
 	braces int
+	// edgePaths are the variables relationships() reads (#280).
+	edgePaths map[string]bool
 }
 
 func parse(text string) (statement, error) {
@@ -57,6 +59,7 @@ func parse(text string) (statement, error) {
 	if p.refused != nil {
 		return statement{}, p.refused
 	}
+	st.edgePaths = p.edgePaths
 	return st, nil
 }
 
@@ -490,16 +493,19 @@ var clauseWords = map[string]bool{
 }
 
 // pattern reads a chain of nodes and relationships. A path selector before it or a shortestPath around
-// it keeps the matches it would have, since a match answers its nodes and not its paths, and a
-// quantified relationship is a variable length. A path variable and a quantified path pattern are read
-// and refused.
+// it keeps the matches it would have, since a match answers its nodes and not its paths, unless a path
+// variable binds the path (#280), when it chooses which paths. A quantified relationship is a variable
+// length, and a quantified path pattern is read and refused.
 func (p *parser) pattern() (pattern, *Error) {
 	t := p.peek()
+	var path string
+	var pathPos Pos
 	if t.kind == tIdent && p.peekAt(1).sym("=") {
-		p.refuse(gapPaths.at(t.pos, "a path variable (%s = ...)", t.val))
+		path, pathPos = t.val, t.pos
 		p.i += 2
 	}
-	if err := p.pathSelector(); err != nil {
+	sel, err := p.pathSelector()
+	if err != nil {
 		return pattern{}, err
 	}
 	if t = p.peek(); t.is("shortestPath") || t.is("allShortestPaths") {
@@ -511,9 +517,13 @@ func (p *parser) pattern() (pattern, *Error) {
 		if err != nil {
 			return pattern{}, err
 		}
+		pat.path, pat.pathPos, pat.selector = path, pathPos, "shortest"
+		if t.is("allShortestPaths") {
+			pat.selector = "all shortest"
+		}
 		return pat, p.expectSym(")", ") to end "+t.val)
 	}
-	pat := pattern{pos: p.peek().pos}
+	pat := pattern{pos: p.peek().pos, path: path, pathPos: pathPos, selector: sel}
 	needNode := true
 	for {
 		if p.peek().sym("(") && p.peekAt(1).sym("(") {
@@ -1183,5 +1193,11 @@ func (p *parser) call() (expr, *Error) {
 		return nil, err
 	}
 	c.args = args
+	if v, ok := args[0].(varRef); ok && len(args) == 1 && strings.EqualFold(name, "relationships") {
+		if p.edgePaths == nil {
+			p.edgePaths = map[string]bool{}
+		}
+		p.edgePaths[v.name] = true
+	}
 	return c, p.expectSym(")", ") to end the call")
 }

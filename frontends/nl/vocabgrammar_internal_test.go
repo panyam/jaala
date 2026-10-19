@@ -60,12 +60,17 @@ func TestEveryProgramAVocabularysGrammarWritesCallsItsMembers(t *testing.T) {
 			t.Fatal(err)
 		}
 		var s *gbnf.Sampler
-		failed := 0
+		failed, walks := 0, map[string]int{}
 		for i := 0; i < 8000; i++ {
 			if i%1000 == 0 {
 				s = gbnf.NewSampler(table(rules), int64(i), 3+i/1000%7)
 			}
 			text := s.Sample("root")
+			for _, w := range []string{"graph.closure(", "graph.paths("} {
+				if strings.Contains(text, w) {
+					walks[w]++
+				}
+			}
 			problem := ""
 			if q, err := datalog.Parse(text); err != nil {
 				problem = err.Error()
@@ -81,6 +86,9 @@ func TestEveryProgramAVocabularysGrammarWritesCallsItsMembers(t *testing.T) {
 					t.FailNow()
 				}
 			}
+		}
+		if walks["graph.closure("] == 0 || walks["graph.paths("] == 0 {
+			t.Errorf("control: goal only %v sampled the engine's walks %v times", goalOnly, walks)
 		}
 	}
 }
@@ -104,6 +112,18 @@ func callsMembers(v *ns.Vocabulary, q datalog.Query, goalOnly bool) string {
 			}
 			if e, err := v.Lookup(args[0].Const.S); err != nil || len(e.Args) != 2 {
 				return "a closure over " + args[0].Const.S + ", no relation of two arguments"
+			}
+			return ""
+		}
+		if rel == "graph.paths" { // the engine's too (#280), over a relation of two arguments or three
+			if len(args) != 7 || args[0].Const == nil || args[3].Const == nil {
+				return "a paths call without seven arguments, a relation and a mode named"
+			}
+			if e, err := v.Lookup(args[0].Const.S); err != nil || len(e.Args) != 2 && len(e.Args) != 3 {
+				return "paths over " + args[0].Const.S + ", no relation of two or three arguments"
+			}
+			if m := args[3].Const.S; m != "trail" && m != "acyclic" && m != "simple" && m != "shortest" && m != "walk" {
+				return "a paths call in mode " + m
 			}
 			return ""
 		}

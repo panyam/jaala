@@ -568,9 +568,9 @@ func stratify(rules []Rule, arity map[string]int) ([][]string, error) {
 			if _, isIDB := arity[atom.Relation]; isIDB {
 				edges = append(edges, depEdge{from: head, to: atom.Relation, neg: neg, agg: agg})
 			}
-			if step, ok := stepOf(atom.Relation); ok {
+			if w, step, ok := walkOf(atom.Relation); ok {
 				if _, isIDB := arity[step]; isIDB {
-					edges = append(edges, depEdge{from: head, to: step, walk: true})
+					edges = append(edges, depEdge{from: head, to: step, walk: w.name})
 				}
 			}
 		}
@@ -584,7 +584,7 @@ func stratify(rules []Rule, arity map[string]int) ([][]string, error) {
 		changed := false
 		for _, e := range edges {
 			want := stratum[e.to]
-			if e.neg || e.agg || e.walk {
+			if e.neg || e.agg || e.walk != "" {
 				want++
 			}
 			if stratum[e.from] < want {
@@ -598,8 +598,8 @@ func stratify(rules []Rule, arity map[string]int) ([][]string, error) {
 		if round == n {
 			// A body aggregate's zero clause negates its reduction, which climbs as the aggregate does,
 			// so a cycle through one is reported as through the aggregate.
-			if cycle := strictCycle(edges, func(e depEdge) bool { return e.walk }); len(cycle) > 0 {
-				return nil, checkErr(KindStratify, fmt.Sprintf("query: rules are not stratifiable (recursion through %s: %s)", closureName, strings.Join(cycle, ", ")))
+			if cycle := strictCycle(edges, func(e depEdge) bool { return e.walk != "" }); len(cycle) > 0 {
+				return nil, checkErr(KindStratify, fmt.Sprintf("query: rules are not stratifiable (recursion through %s: %s)", walkThrough(edges, cycle), strings.Join(cycle, ", ")))
 			}
 			if cycle := strictCycle(edges, func(e depEdge) bool { return e.neg && !isAggReduce(e.to) }); len(cycle) > 0 {
 				return nil, checkErr(KindStratify, fmt.Sprintf("query: rules are not stratifiable (recursion through negation: %s)", strings.Join(cycle, ", ")))
@@ -628,8 +628,9 @@ func stratify(rules []Rule, arity map[string]int) ([][]string, error) {
 // depEdge is one rule dependency: from's rule reads to, under negation when neg, and to reduce it when
 // agg (from's rule aggregates).
 type depEdge struct {
-	from, to       string
-	neg, agg, walk bool // walk: from's rule walks to with graph.closure
+	from, to string
+	neg, agg bool
+	walk     string // the engine walk (graph.closure, graph.paths) from's rule walks to with, if any
 }
 
 // strictCycle names the relations whose rules read, through an edge strict says must climb (negation
@@ -664,4 +665,19 @@ func strictCycle(edges []depEdge, strict func(depEdge) bool) []string {
 		}
 	}
 	return displayNames(out)
+}
+
+// walkThrough names the engine walk on a cycle strictCycle found through walks: the first walk edge
+// between two of its relations.
+func walkThrough(edges []depEdge, cycle []string) string {
+	on := map[string]bool{}
+	for _, r := range cycle {
+		on[r] = true
+	}
+	for _, e := range edges {
+		if e.walk != "" && on[e.from] && on[e.to] {
+			return e.walk
+		}
+	}
+	return closureName
 }

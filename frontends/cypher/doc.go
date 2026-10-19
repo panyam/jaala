@@ -16,7 +16,10 @@
 // It compiles the part of Cypher a program expresses today: MATCH over node and relationship
 // patterns (labels, inline properties, either direction, several types, a variable length, *m..n
 // or a quantifier, as graph.closure over the step's relation (#281), and shortestPath or a path
-// selector, which keep the match's nodes), WHERE (comparisons, AND, OR, XOR,
+// selector, which keep the match's nodes), a path variable over one relationship, p = (a)-[:T*]->(b),
+// as graph.paths (#280): each trail as a value, or with shortestPath or SHORTEST 1 one shortest path
+// per pair, read by length(p), nodes(p), relationships(p) (the edges' facts, through a helper of three
+// arguments, wire) and x IN nodes(p), WHERE (comparisons, AND, OR, XOR,
 // NOT, IS NULL, STARTS WITH, ENDS WITH, CONTAINS, =~, IN over a written list, a label test, a
 // pattern, EXISTS { } and COUNT { }, the last a body aggregate so a node with no match counts 0),
 // WITH stages with their aggregates and WHERE, UNION and UNION ALL, CALL proc(args) YIELD over a
@@ -35,13 +38,18 @@
 //     need a relationship as a value (#279).
 //   - A property read through the graph's Props relation, or a Derived one, is a match: a node without it has no row,
 //     where Cypher would answer null (#282).
-//   - A variable-length match is reachability: it doesn't keep Cypher's rule that a path uses a
-//     relationship once, which can differ for a bounded range over a cycle (#280). A zero-length one
-//     from a node nothing else binds pairs only the nodes its relationship's relation holds.
+//   - A variable-length match without a path variable is reachability: it doesn't keep Cypher's rule
+//     that a path uses a relationship once, which can differ for a bounded range over a cycle. Bind
+//     the path, p = (...), for trails (#280). A zero-length one from a node nothing else binds pairs
+//     only the nodes its relationship's relation holds.
+//   - A path is its nodes, so two relationships between the same nodes make one path, and count(p)
+//     counts routes, unless relationships(p) is read, when the path names each edge's fact and they
+//     make two. nodes(p) and relationships(p) answer a list's text, as collect does.
 //   - collect answers a text listing the values, not a list (#283).
 //
 // The rest it refuses with an *Error naming the issue that would let it: a relationship variable
-// read anywhere (#279), paths as values and quantified path patterns (#280), OPTIONAL MATCH (#282), lists, maps and UNWIND (#283), functions beyond the aggregates
+// read anywhere (#279), a path variable over more than one relationship, ALL SHORTEST and SHORTEST k
+// paths as values, shortestPath as a value outside p = (...), and quantified path patterns (#398), OPTIONAL MATCH (#282), lists, maps and UNWIND (#283), functions beyond the aggregates
 // above (#284), writes (#287), USE and LOAD CSV (#289), CALL { } subqueries, an ORDER BY, SKIP or
 // LIMIT inside a WITH or a UNION part, a label expression beyond A&B and a query without a MATCH
 // or a RETURN (#364), and a WHERE of more than 16 alternatives (#388). It parses all of Neo4j 5's

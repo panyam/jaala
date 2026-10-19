@@ -24,7 +24,7 @@ var fuzzSeeds = []string{
 	`node(?n), str.contains(?n, "v") => count(distinct ?n)`,
 	`weight(?n, ?w), ?w >= 2 => ?n, sum(?w), max(?w)`,
 	`t(?n: node, ?w: number) :- weight(?n, ?w); t(?n, ?w), ?w != 3 => list(?n)`,
-	`path.reach("v1", ?x), not edge(?x, _) => ?x`,
+	`hop.reach("v1", ?x), not edge(?x, _) => ?x`,
 	`out(?n, ?c) :- node(?n), ?c = count(?m) : { edge(?n, ?m) }; out(?n, ?c), ?c < 1 => ?n`,
 	`node(?n), ?w = min(?v) : { weight(?n, ?v), ?v > 3 }, ?s = sum(distinct ?v) : { edge(?n, ?m), weight(?m, ?v) } => ?n, ?w, ?s`,
 	`edge(?a, ?b), ?a < ?b, ?b = "v3" => ?a`,
@@ -42,7 +42,7 @@ var fuzzSeeds = []string{
 func fuzzVocabulary(t testing.TB) *ns.Vocabulary {
 	t.Helper()
 	v := std(genGraph(rand.New(rand.NewSource(7))).source())
-	if err := v.AddModule("path", LanguageName, reachModule, ""); err != nil {
+	if err := v.AddModule("hop", LanguageName, reachModule, ""); err != nil {
 		t.Fatal(err)
 	}
 	return v

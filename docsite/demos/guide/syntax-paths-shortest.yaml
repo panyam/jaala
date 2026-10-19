@@ -1,0 +1,3 @@
+fixture: deps
+query: graph.paths("imports", "app", ?to, "shortest", 2, 2, ?p) => ?to, ?p
+expect: [[auth, '["app","api","auth"]'], [cache, '["app","api","cache"]'], [db, '["app","api","db"]'], [log, '["app","api","log"]'], [util, '["app","log","util"]']]

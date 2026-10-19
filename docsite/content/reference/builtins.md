@@ -112,3 +112,23 @@ Each carries units through the vocabulary's table. The [guide]({{.Site.PathPrefi
 `coalesce(?x, ?fallback, ?v)` binds `?v` to `?x`, or to `?fallback` when `?x` is absent. Both must be bound first, absent counting as a value. An expression can call it, `?v = coalesce(?x, 0)`, and it nests for more fallbacks: `coalesce(?a, coalesce(?b, ?c))`. No package has more than 5000 lines, so `big`'s min is absent and the fallback answers:
 
 {{ demo "demos/reference/builtins-coalesce.yaml" }}
+
+## Paths
+
+A path from [`graph.paths`]({{.Site.PathPrefix}}/guide/syntax/#every-path) is text, a JSON list of its nodes, or `{"nodes": [...], "edges": [...]}` over a relation that names its edges. The `path.*` functions read it, each needing the path bound. `path.length(?p, ?n)` is how many steps it takes, and `path.node(?p, ?i, ?node)` gives each node with its index from 0, so `not path.node(?p, _, "config")` keeps the paths that avoid `config`:
+
+{{ demo "demos/reference/builtins-path.yaml" }}
+
+Given an index, `path.node` gives that node alone. `path.nodes(?p, ?l)` is the nodes as a list, the path itself when it names no edges:
+
+{{ demo "demos/reference/builtins-path-node.yaml" }}
+
+`path.step(?p, ?i, ?from, ?to)` gives each step with the nodes it joins, which is how a path of nodes finds its edges again, by joining each step back to the relation it walked:
+
+{{ demo "demos/reference/builtins-path-step.yaml" }}
+
+`path.edge(?p, ?i, ?e)` and `path.edges(?p, ?l)` read a path that names its edges, one over a relation of three arguments, and give nothing for one that doesn't:
+
+{{ demo "demos/reference/builtins-path-edge.yaml" }}
+
+A value that isn't a path gives no row rather than an error, since which values reach a function depends on how the query is planned. They live under `path`, so in a host's own module named `path`, a rule's bare `node(...)` or `edge(...)` means these functions, and the module has to write the vocabulary's relation another way or take another name.

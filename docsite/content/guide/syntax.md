@@ -55,11 +55,35 @@ It walks from whichever end the body binds, so asking what reaches `util` walks 
 
 {{ demo "demos/guide/syntax-closure-back.yaml" }}
 
-A node reaches itself only through a cycle, at the cycle's length, as the recursive rule's would, and min `0` makes every node reach itself in none:
+A node reaches itself only through a cycle, at the cycle's length, as the recursive rule's would, and min `0` makes every node the relation holds reach itself in none (a value it doesn't hold reaches nothing, whichever end is bound):
 
 {{ demo "demos/guide/syntax-closure-cycle.yaml" }}
 
 The walk is breadth first, once per node (and per depth below `min`), so it costs what lies within the bound, where a rule counting depth would derive every walk of every length. The relation can be base or derived, by its full name (`"deps.depends_on"`), but it must be complete before the walk reads it, so a relation can't walk itself, and one whose rules each read one base relation, such as `calls(?a, ?b) :- edge(?a, "CALLS", ?b)`, is walked through that relation's facts directly. `graph.closure` is the engine's name, which a vocabulary can't register.
+
+## Every path
+
+`graph.closure` answers whether a node is reachable and how far. `graph.paths("imports", ?from, ?to, mode, min, max, ?path)` answers with each path itself, bound to `?path` as a value ([#280](https://github.com/panyam/jaala/issues/280)). Every way `db` reaches `util` without passing a package twice:
+
+{{ demo "demos/guide/syntax-paths.yaml" }}
+
+A path is a JSON list of its nodes, so an answer shows it as it is, and two paths are the same value when they pass the same nodes. The mode says how a path may repeat. `"acyclic"` passes no node twice, `"simple"` the same but may end where it started, closing a cycle (GQL's `SIMPLE`), `"trail"` takes no step twice (Cypher's rule), and `"walk"` repeats anything, so it needs a `max`. Through the `cache` and `config` cycle a trail goes round once, which an acyclic path can't:
+
+{{ demo "demos/guide/syntax-paths-modes.yaml" }}
+
+A simple path from a package back to itself is a cycle through it, each other package passed once:
+
+{{ demo "demos/guide/syntax-paths-simple.yaml" }}
+
+`"shortest"` gives one path of the fewest steps for each pair, the one whose nodes come first, step by step, so it's the same path whichever end the body binds. With `min` and `max` both 2, it's the packages `app` reaches in exactly two steps and how:
+
+{{ demo "demos/guide/syntax-paths-shortest.yaml" }}
+
+Over a relation of three arguments, from, edge and to, a path names the edges it took as well, and a trail then takes each edge once, whichever way it runs. A fact's id (`as ?r`, [above](#terms)) makes a good edge:
+
+{{ demo "demos/guide/syntax-paths-edges.yaml" }}
+
+The `path.*` functions read a path ([reference]({{.Site.PathPrefix}}/reference/builtins/#paths)): its length, its nodes and steps by index, and its edges. Each answer cites its path's facts in order, and its witness has a node per step, as a closure's does. The walk is depth first and reads each node's steps once, but paths multiply around cycles, so a budget or a `limit` is worth having on a dense relation: the walk stops as soon as the query has enough. `graph.paths` is the engine's name too.
 
 ## The goal and its projection
 

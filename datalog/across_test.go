@@ -98,7 +98,7 @@ func lookingTimedOver(timed *ns.TimedMemSource, seed int) (*lookingTimed, ns.Sou
 	return lt, tf
 }
 
-// callsClosure reports whether q calls graph.closure (#281) in its goal or a rule.
+// callsClosure reports whether q calls graph.closure (#281) or graph.paths (#280) in its goal or a rule.
 func callsClosure(q Query) bool {
 	bodies := []Body{q.Goal}
 	for _, r := range q.Rules {
@@ -106,7 +106,7 @@ func callsClosure(q Query) bool {
 	}
 	for _, b := range bodies {
 		for _, a := range ruleAtoms(b) {
-			if a.Relation == closureName {
+			if a.Relation == closureName || a.Relation == pathsName {
 				return true
 			}
 		}
