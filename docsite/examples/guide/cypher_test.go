@@ -8,6 +8,7 @@ import (
 
 	"github.com/panyam/jaala/datalog"
 	"github.com/panyam/jaala/frontends/cypher"
+	"github.com/panyam/jaala/frontends/nl"
 	"github.com/panyam/jaala/ns"
 )
 
@@ -278,4 +279,47 @@ func Example_cypherDerived() {
 	// Output:
 	// node(?f, "func"), edge(?g, "calls", ?f), name.of(?f, "parse"), name.of(?g, ?g_name) => ?g, ?g_name
 	// "f:main" | "main"
+}
+
+// With the Cypher front end, Translate asks a model for Cypher: the prompt
+// is the graph and Cypher's instructions, each draft is compiled before it
+// is checked, and a refusal goes back in Cypher's terms.
+func Example_cypherTranslate() {
+	v, err := vocabulary(source())
+	if err != nil {
+		panic(err)
+	}
+	m := &scriptedModel{drafts: []string{
+		`MATCH (:Pakage {name: 'app'})-[:IMPORTS*]->(d) RETURN d.name`,
+		`MATCH (:Package {name: 'app'})-[:IMPORTS*]->(d) RETURN d.name`,
+	}}
+	fe := cypher.NewFrontEnd(depsGraph)
+	p, tr, err := nl.Translate(context.Background(), "what does app depend on?", v, nil, m,
+		nl.Options{Base: datalog.MustBase(v, source()), FrontEnd: fe})
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	for _, t := range tr.Tries {
+		fmt.Printf("try in %s: %q\n", t.Language, t.Kind)
+	}
+	fmt.Println(p.Text)
+	fmt.Println("compiled to:", strings.Join(strings.Fields(p.Compiled), " "))
+	for _, r := range p.Rows {
+		fmt.Print(r.Bind["d"].S, " ")
+	}
+	fmt.Println()
+	// Output:
+	// told: cypher: no label Pakage in this graph, did you mean "Package"? (its labels: Package)
+	// line 1, column 7:
+	//   MATCH (:Pakage {name: 'app'})-[:IMPORTS*]->(d) RETURN d.name
+	//         ^
+	//
+	// Write the whole query again, fixed.
+	//
+	// try in cypher: "compile"
+	// try in cypher: ""
+	// MATCH (:Package {name: 'app'})-[:IMPORTS*]->(d) RETURN d.name
+	// compiled to: cypher_reach1(?x, ?y) :- imports(?x, ?y); cypher_reach1(?x, ?y) :- cypher_reach1(?x, ?z), imports(?z, ?y); pkg("app", _), cypher_reach1("app", ?d) => ?d
+	// api log util
 }

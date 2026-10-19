@@ -101,7 +101,10 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   #324): each at the arities it takes, a closed domain's argument as a variable or one of its values,
   and a program's own rules named by `local`, a trie keeping them off every root name, whose tails (`lt<n>`) keep a local within `nameMax`. `GoalOnly()`
   drops rules. Its soundness test also checks each sample against `Grammar()`, so it stays a
-  sublanguage. The recognizer lives in `internal/gbnf` for both packages' tests. `Translate` sends
+  sublanguage. The recognizer lives in `internal/gbnf` for both packages' tests, beside the table
+  types, `Render` and the `Sampler` (#354, shared with the Cypher grammar; nl keeps its own short
+  types and converts with `table`, since vet refuses unkeyed literals of another package's structs,
+  and `program.gbnf` must come out byte-identical). `Translate` sends
   it as `Prompt.Grammar`.
 - **`frontends/nlmodels` is a module of its own** (#330): thin clients for local models already
   running, `llamacpp` (sends the grammar, `cache_prompt`) and `ollama` (no GBNF, so no grammar).
@@ -148,6 +151,16 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   `node(id, kind)`, `edge(from, kind, to)`, `attr(id, key, value)` store, one label per kind
   (`DefaultLabel`, `DefaultType`), reading the kinds with `Kinds`; mcp's tests write their graph by
   hand, and `Store` is tested in `frontends/cypher`.
+- **A model can write another language than jaala's** (`nl.FrontEnd`, `Options.FrontEnd`, #354): the
+  prompt is the front end's card, instructions and examples (the pack's About and Card still follow,
+  its jaala examples don't), a draft is compiled (`Compiled`, whose `Explain` is set even on a
+  failed compile) before `Validate`, every refusal goes back through `Compiled.Explain`, and
+  `Try.Language`, `Program.Language`/`Compiled` and `Report.Language()` ("passed n/m in cypher")
+  record it. The interface is nl's and `frontends/cypher` implements it (`NewFrontEnd`), so cypher
+  imports nl and never the other way. `cypher.Grammar(g)` is the subset as a gbnf table narrowed
+  to g's labels, types and keys, without XOR (#377's blow-up hangs the sampler), CALL or
+  `$parameters`; its test holds every sample to parsing, not compiling (a random query names
+  variables nothing matched), and requires the guide's real answers to be accepted instead.
 - **`frontends/cypher` compiles Cypher to jaala text over a host's `Graph`** (#352, mission #356):
   `Node` and `Edge` name the relation holding a label or a type, its key or endpoints, `Fixed`
   constants (Declaire's `node(id, "Function")`) and property columns, `Props` a key-value

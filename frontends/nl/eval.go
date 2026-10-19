@@ -108,6 +108,22 @@ func (rep *Report) add(res Result) {
 	}
 }
 
+// Language is the front end every try was written in (#354), so two runs' reports say which language
+// each scored: "" for jaala's, and "mixed" when tries differ.
+func (rep Report) Language() string {
+	lang, seen := "", false
+	for _, r := range rep.Cases {
+		for _, t := range r.Trace.Tries {
+			if !seen {
+				lang, seen = t.Language, true
+			} else if t.Language != lang {
+				return "mixed"
+			}
+		}
+	}
+	return lang
+}
+
 // A Draft is one try of one case, as Costliest ranks them.
 type Draft struct {
 	Case string
@@ -193,8 +209,12 @@ func (rep Report) String() string {
 		}
 	}
 	n := len(rep.Cases)
-	fmt.Fprintf(&b, "passed %d/%d, %d on the first try; %d tries, tokens %d in (%d cached), %d out\n",
-		rep.Passed, n, rep.PassedFirstTry, rep.Tries, rep.TokensIn, rep.TokensCached, rep.TokensOut)
+	in := ""
+	if l := rep.Language(); l != "" {
+		in = " in " + l
+	}
+	fmt.Fprintf(&b, "passed %d/%d%s, %d on the first try; %d tries, tokens %d in (%d cached), %d out\n",
+		rep.Passed, n, in, rep.PassedFirstTry, rep.Tries, rep.TokensIn, rep.TokensCached, rep.TokensOut)
 	var kinds []string
 	for k := range rep.Refused {
 		kinds = append(kinds, k)

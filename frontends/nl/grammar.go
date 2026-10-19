@@ -2,9 +2,9 @@ package nl
 
 import (
 	"fmt"
-	"math/rand"
-	"strings"
 	"sync"
+
+	"github.com/panyam/jaala/internal/gbnf"
 )
 
 // Grammar is the program syntax as a GBNF grammar (llama.cpp's form, its start rule root), for a
@@ -20,7 +20,8 @@ func Grammar() string { return grammarText() }
 
 var grammarText = sync.OnceValue(func() string { return render(programRules()) })
 
-// A grammar is rules in the order they are written; the first is root.
+// A grammar is rules in the order they are written; the first is root. internal/gbnf renders and
+// samples it (table converts it), as it does the Cypher front end's (#354).
 type rule struct {
 	name string
 	e    gexpr
@@ -47,6 +48,43 @@ type (
 func opt(e gexpr) rep  { return rep{e, 0, 1} }
 func star(e gexpr) rep { return rep{e, 0, -1} }
 func plus(e gexpr) rep { return rep{e, 1, -1} }
+
+// table is rules as internal/gbnf's.
+func table(rules []rule) []gbnf.Rule {
+	out := make([]gbnf.Rule, len(rules))
+	for i, r := range rules {
+		out[i] = gbnf.Rule{Name: r.name, E: toGBNF(r.e)}
+	}
+	return out
+}
+
+func toGBNF(e gexpr) gbnf.Expr {
+	switch e := e.(type) {
+	case lit:
+		return gbnf.Lit(e)
+	case ref:
+		return gbnf.Ref(e)
+	case class:
+		return gbnf.Class{Spec: e.spec, Sample: e.sample}
+	case seq:
+		out := make(gbnf.Seq, len(e))
+		for i, x := range e {
+			out[i] = toGBNF(x)
+		}
+		return out
+	case alt:
+		out := make(gbnf.Alt, len(e))
+		for i, x := range e {
+			out[i] = toGBNF(x)
+		}
+		return out
+	case rep:
+		return gbnf.Rep{E: toGBNF(e.e), Min: e.min, Max: e.max}
+	}
+	panic(fmt.Sprintf("nl: no gexpr %T", e))
+}
+
+func render(rules []rule) string { return gbnf.Render(table(rules)) }
 
 // nameMax caps a name's length (an ident, a variable's name, a unit), so a model that wants to write
 // prose can't run one name to its token limit (#340); every program the tests and docs write uses
@@ -125,169 +163,5 @@ func programRules() []rule {
 		{"string", seq{lit(`"`), star(alt{class{`^"\\\x00-\x1F`, "ab c:,()=#'"}, seq{lit(`\`), class{`^\x00-\x1F`, `"\n`}}}), lit(`"`)}},
 		{"relation", seq{ref("ident"), star(seq{alt{lit("."), lit("-")}, ref("ident")})}},
 		{"ident", seq{class{"a-zA-Z", "abeLnrs"}, upTo(class{"a-zA-Z0-9_", "abdeinorst0_"}, nameMax-1)}},
-	}
-}
-
-func render(rules []rule) string {
-	var sb strings.Builder
-	for _, r := range rules {
-		fmt.Fprintf(&sb, "%s ::= %s\n", r.name, renderExpr(r.e, true))
-	}
-	return sb.String()
-}
-
-func renderExpr(e gexpr, top bool) string {
-	switch e := e.(type) {
-	case lit:
-		return quote(string(e))
-	case ref:
-		return string(e)
-	case class:
-		return "[" + e.spec + "]"
-	case seq:
-		parts := make([]string, len(e))
-		for i, x := range e {
-			parts[i] = renderExpr(x, false)
-		}
-		if top || len(e) == 1 {
-			return strings.Join(parts, " ")
-		}
-		return "(" + strings.Join(parts, " ") + ")"
-	case alt:
-		parts := make([]string, len(e))
-		for i, x := range e {
-			parts[i] = renderExpr(x, true)
-		}
-		if top {
-			return strings.Join(parts, " | ")
-		}
-		return "(" + strings.Join(parts, " | ") + ")"
-	case rep:
-		inner := renderExpr(e.e, false)
-		switch {
-		case e.min == 0 && e.max == 1:
-			return inner + "?"
-		case e.min == 0 && e.max < 0:
-			return inner + "*"
-		case e.min == 1 && e.max < 0:
-			return inner + "+"
-		}
-		return fmt.Sprintf("%s{%d,%d}", inner, e.min, e.max)
-	}
-	panic(fmt.Sprintf("nl: no gexpr %T", e))
-}
-
-// quote writes a GBNF string literal.
-func quote(s string) string {
-	var sb strings.Builder
-	sb.WriteByte('"')
-	for _, r := range s {
-		switch r {
-		case '"', '\\':
-			sb.WriteByte('\\')
-			sb.WriteRune(r)
-		case '\n':
-			sb.WriteString(`\n`)
-		default:
-			sb.WriteRune(r)
-		}
-	}
-	sb.WriteByte('"')
-	return sb.String()
-}
-
-// sampler draws texts from a grammar, taking the shortest way out of every rule past maxDepth, so a
-// test can check what the grammar accepts against the parser.
-type sampler struct {
-	rules    map[string]gexpr
-	height   map[string]int // the fewest rule steps a rule needs to finish
-	rnd      *rand.Rand
-	maxDepth int
-}
-
-func newSampler(rules []rule, seed int64, maxDepth int) *sampler {
-	s := &sampler{rules: map[string]gexpr{}, height: map[string]int{}, rnd: rand.New(rand.NewSource(seed)), maxDepth: maxDepth}
-	for _, r := range rules {
-		s.rules[r.name] = r.e
-		s.height[r.name] = 1 << 20
-	}
-	for changed := true; changed; {
-		changed = false
-		for _, r := range rules {
-			if h := s.heightOf(r.e) + 1; h < s.height[r.name] {
-				s.height[r.name], changed = h, true
-			}
-		}
-	}
-	return s
-}
-
-func (s *sampler) heightOf(e gexpr) int {
-	switch e := e.(type) {
-	case ref:
-		return s.height[string(e)]
-	case seq:
-		h := 0
-		for _, x := range e {
-			h = max(h, s.heightOf(x))
-		}
-		return h
-	case alt:
-		h := 1 << 20
-		for _, x := range e {
-			h = min(h, s.heightOf(x))
-		}
-		return h
-	case rep:
-		if e.min == 0 {
-			return 0
-		}
-		return s.heightOf(e.e)
-	}
-	return 0
-}
-
-func (s *sampler) sample(name string) string {
-	var sb strings.Builder
-	s.expand(&sb, ref(name), 0)
-	return sb.String()
-}
-
-func (s *sampler) expand(sb *strings.Builder, e gexpr, depth int) {
-	switch e := e.(type) {
-	case lit:
-		sb.WriteString(string(e))
-	case ref:
-		s.expand(sb, s.rules[string(e)], depth+1)
-	case class:
-		sb.WriteByte(e.sample[s.rnd.Intn(len(e.sample))])
-	case seq:
-		for _, x := range e {
-			s.expand(sb, x, depth)
-		}
-	case alt:
-		if depth <= s.maxDepth {
-			s.expand(sb, e[s.rnd.Intn(len(e))], depth)
-			return
-		}
-		best := e[0]
-		for _, x := range e[1:] {
-			if s.heightOf(x) < s.heightOf(best) {
-				best = x
-			}
-		}
-		s.expand(sb, best, depth)
-	case rep:
-		n := e.min
-		if depth <= s.maxDepth {
-			hi := e.max
-			if hi < 0 {
-				hi = e.min + 3
-			}
-			n += s.rnd.Intn(hi - e.min + 1)
-		}
-		for i := 0; i < n; i++ {
-			s.expand(sb, e.e, depth)
-		}
 	}
 }

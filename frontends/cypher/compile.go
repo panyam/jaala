@@ -520,7 +520,7 @@ func (c *compiler) declareNode(np nodePat, conds *[]expr) (*nodeVar, *Error) {
 	}
 	for _, l := range np.labels {
 		if _, ok := c.g.node(l); !ok {
-			return nil, errAt(np.pos, "no label %s in this graph%s", l, oneOf("labels", c.g.labelNames()))
+			return nil, errAt(np.pos, "no label %s in this graph%s", l, oneOf("labels", l, c.g.labelNames()))
 		}
 		if !contains(n.labels, l) {
 			n.labels = append(n.labels, l)
@@ -543,7 +543,7 @@ func (c *compiler) declareLabels(h hasLabel) *Error {
 	}
 	for _, l := range h.labels {
 		if _, ok := c.g.node(l); !ok {
-			return errAt(h.pos, "no label %s in this graph%s", l, oneOf("labels", c.g.labelNames()))
+			return errAt(h.pos, "no label %s in this graph%s", l, oneOf("labels", l, c.g.labelNames()))
 		}
 		if !contains(n.labels, l) {
 			n.labels = append(n.labels, l)
@@ -563,11 +563,13 @@ func (c *compiler) declareRel(r relPat) *Error {
 	return nil
 }
 
-func oneOf(what string, names []string) string {
+// oneOf is what an unknown name could have been: the closest of names when got is a plausible typo
+// of one (#353), then all of them.
+func oneOf(what, got string, names []string) string {
 	if len(names) == 0 {
 		return ""
 	}
-	return fmt.Sprintf(" (its %s: %s)", what, strings.Join(names, ", "))
+	return ns.DidYouMeanValue(names, got) + fmt.Sprintf(" (its %s: %s)", what, strings.Join(names, ", "))
 }
 
 func contains(xs []string, x string) bool {
@@ -634,7 +636,7 @@ func (c *compiler) resolveProp(n *nodeVar, r propRef) (label string, identity, k
 		nd, _ := c.g.node(l)
 		known = append(known, sortedKeys(nd.Props)...)
 	}
-	return "", false, false, errAt(r.pos, "no property %s on %s:%s%s", r.key, r.v, strings.Join(n.labels, ":"), oneOf("properties", known))
+	return "", false, false, errAt(r.pos, "no property %s on %s:%s%s", r.key, r.v, strings.Join(n.labels, ":"), oneOf("properties", r.key, known))
 }
 
 func (c *compiler) slotFor(n *nodeVar, label, key string) *slot {
@@ -769,7 +771,7 @@ func (c *compiler) edges(r relPat) ([]Edge, [][]any, *Error) {
 	for _, ty := range types {
 		e, ok := c.g.edge(ty)
 		if !ok {
-			return nil, nil, errAt(r.pos, "no relationship type %s in this graph%s", ty, oneOf("types", c.g.typeNames()))
+			return nil, nil, errAt(r.pos, "no relationship type %s in this graph%s", ty, oneOf("types", ty, c.g.typeNames()))
 		}
 		ar, _ := arity(c.v, e.Relation)
 		args := make([]any, ar)
@@ -1196,7 +1198,7 @@ func (c *compiler) condition(e expr, neg bool) (frag, *Error) {
 		var f frag
 		for i, l := range e.labels {
 			if _, ok := c.g.node(l); !ok {
-				return nil, errAt(e.pos, "no label %s in this graph%s", l, oneOf("labels", c.g.labelNames()))
+				return nil, errAt(e.pos, "no label %s in this graph%s", l, oneOf("labels", l, c.g.labelNames()))
 			}
 			if i > 0 {
 				f = append(f, ", ")
@@ -1315,7 +1317,7 @@ func (c *compiler) subBody(pats []pattern, where expr, allowNew bool) (bodies []
 				}
 				for _, l := range np.labels {
 					if _, ok := c.g.node(l); !ok {
-						return nil, nil, nil, errAt(np.pos, "no label %s in this graph%s", l, oneOf("labels", c.g.labelNames()))
+						return nil, nil, nil, errAt(np.pos, "no label %s in this graph%s", l, oneOf("labels", l, c.g.labelNames()))
 					}
 					body = append(body, frag{nodeAtm{n: a, label: l}})
 				}

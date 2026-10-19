@@ -92,6 +92,11 @@ type Options struct {
 	// examples are checked before any model is asked, its Grounder grounds the question when
 	// Translate's is nil, and its Check judges each answer.
 	Pack *Pack
+	// FrontEnd, when set, is the language the model writes in place of jaala's (#354): the prompt is
+	// its card, instructions and examples (the pack's About and Card still follow, its jaala examples
+	// don't), each draft is compiled before it is checked, and every refusal goes back in its terms.
+	// Grammar defaults to its Grammar.
+	FrontEnd FrontEnd
 }
 
 // A Program is what Translate accepted: its text, as the model wrote it less any Markdown fence, the
@@ -101,6 +106,9 @@ type Program struct {
 	Query datalog.Query
 	Rows  []datalog.Row
 	Model string
+	// Language is the front end's the model wrote Text in, "" for jaala's, and Compiled the jaala
+	// program Text compiled to, which Query parses.
+	Language, Compiled string
 }
 
 // A Trace is every try Translate made, in order, whether or not one was accepted.
@@ -113,17 +121,22 @@ type Trace struct {
 type Try struct {
 	Model string
 	Text  string
-	Err   error
+	// Language is the front end's the model wrote Text in, "" for jaala's.
+	Language string
+	Err      error
 	// Kind sorts Err: a CheckError's Kind ("unknown", "arity", ...), or "parse" for a parse error,
 	// "eval" for an evaluation error that isn't a CheckError, "empty" for an answer with no rows,
 	// "repeat" for a draft the model already wrote in this conversation (Err wraps the first one's),
-	// "answer" for one the Pack's Check refused, and "model" for a Model that failed.
+	// "answer" for one the Pack's Check refused, "model" for a Model that failed, and, with a
+	// FrontEnd, "compile" for a draft it refused to compile, or the kind it names (Cypher's "gap").
 	Kind                              string
 	TokensIn, TokensOut, TokensCached int
 	Latency                           time.Duration
 	// Report is what evaluating the draft over Options.Base did (datalog.Explain), when it was
 	// evaluated: its work per rule and literal, and for an empty answer, Report.Empty.
 	Report *datalog.Report
+
+	explain func(error) string // how Err goes back to the model, in the draft's language
 }
 
 // The Try kinds that aren't a CheckError's.
@@ -153,19 +166,12 @@ const instructions = `
 // then wraps the last try's.
 func Translate(ctx context.Context, question string, v *ns.Vocabulary, g Grounder, m Model, o Options) (Program, Trace, error) {
 	var tr Trace
-	card, err := Card(v)
+	prefix, err := promptPrefix(v, o)
 	if err != nil {
 		return Program{}, tr, err
 	}
-	prefix := card + instructions
-	if o.Pack != nil {
-		if err := o.Pack.Validate(v); err != nil {
-			return Program{}, tr, err
-		}
-		prefix += o.Pack.Prefix()
-		if g == nil {
-			g = o.Pack.Grounder
-		}
+	if o.Pack != nil && g == nil {
+		g = o.Pack.Grounder
 	}
 	ask := question
 	if g != nil {
@@ -180,12 +186,17 @@ func Translate(ctx context.Context, question string, v *ns.Vocabulary, g Grounde
 		tries = 3
 	}
 	grammar := o.Grammar
-	if o.NoGrammar {
+	switch {
+	case o.NoGrammar:
 		grammar = ""
-	} else if grammar == "" {
-		if grammar, err = GrammarFor(v); err != nil {
-			return Program{}, tr, err
-		}
+	case grammar != "":
+	case o.FrontEnd != nil:
+		grammar, err = o.FrontEnd.Grammar(v)
+	default:
+		grammar, err = GrammarFor(v)
+	}
+	if err != nil {
+		return Program{}, tr, err
 	}
 	models := []Model{m}
 	if o.Fallback != nil {
@@ -213,14 +224,62 @@ func Translate(ctx context.Context, question string, v *ns.Vocabulary, g Grounde
 				break
 			}
 			refused[try.Text] = err
-			fix := "Write the whole program again, fixed."
-			if try.Kind == KindEmpty {
-				fix = "Write the whole program again, with other members or values."
+			what := "program"
+			if o.FrontEnd != nil {
+				what = "query"
 			}
-			turns = append(turns, Turn{RoleModel, try.Text}, Turn{RoleUser, Explain(try.Text, err) + "\n\n" + fix})
+			fix := "Write the whole " + what + " again, fixed."
+			if try.Kind == KindEmpty {
+				fix = "Write the whole " + what + " again, with other members or values."
+			}
+			turns = append(turns, Turn{RoleModel, try.Text}, Turn{RoleUser, strings.TrimRight(try.explain(err), "\n") + "\n\n" + fix})
 		}
 	}
 	return Program{}, tr, fmt.Errorf("nl: no program checked after %d tries: %w", len(tr.Tries), last)
+}
+
+// promptPrefix is every question's Prefix: the card and instructions, jaala's or the front end's, then
+// the pack's part, with the front end's examples in place of the pack's. Examples are checked first,
+// so a broken one fails Translate before any model is asked.
+func promptPrefix(v *ns.Vocabulary, o Options) (string, error) {
+	fe := o.FrontEnd
+	if fe == nil {
+		card, err := Card(v)
+		if err != nil {
+			return "", err
+		}
+		prefix := card + instructions
+		if o.Pack != nil {
+			if err := o.Pack.Validate(v); err != nil {
+				return "", err
+			}
+			prefix += o.Pack.Prefix()
+		}
+		return prefix, nil
+	}
+	card, err := fe.Card(v)
+	if err != nil {
+		return "", err
+	}
+	examples := fe.Examples()
+	for i, e := range examples {
+		c, err := fe.Compile(v, e.Program)
+		if err == nil {
+			err = datalog.Validate(c.Query, v)
+		}
+		if err != nil {
+			return "", fmt.Errorf("nl: the front end's example %d (%q): %w", i+1, e.Question, err)
+		}
+	}
+	prefix := card + fe.Instructions()
+	if o.Pack != nil {
+		p := *o.Pack
+		p.Examples = examples
+		prefix += p.Prefix()
+	} else if len(examples) > 0 {
+		prefix += (&Pack{Examples: examples}).Prefix()
+	}
+	return prefix, nil
 }
 
 // errEmpty is a program that checked and answered nothing.
@@ -247,6 +306,9 @@ func (e *EmptyAnswer) Is(target error) bool { return target == errEmpty }
 // a draft refused already, whose error it returns again.
 func draft(ctx context.Context, model Model, p Prompt, v *ns.Vocabulary, o Options, refused map[string]error) (Try, Program, error) {
 	try := Try{Model: model.Name()}
+	if o.FrontEnd != nil {
+		try.Language = o.FrontEnd.Language()
+	}
 	start := time.Now()
 	c, err := model.Complete(ctx, p)
 	try.Latency = time.Since(start)
@@ -256,6 +318,7 @@ func draft(ctx context.Context, model Model, p Prompt, v *ns.Vocabulary, o Optio
 	}
 	try.TokensIn, try.TokensOut, try.TokensCached = c.TokensIn, c.TokensOut, c.TokensCached
 	try.Text = unfence(c.Text)
+	try.explain = func(err error) string { return Explain(try.Text, err) }
 	refuse := func(err error, kind string) (Try, Program, error) {
 		try.Err, try.Kind = err, kind
 		return try, Program{}, err
@@ -263,19 +326,37 @@ func draft(ctx context.Context, model Model, p Prompt, v *ns.Vocabulary, o Optio
 	if err, ok := refused[try.Text]; ok {
 		return refuse(fmt.Errorf("the same draft as before: %w", err), KindRepeat)
 	}
-	q, err := datalog.Parse(try.Text)
-	if err != nil {
-		return refuse(err, KindParse)
+	prog := Program{Text: try.Text, Model: try.Model, Language: try.Language}
+	if o.FrontEnd != nil {
+		c, err := o.FrontEnd.Compile(v, try.Text)
+		if c.Explain != nil {
+			try.explain = c.Explain
+		}
+		if err != nil {
+			kind := c.Kind
+			if kind == "" {
+				kind = KindCompile
+			}
+			return refuse(err, kind)
+		}
+		prog.Compiled, prog.Query = c.Program, c.Query
+	} else {
+		q, err := datalog.Parse(try.Text)
+		if err != nil {
+			return refuse(err, KindParse)
+		}
+		prog.Query = q
 	}
+	q := prog.Query
 	if err := datalog.Validate(q, v); err != nil {
 		return refuse(err, kindOf(err, KindEval))
 	}
-	prog := Program{Text: try.Text, Query: q, Model: try.Model}
 	if o.Base == nil {
 		return judged(ctx, try, prog, o)
 	}
 	try.Report = &datalog.Report{}
-	rows, err := datalog.SemiNaive{}.Eval(ctx, q, o.Base, append(o.Eval[:len(o.Eval):len(o.Eval)], datalog.Explain(try.Report))...)
+	opts := append(o.Eval[:len(o.Eval):len(o.Eval)], datalog.Explain(try.Report))
+	rows, err := datalog.SemiNaive{}.Eval(ctx, q, o.Base, opts...)
 	if err != nil {
 		return refuse(err, kindOf(err, KindEval))
 	}
