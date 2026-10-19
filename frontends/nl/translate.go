@@ -164,9 +164,15 @@ type Try struct {
 	Report *datalog.Report
 
 	explain func(error) string // how Err goes back to the model, in the draft's language
+	// Repair, for a draft the harness rewrote itself (Options.Actions), says what it changed: a
+	// quoted value the data holds in another spelling the conversation had seen. Text is the
+	// rewritten draft, and the try before it the model's own.
+	Repair string
+
 	// action and result are set for a reply that was an action (Options.Actions), which Translate
-	// records as a Step rather than a Try.
+	// records as a Step rather than a Try, and seen holds the text values its result showed.
 	action, result string
+	seen           []string
 }
 
 // The Try kinds that aren't a CheckError's.
@@ -240,7 +246,10 @@ func Translate(ctx context.Context, question string, v *ns.Vocabulary, g Grounde
 	}
 	var last error
 	var held *Program // an answer escalated past, kept in case nothing better comes
+	mem := &memory{}  // what the actions have shown, across models, since it is about the data
+	compact := o.Actions != nil && o.Actions.Compact
 	for k, model := range models {
+		mem.facts, mem.last = nil, "" // a fallback starts a fresh conversation
 		turns := []Turn{{RoleUser, ask}}
 		if k > 0 && errors.Is(last, errEmpty) {
 			turns[0].Text += "\n\nA program written for this answered nothing; the question may need other members or values."
@@ -260,7 +269,11 @@ func Translate(ctx context.Context, question string, v *ns.Vocabulary, g Grounde
 			if o.Actions != nil && steps >= o.Actions.steps() {
 				g, oo.Actions = answerGrammar, nil // out of steps: the next reply is the answer
 			}
-			try, p, err := draft(ctx, model, Prompt{Prefix: prefix, Turns: turns, Grammar: g}, v, oo, refused)
+			sent := turns
+			if compact {
+				sent = mem.compact(turns[0].Text)
+			}
+			try, p, err := draft(ctx, model, Prompt{Prefix: prefix, Turns: sent, Grammar: g}, v, oo, refused)
 			spend.add(try.TokensIn, try.TokensOut)
 			if errors.Is(err, errAction) {
 				result := try.result
@@ -274,17 +287,30 @@ func Translate(ctx context.Context, question string, v *ns.Vocabulary, g Grounde
 				}
 				tr.Steps = append(tr.Steps, Step{Model: try.Model, Action: try.action, Text: try.Text, Result: result, After: len(tr.Tries),
 					TokensIn: try.TokensIn, TokensOut: try.TokensOut, TokensCached: try.TokensCached, Latency: try.Latency})
+				mem.see(try.seen)
+				mem.facts = append(mem.facts, fact(try.Text, result))
 				turns = append(turns, Turn{RoleModel, try.Text}, Turn{RoleUser, result})
 				continue
 			}
 			t++
+			if err != nil && o.Actions != nil && repairable(try) {
+				// a guessed spelling of a value the conversation has seen: fixed here, not by the model
+				if text, what, ok := mem.repair(try.Text, domainOf(try.Err, v)); ok {
+					rtry, rp, rerr := check(ctx, Try{Model: try.Model, Language: try.Language, Text: text, Repair: what,
+						explain: func(err error) string { return Explain(text, err) }}, v, o, 0)
+					if rerr == nil {
+						tr.Tries = append(tr.Tries, try)
+						try, p, err = rtry, rp, nil
+					}
+				}
+			}
 			tr.Tries = append(tr.Tries, try)
 			if err == nil {
 				p.Confidence = Confidence{Drawn: 1, Agreed: 1, Ran: o.Base != nil, Judged: o.Pack != nil && o.Pack.Check != nil, Steps: steps}
 				if o.Vote != nil {
 					var votes []Try
 					conf := p.Confidence
-					p, votes = vote(ctx, model, Prompt{Prefix: prefix, Turns: turns, Grammar: answerGrammar}, p, v, o, spend)
+					p, votes = vote(ctx, model, Prompt{Prefix: prefix, Turns: sent, Grammar: answerGrammar}, p, v, o, spend)
 					conf.Drawn, conf.Agreed = p.Confidence.Drawn, p.Confidence.Agreed
 					p.Confidence = conf
 					tr.Votes = append(tr.Votes, votes...)
@@ -312,7 +338,10 @@ func Translate(ctx context.Context, question string, v *ns.Vocabulary, g Grounde
 			if try.Kind == KindEmpty {
 				fix = "Write the whole " + what + " again, with other members or values."
 			}
-			turns = append(turns, Turn{RoleModel, try.Text}, Turn{RoleUser, strings.TrimRight(try.explain(err), "\n") + "\n\n" + fix})
+			why := strings.TrimRight(try.explain(err), "\n")
+			mem.facts = append(mem.facts, fact(try.Text, "refused ("+try.Kind+"): "+strings.Join(strings.Fields(why), " ")))
+			mem.last = try.Text + "\n" + why + "\n\n" + fix
+			turns = append(turns, Turn{RoleModel, try.Text}, Turn{RoleUser, why + "\n\n" + fix})
 		}
 	}
 	if held != nil {
@@ -417,7 +446,8 @@ func draft(ctx context.Context, model Model, p Prompt, v *ns.Vocabulary, o Optio
 	}
 	if o.Actions != nil {
 		if action, arg, ok := readAction(try.Text); ok {
-			try.action, try.result = action, act(ctx, action, arg, v, o)
+			try.action = action
+			try.result, try.seen = act(ctx, action, arg, v, o)
 			return try, Program{}, errAction
 		}
 	}

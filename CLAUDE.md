@@ -112,6 +112,11 @@ GOARCH=wasm go test ./ns` (#417 ran `ns` that way).
   (`*BudgetSpent`). `Try.Class` and `Result.Class` sort failures as grounding, construct,
   semantics, budget or model, reading a `CheckError` before `KindAnswer`, since datalog's order-by
   kind is spelled `answer` too; `Report.Failures` counts them, outside `String`, so goldens hold.
+  With `Actions`, `state.go`'s `memory` keeps the text values actions showed (`act` returns them), and
+  a draft refused as empty or for a constant (`repairable`) has each quoted value the data holds in
+  exactly one other spelling (`spelling`: letters and digits, lower-cased) rewritten, from those and
+  the refused argument's Domain (`domainOf`); the rewrite is kept only if it then passes, as a `Try`
+  with `Repair`. `Actions.Compact` sends `memory.compact`'s one turn instead of the conversation.
 - **`nl.Grammar()` is GBNF built from a rule table** (`frontends/nl/grammar.go`, #323), and every text it
   accepts must parse: `TestEveryProgramTheGrammarWritesParses` samples 21,000 programs from the table
   over 70 seeds and every depth (one seed alone missed `-(9)` as a column). The other direction lives
