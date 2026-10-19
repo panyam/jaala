@@ -53,6 +53,14 @@ A model is the host's: `Translate` calls an `nl.Model`, a name and a `Complete` 
 
 `Translate` returns the accepted `nl.Program` (its text, `Query`, rows when it ran, and the model that wrote it) and an `nl.Trace` of every try, also when it fails: the model, the text, the error and its `Kind`, tokens in, out and cached, latency, and, for a draft run over `Options.Base`, the `datalog.Report` of that run. An empty answer's error is an `nl.EmptyAnswer`, whose `Why` is the run's `Report.Empty`. `Kind` is a `CheckError`'s kind, or `parse`, `eval`, `empty`, `repeat`, `answer` or `model`, so a host counts where its retries went without reading messages.
 
+## Front ends
+
+A model needn't write jaala's syntax. `Options.FrontEnd` names a language it writes instead ([#354](https://github.com/panyam/jaala/issues/354)), and Cypher's is `cypher.NewFrontEnd(graph, examples...)` ([asking in Cypher]({{.Site.PathPrefix}}/guide/cypher/#a-model-writing-cypher)). The prompt is then the front end's card, instructions and examples, followed by the pack's `About` and data `Card` but not its jaala examples. The grammar sent is the front end's. Each draft is compiled before it's checked and run, and every refusal goes back as the front end explains it, in the draft's language and at its place in the draft. Everything else is unchanged: repeats, empty answers, the fallback and the pack's `Check`.
+
+Each `Try` and the accepted `Program` record the `Language`, and `Program.Compiled` holds the jaala program the draft became. A compile refusal is the kind `compile`, or the front end's own, such as Cypher's `gap` for a construct jaala can't express yet. `Report.String` names the language, so a host can run one set of questions through both languages on one model and compare the two reports: first-try passes, tries, tokens and what was refused.
+
+A front end is an interface in `nl` (`nl.FrontEnd`) that the front end's own module implements, since `nl` imports no front end.
+
 ## Local models
 
 jaala runs no model, but `github.com/panyam/jaala/frontends/nlmodels`, a module of its own, has clients for local ones already running, so no host takes on HTTP clients it doesn't use ([#330](https://github.com/panyam/jaala/issues/330)):

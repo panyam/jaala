@@ -293,7 +293,7 @@ func (t *tools) describe(path string) (string, error) {
 		if t.p.Cypher == nil {
 			return "", errors.New("this server reads no Cypher")
 		}
-		return graphText(*t.p.Cypher) + "\n", nil
+		return t.p.Cypher.Describe() + "\n", nil
 	}
 	e, err := t.v.Lookup(path)
 	if err != nil {

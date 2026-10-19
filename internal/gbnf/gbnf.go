@@ -1,6 +1,7 @@
-// Package gbnf reads the GBNF grammars package nl renders and recognizes text against them, for the
-// tests of nl and datalog that check the grammar against the parser (#323, #324). Nothing in jaala's
-// production code imports it.
+// Package gbnf holds the front ends' grammars as tables (Rule, Render, Sampler: nl's program syntax,
+// #323, and the Cypher subset, #354), and reads the GBNF they render to recognize text against it,
+// for the tests that check a grammar against its parser (#324). Only the front ends import it; the
+// engine doesn't.
 package gbnf
 
 import (

@@ -2,7 +2,6 @@ package mcp
 
 import (
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -94,37 +93,4 @@ func pageOffset(token string) (int, error) {
 		return 0, fmt.Errorf("page_token %q isn't one this server gave", token)
 	}
 	return n, nil
-}
-
-// graphText says what a Cypher query can name: each label with its properties, each relationship type
-// with its own, the properties the host computes for any node, and that any other node property is
-// read from the property relation.
-func graphText(g cypher.Graph) string {
-	var labels, types []string
-	for _, n := range g.Nodes {
-		labels = append(labels, n.Label+propsText(n.Props))
-	}
-	for _, e := range g.Edges {
-		types = append(types, e.Type+propsText(e.Props))
-	}
-	text := fmt.Sprintf("Node labels: %s. Relationship types: %s.", strings.Join(labels, ", "), strings.Join(types, ", "))
-	if len(g.Derived) > 0 {
-		text += " Any node may have" + propsText(g.Derived) + ", which the host computes."
-	}
-	if g.Props != nil {
-		text += " A node's other properties are any key its " + g.Props.Relation + " facts name."
-	}
-	return text
-}
-
-func propsText[V any](props map[string]V) string {
-	if len(props) == 0 {
-		return ""
-	}
-	names := make([]string, 0, len(props))
-	for k := range props {
-		names = append(names, k)
-	}
-	sort.Strings(names)
-	return " {" + strings.Join(names, ", ") + "}"
 }

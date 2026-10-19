@@ -179,7 +179,7 @@ func NewWith[A any](v *ns.Vocabulary, p Pack, o Options, x Extension[A]) (*serve
 		srv.Register(ask)
 	}
 	if p.Cypher != nil {
-		cy, err := tool(t, x, host, "cypher", fmt.Sprintf(cypherDesc, topic, graphText(*p.Cypher)), (*call).cypher)
+		cy, err := tool(t, x, host, "cypher", fmt.Sprintf(cypherDesc, topic, p.Cypher.Describe()), (*call).cypher)
 		if err != nil {
 			return nil, err
 		}
@@ -260,7 +260,7 @@ func instructions(p Pack, ask bool) string {
 		}
 	}
 	if p.Cypher != nil {
-		b.WriteString("\nOr ask in Cypher with the cypher tool: MATCH, WHERE and RETURN over this graph, and it answers with the program it ran. " + graphText(*p.Cypher) + "\n")
+		b.WriteString("\nOr ask in Cypher with the cypher tool: MATCH, WHERE and RETURN over this graph, and it answers with the program it ran. " + p.Cypher.Describe() + "\n")
 	}
 	b.WriteString("\nThe explain tool says where a program's work went, and why its answer is empty.")
 	if ask {

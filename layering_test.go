@@ -14,10 +14,10 @@ import (
 //	ns       the contract                imports nothing in jaala
 //	stdlib   the standard vocabulary     imports ns, never datalog
 //	datalog  the engine                  imports ns only
-//	frontends/nl        the plain-language front end (#321)   imports ns and datalog, in a module of its own
-//	frontends/cypher    the Cypher front end (#352)            imports ns and datalog, in a module of its own
+//	frontends/nl        the plain-language front end (#321)   imports ns, datalog and internal/gbnf, in a module of its own
+//	frontends/cypher    the Cypher front end (#352)            imports ns, datalog, internal/gbnf and nl (whose FrontEnd it is, #354), in a module of its own
 //	frontends/nlmodels  clients for local models (#330)       import frontends/nl, in a module of their own
-//	internal/gbnf  a GBNF recognizer      imports nothing; only tests import it (#324)
+//	internal/gbnf  GBNF tables and a recognizer   imports nothing; the front ends render and sample their grammars with it (#324, #354)
 //	internal/guide the guide's example     the front ends' shared test fixture (#352); only tests import it
 //
 // Test files are not checked: datalog's tests use stdlib for their fixtures.
@@ -27,8 +27,8 @@ func TestLayering(t *testing.T) {
 		"ns":                          {},
 		"stdlib":                      {"ns"},
 		"datalog":                     {"ns"},
-		"frontends/nl":                {"ns", "datalog"},
-		"frontends/cypher":            {"ns", "datalog"},
+		"frontends/nl":                {"ns", "datalog", "internal/gbnf"},
+		"frontends/cypher":            {"ns", "datalog", "internal/gbnf", "frontends/nl"},
 		"frontends/nlmodels/llamacpp": {"frontends/nl"},
 		"frontends/nlmodels/ollama":   {"frontends/nl"},
 		"internal/gbnf":               {},

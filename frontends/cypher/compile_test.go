@@ -308,7 +308,7 @@ func TestMistakesSayWhatTheGraphHolds(t *testing.T) {
 	for _, c := range []struct{ cypher, want, at string }{
 		{`MATCH (p:Package {name: 'api'}) RETURN p.maintainer`, "no property maintainer on p:Package (its properties: license, name)", "p.maintainer"},
 		{`MATCH (p:Pkg) RETURN p`, "no label Pkg in this graph (its labels: Package)", "(p:Pkg"},
-		{`MATCH (a)-[:IMPORT]->(b) RETURN b`, "no relationship type IMPORT in this graph (its types: IMPORTS, DEPENDS_ON)", "-[:IMPORT]"},
+		{`MATCH (a)-[:IMPORT]->(b) RETURN b`, "no relationship type IMPORT in this graph, did you mean \"IMPORTS\"? (its types: IMPORTS, DEPENDS_ON)", "-[:IMPORT]"},
 		{`MATCH (a:Package) RETURN b`, "unknown variable b", "b"},
 		{`MATCH (a:Package) RETURN a.name ORDER BY a.license`, "ORDER BY has to name a column RETURN writes", "a.license"},
 		{`MATCH (a:Package) RETURN a SKIP 1`, "SKIP needs an ORDER BY", "RETURN"},

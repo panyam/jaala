@@ -17,8 +17,10 @@ func FuzzCompile(f *testing.F) {
 	for _, c := range depsCases {
 		f.Add(c.cypher)
 	}
-	for _, d := range drafts {
-		f.Add(d)
+	for _, ds := range drafts {
+		for _, d := range ds {
+			f.Add(d)
+		}
 	}
 	for _, s := range []string{`MATCH (a)-[:IMPORTS*1..3]-(b) WHERE NOT (a)-->(b) XOR a.license IN ['x', $y] RETURN a, b`,
 		`MATCH (a:Package)<-[:IMPORTS|:DEPENDS_ON*]-(b {license: -1.5e3}) RETURN max(a.license + 1) AS m ORDER BY m`} {

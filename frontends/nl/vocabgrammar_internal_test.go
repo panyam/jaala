@@ -59,13 +59,13 @@ func TestEveryProgramAVocabularysGrammarWritesCallsItsMembers(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		var s *sampler
+		var s *gbnf.Sampler
 		failed := 0
 		for i := 0; i < 8000; i++ {
 			if i%1000 == 0 {
-				s = newSampler(rules, int64(i), 3+i/1000%7)
+				s = gbnf.NewSampler(table(rules), int64(i), 3+i/1000%7)
 			}
-			text := s.sample("root")
+			text := s.Sample("root")
 			problem := ""
 			if q, err := datalog.Parse(text); err != nil {
 				problem = err.Error()

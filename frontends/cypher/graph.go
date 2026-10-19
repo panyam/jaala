@@ -3,6 +3,7 @@ package cypher
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/panyam/jaala/ns"
 )
@@ -203,4 +204,38 @@ func sortedKeys[V any](m map[string]V) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// Describe says what a Cypher query over g can name, in a line: each label with its properties, each
+// relationship type with its own, the properties the host computes for any node (Derived), and, with
+// a Props relation, that a node's other properties are any key its facts name. The MCP server's
+// cypher tool and the front end's card describe the graph with it.
+func (g Graph) Describe() string {
+	var labels, types []string
+	for _, n := range g.Nodes {
+		labels = append(labels, n.Label+propsText(n.Props))
+	}
+	for _, e := range g.Edges {
+		types = append(types, e.Type+propsText(e.Props))
+	}
+	text := fmt.Sprintf("Node labels: %s. Relationship types: %s.", strings.Join(labels, ", "), strings.Join(types, ", "))
+	if len(g.Derived) > 0 {
+		text += " Any node may have" + propsText(g.Derived) + ", which the host computes."
+	}
+	if g.Props != nil {
+		text += " A node's other properties are any key its " + g.Props.Relation + " facts name."
+	}
+	return text
+}
+
+func propsText[V any](props map[string]V) string {
+	if len(props) == 0 {
+		return ""
+	}
+	names := make([]string, 0, len(props))
+	for k := range props {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	return " {" + strings.Join(names, ", ") + "}"
 }
