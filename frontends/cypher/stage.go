@@ -310,7 +310,8 @@ func (c *compiler) compileStage(in *stageIn, s stage, where expr) (projected, *E
 		if u := rc.unwind; u != nil {
 			// UNWIND l AS x: a row per value, after the patterns that bind what l reads (#283)
 			c.cur = u.pos
-			l, err := c.value(u.e)
+			l, err := c.term(u.e) // a term, as the atom's argument must be
+
 			if err != nil {
 				return projected{}, err
 			}
