@@ -36,6 +36,11 @@ func Example_card() {
 	// module deps
 	// deps.depends_on(a, b) # Everything a package depends on, directly or through others.
 	//
+	// module list
+	// list.at(list: list, index: number, value) needs list+index # binds the value at an index from 0, a negative one counting from the end (-1 is the last)
+	// list.length(list: list, length: number) needs list # binds how many values the list holds
+	// list.member(list: list, index: number, value) needs list # binds each value of the list with its index from 0; given a value, binds where it is
+	//
 	// module num
 	// num.add(a: number, b: number, c: number) needs a+b or a+c or b+c # c = a + b, run from any two of the three; units follow the vocabulary's table
 	// num.div(a: number, b: number, c: number) needs a+b or a+c or b+c # c = a / b, run from any two of the three; units follow the vocabulary's table
@@ -47,10 +52,10 @@ func Example_card() {
 	//
 	// module path
 	// path.edge(path: string, index: number, edge) needs path # binds each edge of a path over a relation of three arguments, index from 0
-	// path.edges(path: string, edges: string) needs path # binds the path's edges as a list
+	// path.edges(path: string, edges: list) needs path # binds the path's edges as a list
 	// path.length(path: string, steps: number) needs path # binds how many steps the path takes
 	// path.node(path: string, index: number, node) needs path # binds each node of the path, index from 0
-	// path.nodes(path: string, nodes: string) needs path # binds the path's nodes as a list
+	// path.nodes(path: string, nodes: list) needs path # binds the path's nodes as a list
 	// path.step(path: string, index: number, from, to) needs path # binds each step of the path, index from 0
 	//
 	// module str

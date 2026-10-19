@@ -1651,11 +1651,6 @@ func groupKeyOf(keyVars []Var, bnd *binding) string {
 	return b.String()
 }
 
-// listSep joins a list aggregate's members. A space rather than a comma, because the members land in
-// ONE csv cell and a comma there reads as a column break to every naive splitter downstream — the csv
-// writer quotes it correctly, and the half of the world that reads csv with strings.Split does not.
-const listSep = " "
-
 // dedupSort sorts the answer rows in the default order, column by column, and removes duplicates
 // (same projected text), so a query is a deterministic view. Sorting comes first and the first row of
 // each key (valueKey) in sorted order is kept, so which row survives doesn't depend on the order the

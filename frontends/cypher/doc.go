@@ -23,9 +23,11 @@
 // its nodes, relationships and WHERE inside the braces, WHERE (comparisons, AND, OR, XOR,
 // NOT, IS NULL on a property or a variable, STARTS WITH, ENDS WITH, CONTAINS, =~, IN over a written list, a label test, a
 // pattern, EXISTS { } and COUNT { }, the last a body aggregate so a node with no match counts 0),
-// WITH stages with their aggregates and WHERE, UNION and UNION ALL, CALL proc(args) YIELD over a
+// lists as values (#283: collect builds one, carried by a WITH and read by size, head, last, l[i],
+// x IN l and UNWIND l AS x through stdlib's list.*, a list literal of constants and IN $param
+// included), WITH stages with their aggregates and WHERE, UNION and UNION ALL, CALL proc(args) YIELD over a
 // predicate or relation of the vocabulary (each YIELD at the argument its label names), and RETURN
-// with aliases, DISTINCT, count, min, max, sum and collect (as jaala's list, a text), ORDER BY, SKIP
+// with aliases, DISTINCT, count, min, max, sum and collect (as jaala's list), ORDER BY, SKIP
 // and LIMIT. toLower, toUpper, replace, split(s, sep)[i] and + between text compile to stdlib's
 // str.* (+ joins when a side is a string, a string function or a property typed as text, and adds
 // otherwise). A $parameter in the goal is bound with Program.Bind; one a rule reads (a stage, a
@@ -51,13 +53,14 @@
 //     only the nodes its relationship's relation holds.
 //   - A path is its nodes, so two relationships between the same nodes make one path, and count(p)
 //     counts routes, unless relationships(p) is read, when the path names each edge's fact and they
-//     make two. nodes(p) and relationships(p) answer a list's text, as collect does.
-//   - collect answers a text listing the values, not a list (#283).
+//     make two. nodes(p) and relationships(p) answer a list, as collect does.
+//   - collect's list is sorted in jaala's answer order, not in match order, so it doesn't depend on
+//     the order rows arrive in; lists compare and order by their text (#405).
 //
 // The rest it refuses with an *Error naming the issue that would let it: a relationship variable
 // read anywhere (#279), a path variable over more than one relationship, ALL SHORTEST and SHORTEST k
 // paths as values, shortestPath as a value outside p = (...), and quantified path patterns (#398), an OPTIONAL MATCH before any MATCH, with an OR in its WHERE or
-// adding a label to an earlier node (#400), lists, maps and UNWIND (#283), functions beyond the aggregates
+// adding a label to an earlier node (#400), maps, comprehensions and lists of more than constants (#405), functions beyond the aggregates
 // above (#284), writes (#287), USE and LOAD CSV (#289), CALL { } subqueries, an ORDER BY, SKIP or
 // LIMIT inside a WITH or a UNION part, a label expression beyond A&B and a query without a MATCH
 // or a RETURN (#364), and a WHERE of more than 16 alternatives (#388). It parses all of Neo4j 5's

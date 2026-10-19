@@ -42,21 +42,18 @@ func PathValues(v *ns.Vocabulary) error {
 			func(p ns.Path, at ns.Arg, emit func(...ns.Value) error) error {
 				return each(len(p.Edges), at, func(i int) error { return emit(ns.N(float64(i)), p.Edges[i]) })
 			})},
-		{"path.nodes", pathFn("path.nodes", []string{"path", "nodes"}, []ns.ArgType{{Type: ns.TypeString}, {Type: ns.TypeString}},
+		{"path.nodes", pathFn("path.nodes", []string{"path", "nodes"}, []ns.ArgType{{Type: ns.TypeString}, {Type: ns.TypeList}},
 			"binds the path's nodes as a list",
 			func(p ns.Path, _ ns.Arg, emit func(...ns.Value) error) error {
-				return emit(ns.S(ns.Path{Nodes: p.Nodes}.Text()))
+				return emit(ns.S(ns.ListText(p.Nodes)))
 			})},
-		{"path.edges", pathFn("path.edges", []string{"path", "edges"}, []ns.ArgType{{Type: ns.TypeString}, {Type: ns.TypeString}},
+		{"path.edges", pathFn("path.edges", []string{"path", "edges"}, []ns.ArgType{{Type: ns.TypeString}, {Type: ns.TypeList}},
 			"binds the path's edges as a list",
 			func(p ns.Path, _ ns.Arg, emit func(...ns.Value) error) error {
 				if !p.HasEdges {
 					return nil
 				}
-				if len(p.Edges) == 0 {
-					return emit(ns.S("[]"))
-				}
-				return emit(ns.S(ns.Path{Nodes: p.Edges}.Text()))
+				return emit(ns.S(ns.ListText(p.Edges)))
 			})},
 	} {
 		if err := v.AddPredicate(p.path, p.b); err != nil {

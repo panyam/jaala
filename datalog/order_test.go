@@ -49,8 +49,8 @@ func TestTheDefaultOrderSortsNumbersByValue(t *testing.T) {
 }
 
 func TestAListAggregateNamesItsMembersInTheDefaultOrder(t *testing.T) {
-	if got := col(eval(t, parts(), `pin(_, ?n) => list(?n)`), "list(n)"); got != "1 2 3 10" {
-		t.Errorf("list %q, want 1 2 3 10", got)
+	if got := col(eval(t, parts(), `pin(_, ?n) => list(?n)`), "list(n)"); got != "[1,2,3,10]" {
+		t.Errorf("list %q, want [1,2,3,10]", got)
 	}
 }
 

@@ -32,7 +32,8 @@ type ArgType struct {
 	// Owner is the label of the argument that locates this one, set beside Kind for an entity that is
 	// only found through another, such as a pin through its component.
 	Owner string
-	// Type is a scalar type, TypeString or TypeNumber, for an argument that is not an entity. A query
+	// Type is a scalar type, TypeString or TypeNumber, or TypeList, for an argument that is not an
+	// entity. A query
 	// constant (or bound value) is read as this type: text that parses as a number becomes one in a
 	// number argument, and text that does not is refused; a number in a string argument, or in one
 	// naming an entity, matches by its text.
@@ -45,10 +46,12 @@ type ArgType struct {
 	Domain []string
 }
 
-// The scalar types an ArgType may name.
+// The types an ArgType may name: two scalars, and a list, whose values are a List's text (jaala#283)
+// and which a constant is read as text for.
 const (
 	TypeString = "string"
 	TypeNumber = "number"
+	TypeList   = "list"
 )
 
 // IsZero reports whether the type says nothing about its argument.

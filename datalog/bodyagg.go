@@ -252,7 +252,7 @@ func aggregateFixed(fn string) (ns.ArgType, bool) {
 	case "count":
 		return ns.ArgType{Type: ns.TypeNumber}, true
 	case "list":
-		return ns.ArgType{Type: ns.TypeString}, true
+		return ns.ArgType{Type: ns.TypeList}, true
 	}
 	return ns.ArgType{}, false
 }
@@ -263,7 +263,7 @@ func emptyAggregate(fn string) ns.Value {
 	case "count", "sum":
 		return ns.N(0)
 	case "list":
-		return ns.S("")
+		return ns.S("[]") // a list of nothing (#283)
 	}
 	return ns.Absent()
 }

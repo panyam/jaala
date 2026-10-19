@@ -1,0 +1,3 @@
+fixture: deps
+query: team(?t, list(?p)) :- owner(?p, ?t); team(?t, ?l), list.member(?l, ?i, ?p), ?t = "data" => ?t, ?i, ?p
+expect: [[data, "0", cache], [data, "1", db]]

@@ -1,0 +1,3 @@
+fixture: deps
+query: team(?t, list(?p)) :- owner(?p, ?t); team(?t, ?l), list.length(?l, ?n), ?n > 2, list.at(?l, -1, ?last) => ?t, ?n, ?last
+expect: [[platform, "4", util], [web, "3", legacy]]

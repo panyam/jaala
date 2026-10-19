@@ -1,3 +1,3 @@
 fixture: deps
 query: owner(?p, ?t) => ?t, list(?p)
-expect: [[data, cache db], [platform, config log metrics util], [security, auth], [web, api app legacy]]
+expect: [[data, '["cache","db"]'], [platform, '["config","log","metrics","util"]'], [security, '["auth"]'], [web, '["api","app","legacy"]']]

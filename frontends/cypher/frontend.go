@@ -59,7 +59,9 @@ func (frontEnd) Instructions() string {
 # relationships(p) and x IN nodes(p). OPTIONAL MATCH after a MATCH keeps the row with null where
 # it fails (test it with x IS NULL). A node is its key, so RETURN n answers n's key.
 # Strings are 'quoted'.
-# Not supported: relationship variables, UNWIND and lists, CASE, writes.
+# collect(x) is a list a WITH can carry: read it with size(l), head(l), last(l), l[i], x IN l and
+# UNWIND l AS x.
+# Not supported: relationship variables, maps and list comprehensions, CASE, writes.
 # Reply with the query alone.
 `
 }

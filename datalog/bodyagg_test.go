@@ -60,7 +60,7 @@ func TestABodyAggregateOverNothing(t *testing.T) {
 		want  []string
 	}{
 		{`part(?r), ?r = "X9", ?c = count(?n) : { pin(?r, ?n, _) }, ?s = sum(?k) : { pin(?r, _, ?k) }, ?m = min(?k) : { pin(?r, _, ?k) }, ?l = list(?n) : { pin(?r, ?n, _) } => ?r, ?c, ?s, ?m, ?l`,
-			[]Var{"r", "c", "s", "m", "l"}, []string{"s:X9 n:0 n:0 absent s:"}},
+			[]Var{"r", "c", "s", "m", "l"}, []string{"s:X9 n:0 n:0 absent s:[]"}},
 		{`part(?r), ?m = max(?v) : { ohms(?r, ?v) } => ?r, ?m`, []Var{"r", "m"},
 			[]string{"s:C1 absent", "s:R1 n:10", "s:R2 n:47", "s:U1 absent", "s:X9 absent"}},
 		{`part(?r), ?m = max(?v) : { ohms(?r, ?v) }, ?m < 20 => ?r`, []Var{"r"}, []string{"s:R1"}},

@@ -21,7 +21,7 @@ The aggregates are `count`, `sum`, `min`, `max` and `list`.
 
 {{ demo "demos/tutorials/04-distinct.yaml" }}
 
-`list` gathers a group's values into one, in the answer's usual order:
+`list` gathers a group's values into a list, in the answer's usual order, which a later query can read again with the `list.*` functions ([reference]({{.Site.PathPrefix}}/reference/builtins/#lists)):
 
 {{ demo "demos/tutorials/04-list.yaml" }}
 

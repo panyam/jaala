@@ -131,7 +131,8 @@ func (acc *accumulator) addN(val ns.Value, ok bool, n int) {
 	acc.bindings += n
 	switch acc.a.Func {
 	case "count", "list":
-		if !ok || val.Absent || val.S == "" {
+		// a list holds "" as a value (#283); count still skips it, as it always has
+		if !ok || val.Absent || val.S == "" && acc.a.Func == "count" {
 			return
 		}
 		if acc.a.Distinct {
@@ -232,12 +233,18 @@ func (acc *accumulator) result() (ns.Value, string) {
 				vals = append(vals, v)
 			}
 		}
-		sort.SliceStable(vals, func(i, j int) bool { return orderValues(vals[i], vals[j]) < 0 })
-		out := make([]string, len(vals))
-		for i, v := range vals {
-			out[i] = v.S
-		}
-		return ns.Value{S: strings.Join(out, listSep)}, ""
+		// a total order: equal numbers in two units (0 and 0 V) tie in orderValues, and a list writes
+		// the unit, so a tie kept in arrival order made the list depend on it (#283's corpus)
+		sort.SliceStable(vals, func(i, j int) bool {
+			if c := orderValues(vals[i], vals[j]); c != 0 {
+				return c < 0
+			}
+			if vals[i].BaseUnit != vals[j].BaseUnit {
+				return vals[i].BaseUnit < vals[j].BaseUnit
+			}
+			return vals[i].S < vals[j].S
+		})
+		return ns.S(ns.ListText(vals)), ""
 	}
 	sort.Strings(acc.units)
 	if len(acc.units) > 1 {

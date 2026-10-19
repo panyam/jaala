@@ -100,7 +100,7 @@ func TestAMistakeAfterAGapIsReportedFirst(t *testing.T) {
 	v, _ := guide.Deps(t)
 	for _, c := range []struct{ cypher, want string }{
 		{`OPTIONAL MATCH (a:Package) RETURN a.name AS`, "expected a column name after AS"},
-		{`MATCH (a:Package) UNWIND [1, 2] AS x RETURN x x`, `unexpected "x" after RETURN`},
+		{`MATCH (a:Package) RETURN a {.name}, a x`, `unexpected "x" after RETURN`},
 		{`MATCH (a:Package) RETURN CASE WHEN a.name THEN 1 END, a.`, "expected a property name after ."},
 		{`MATCH ((a)-[:IMPORTS]->(b)){1,3} RETURN b AS`, "expected a column name after AS"},
 	} {
@@ -111,7 +111,7 @@ func TestAMistakeAfterAGapIsReportedFirst(t *testing.T) {
 		}
 	}
 	// control: the same queries without the mistake are refused for their gap
-	for _, q := range []string{`OPTIONAL MATCH (a:Package) RETURN a.name AS n`, `MATCH (a:Package) UNWIND [1, 2] AS x RETURN x`,
+	for _, q := range []string{`OPTIONAL MATCH (a:Package) RETURN a.name AS n`, `MATCH (a:Package) RETURN a {.name}, a`,
 		`MATCH (a:Package) RETURN CASE WHEN a.name THEN 1 END, a.name`, `MATCH ((a)-[:IMPORTS]->(b)){1,3} RETURN b AS c`} {
 		_, err := cypher.Compile(v, depsGraph, q)
 		var ce *cypher.Error

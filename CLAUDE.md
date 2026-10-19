@@ -838,6 +838,19 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   and refuses a call that doesn't bind an input, a negated call, and a counting caller of a
   projecting input relation (#139's multiplicity). Validate and module resolution (at `Check`) run
   the same lowering for its errors. `ArgSig.Input` marks the argument.
+- **A list is a value carried as its canonical JSON text** (`ns/list.go`, #283), as a path is: `ns.ListText`
+  writes it (a number in a unit as `{"num": 3.3, "unit": "V"}`, so it reads back as that number;
+  `ns.Path` shares the encoding), `ns.ParseList` reads it, and `ns.TypeList` (`?l: list`) marks a column,
+  read as text by coercion. `list(?x)` returns one (`[]` over nothing, `""` kept as a value), its
+  values sorted by `orderValues` then unit then spelling: equal numbers in two units tie in
+  `orderValues`, and with the unit written the tie showed arrival order (the corpus's paging store
+  found it). stdlib's `list.member`, `list.length` and `list.at` (`ListValues`, in `Register`) read
+  it, a non-list giving no row, and a list written in query text, whose `\"` the parser keeps, read
+  unescaped (`readList`). A rule can't build one other than through the aggregate (#1's stage 1, so
+  termination holds). The corpus collects edges into a list and reads it back from the goal
+  (`generator.lists`, `listRead`). Cypher's `collect`, `UNWIND`, `x IN l` (a value, property or
+  `$param` bound to a list's text), `size`, `head`, `last`, `l[i]` (`listIndex`) and list literals
+  of constants (`listConst`) compile to it; what's left names #405.
 - **`optional { body }` is lowered to rules before body aggregates are** (`optional.go`, #282),
   in every place they are (`evaluateOn`, `validateBound`, `ColumnKinds`, per module): `dom(S)` from
   the clause's positive literals not reading what the braces bind, `has(S)` (from `dom` only when

@@ -307,6 +307,20 @@ func (c *compiler) compileStage(in *stageIn, s stage, where expr) (projected, *E
 			}
 			continue
 		}
+		if u := rc.unwind; u != nil {
+			// UNWIND l AS x: a row per value, after the patterns that bind what l reads (#283)
+			c.cur = u.pos
+			l, err := c.value(u.e)
+			if err != nil {
+				return projected{}, err
+			}
+			if c.nodes[u.name] != nil || c.values[u.name] != "" {
+				return projected{}, errAt(u.pos, "%s is already bound", u.name)
+			}
+			c.addValue(u.name)
+			calls = append(calls, at(u.pos, frag{"list.member(", l, ", _, ?" + c.values[u.name] + ")"}))
+			continue
+		}
 		m := rc.match
 		var part *optPart
 		condsTo := &conds

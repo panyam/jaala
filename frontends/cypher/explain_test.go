@@ -118,8 +118,8 @@ func TestExplainSpeaksCypher(t *testing.T) {
 		t.Errorf("Explain of a spent budget:\n%s", got)
 	}
 
-	_, err = cypher.Compile(v, g, "MATCH (p:Package) UNWIND [1, 2] AS x RETURN x")
-	if got := cypher.Explain("MATCH (p:Package) UNWIND [1, 2] AS x RETURN x", cypher.Program{}, err); !strings.Contains(got, "jaala#283") ||
+	_, err = cypher.Compile(v, g, "MATCH (p:Package) SET p.license = 'x' RETURN p")
+	if got := cypher.Explain("MATCH (p:Package) SET p.license = 'x' RETURN p", cypher.Program{}, err); !strings.Contains(got, "jaala#287") ||
 		!strings.Contains(got, "line 1, column 19:") || !strings.Contains(got, "Write the query without it") {
 		t.Errorf("Explain of a gap:\n%s", got)
 	}

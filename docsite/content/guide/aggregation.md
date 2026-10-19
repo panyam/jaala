@@ -21,7 +21,7 @@ A group exists only when some row has its key, so a package with no tests has no
 
 {{ demo "demos/guide/aggregation-bindings-vs-values.yaml" }}
 
-`list` gathers a group's values, sorted the way answers are, and `list(distinct ?x)` drops the repeats.
+`list` gathers a group's values into a list, sorted the way answers are (by value, then unit, then spelling), and `list(distinct ?x)` drops the repeats. The list is a value: a JSON list such as `["cache","db"]`, which a rule can hand on and the [`list.*` functions]({{.Site.PathPrefix}}/reference/builtins/#lists) read ([#283](https://github.com/panyam/jaala/issues/283)). Until #283 it was the values joined by spaces.
 
 ## Numbers only
 
@@ -75,7 +75,7 @@ With no plain variables in the projection, the whole answer is a single group, a
 
 {{ demo "demos/guide/aggregation-body-count.yaml" }}
 
-That makes it the way to count zero, which a group in the projection or a rule's head can't. Over no bindings the value is what an aggregate over nothing answers: `count` and `sum` 0, `min`, `max` and `avg` absent, and `list` empty. It works in a rule as well as in the goal, so `util`, which imports nothing, has no heaviest import:
+That makes it the way to count zero, which a group in the projection or a rule's head can't. Over no bindings the value is what an aggregate over nothing answers: `count` and `sum` 0, `min`, `max` and `avg` absent, and `list` the empty list, `[]`. It works in a rule as well as in the goal, so `util`, which imports nothing, has no heaviest import:
 
 {{ demo "demos/guide/aggregation-body-rule.yaml" }}
 
@@ -88,4 +88,4 @@ A rule's head can aggregate, as in `fan_in(?q, count(?p)) :- imports(?p, ?q);`, 
 - It has to be its relation's only rule, since two rules each producing a count for the same key would give the key two counts.
 - Its body sits in a lower stratum than anything that reads the relation, the same as for `not`, so the count is never taken over a relation that's still growing. jaala refuses a cycle through an aggregating rule for the same reason it refuses one through `not`.
 
-Its aggregate column reports a type whenever the function decides one: a number for `count`, text for `list`, and a number for `sum`, `avg`, `min` and `max` over a column already typed as a number. Over an untyped column those four stay untyped.
+Its aggregate column reports a type whenever the function decides one: a number for `count`, a list for `list`, and a number for `sum`, `avg`, `min` and `max` over a column already typed as a number. Over an untyped column those four stay untyped.

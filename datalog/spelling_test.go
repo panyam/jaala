@@ -95,8 +95,8 @@ func TestAnAnswerWritesAPlainNumberCanonically(t *testing.T) {
 	if got := col(eval(t, src, `m(_, ?v) => ?v`), "v"); got != "0,1,1.5,3.3V" {
 		t.Errorf("values: %q, want 0,1,1.5,3.3V (1.0 and 1 one row)", got)
 	}
-	if got := col(eval(t, src, `m(?k, ?v), ?k = "a" => list(?v)`), "list(v)"); got != "1.5" {
-		t.Errorf("list: %q, want 1.5", got)
+	if got := col(eval(t, src, `m(?k, ?v), ?k = "a" => list(?v)`), "list(v)"); got != "[1.5]" {
+		t.Errorf("list: %q, want [1.5]", got)
 	}
 	v := std(src)
 	rows, err := both(mustParse(t, `m("a", ?v) => ?v`), baseFor(v), Witnesses())

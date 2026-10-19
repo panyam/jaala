@@ -51,7 +51,7 @@ func TestEveryAggregateFunctionInARuleHead(t *testing.T) {
 	if !reflect.DeepEqual(rule, goal) {
 		t.Errorf("rule %v, goal %v; want the same rows", rule, goal)
 	}
-	if want := "U1 1 3 6 1 2 3 3"; len(rule) != 4 || rule[3] != want {
+	if want := "U1 1 3 6 [1,2,3] 3"; len(rule) != 4 || rule[3] != want {
 		t.Errorf("U1's row %v, want %q", rule, want)
 	}
 }
@@ -229,7 +229,7 @@ func TestAnAggregateColumnsType(t *testing.T) {
 	q := mustParse(t, `stats(?r, count(?n), list(?n), sum(?v), min(?n)) :- pin(?r, ?n, _), ohms(?r, ?v); `+
 		`stats(?r, ?c, ?l, ?s, ?m) => ?c, ?l, ?s, ?m`)
 	got, err := ColumnKinds(q, std(netlist()))
-	want := []ColumnKind{{Type: ns.TypeNumber}, {Type: ns.TypeString}, {Type: ns.TypeNumber, Unit: "ohm"}, {Type: ns.TypeNumber}}
+	want := []ColumnKind{{Type: ns.TypeNumber}, {Type: ns.TypeList}, {Type: ns.TypeNumber, Unit: "ohm"}, {Type: ns.TypeNumber}}
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Errorf("%+v, %v; want %+v", got, err, want)
 	}
@@ -282,7 +282,7 @@ mpnmean(?n: net, avg(?m)) :- component.net(?c, ?n), component.mpn(?c, ?m);
 		inferred bool
 	}{
 		"net.covered": {"net.covered(n: net, arg1: number)", false},
-		"net.classes": {"net.classes(n: net, arg1: string)", false},
+		"net.classes": {"net.classes(n: net, arg1: list)", false},
 		"net.peak":    {"net.peak(n: net, arg1: number[V])", false},
 		// control: sum over an untyped column is still a number, but in a unit nobody stated.
 		"net.mpns":    {"net.mpns(n: net, arg1: number)", true},
@@ -299,5 +299,41 @@ mpnmean(?n: net, avg(?m)) :- component.net(?c, ?n), component.mpn(?c, ?m);
 		if e.Args[0].Inferred {
 			t.Errorf("%s's declared argument is marked inferred", path)
 		}
+	}
+}
+
+// A list's values are in a total order: 0 and 0 V tie by value, and the list writes the unit, so they go
+// by unit then spelling whatever order they arrive in; and "" is a value a list keeps (#283).
+func TestAListIsTheSameWhateverOrderItsValuesArriveIn(t *testing.T) {
+	vals := []ns.Value{ns.NU(0, "V"), ns.N(0), ns.S(""), ns.S("a")}
+	var lists []string
+	for _, order := range [][]int{{0, 1, 2, 3}, {3, 2, 1, 0}, {1, 0, 3, 2}} {
+		src := ns.NewMemSource().Declare("v", "x")
+		for _, i := range order {
+			src.Add("v", ns.Tuple{Vals: []ns.Value{vals[i]}})
+		}
+		lists = append(lists, col(eval(t, src, `v(?x) => list(?x)`), "list(x)"))
+	}
+	want := `[0,{"num":0,"unit":"V"},"","a"]`
+	for _, l := range lists {
+		if l != want {
+			t.Errorf("lists %v, want each %s", lists, want)
+			break
+		}
+	}
+}
+
+// A rule head can declare a list column, and a list typed column reads a constant as text.
+func TestAListColumnIsDeclaredAndReadAsText(t *testing.T) {
+	src := ns.NewMemSource().Declare("v", "g", "x")
+	for _, r := range [][2]string{{"g", "a"}, {"g", "b"}} {
+		src.Add("v", ns.Tuple{Vals: []ns.Value{ns.S(r[0]), ns.S(r[1])}})
+	}
+	sig, err := ColumnKinds(mustParse(t, `l(?g, ?xs: list) :- w(?g, ?xs); w(?g, list(?x)) :- v(?g, ?x); l(?g, ?xs) => ?xs`), std(src))
+	if err != nil || len(sig) != 1 || sig[0].Type != ns.TypeList {
+		t.Errorf("%+v, %v; want a list", sig, err)
+	}
+	if got := col(eval(t, src, `w(?g, list(?x)) :- v(?g, ?x); w(?g, ?xs), ?xs = "[\"a\",\"b\"]" => ?g`), "g"); got != "" {
+		t.Errorf("a list compared with its text as written, quotes escaped: %q (the text keeps its backslashes, so it's no match)", got)
 	}
 }

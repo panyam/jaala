@@ -228,7 +228,7 @@ func TestOneValueKeepsOneAnnotationWhicheverDerivationCameFirst(t *testing.T) {
 		// a group's key
 		{`weight(?n, ?w) => ?w, count(?n)`, "w", "9[A]"},
 		// a distinct list's value
-		{`weight(?n, ?w) => list(distinct ?w)`, "list(distinct w)", "9"},
+		{`weight(?n, ?w) => list(distinct ?w)`, "list(distinct w)", `[{"num":9,"unit":"A"}]`},
 		// a body aggregate's minimum, whose witness names the value
 		{`r0(?w, ?n) :- weight(?n, ?w); node(?n), ?m = min(?w) : { r0(?x, ?n), weight(?y, ?w), ?y != "v2" } => ?n, ?m`, "m", "9[A],9[A]"},
 	} {

@@ -229,6 +229,20 @@ func (p *parser) query() (query, *Error) {
 			}
 			m.optional = optional
 			cur.clauses = append(cur.clauses, readClause{match: &m})
+		case t.is("UNWIND"):
+			p.i++
+			e, err := p.expr()
+			if err != nil {
+				return q, err
+			}
+			if err := p.expect("AS", "AS after UNWIND's list"); err != nil {
+				return q, err
+			}
+			name, err := p.name("a name after AS")
+			if err != nil {
+				return q, err
+			}
+			cur.clauses = append(cur.clauses, readClause{unwind: &unwindClause{pos: t.pos, e: e, name: name}})
 		case t.is("CALL"):
 			p.i++
 			cc, err := p.callClause(t.pos)
@@ -1002,7 +1016,11 @@ func (p *parser) postfix() (expr, *Error) {
 				e = call{pos: c.pos, name: splitIndex, args: append(c.args, idx)}
 				continue
 			}
-			e = p.refuse(gapLists.at(t.pos, "indexing or slicing a value"))
+			if index {
+				e = call{pos: t.pos, name: listIndex, args: []expr{e, idx}} // l[i] (#283)
+				continue
+			}
+			e = p.refuse(gapLists.at(t.pos, "slicing a list"))
 		case t.sym("{"):
 			if _, ok := e.(varRef); !ok {
 				return e, nil
@@ -1019,6 +1037,9 @@ func (p *parser) postfix() (expr, *Error) {
 
 // splitIndex is split(s, sep)[i], the part str.split answers at an index.
 const splitIndex = "split[]"
+
+// listIndex names l[i] as a call, l and i its arguments (#283).
+const listIndex = "[]"
 
 func (p *parser) atom() (expr, *Error) {
 	t := p.peek()

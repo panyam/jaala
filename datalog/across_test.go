@@ -395,7 +395,7 @@ func TestAcrossAggregatesPerSegment(t *testing.T) {
 		// Distinct counts keep their own seen values per segment: C1 counts once in 3, where it holds twice.
 		{`pin(?p, _) => count(distinct ?p)`, []string{"0 [{0 1}]", "2 [{1 2} {4 5}]", "3 [{2 4}]"}},
 		// A list keeps its own values per segment too.
-		{`pin(?p, "GND") => list(?p)`, []string{" [{0 1}]", "C1 R1 [{4 5}]", "C1 R1 R2 [{3 4}]", "R1 [{1 2}]", "R1 R2 [{2 3}]"}},
+		{`pin(?p, "GND") => list(?p)`, []string{`["C1","R1","R2"] [{3 4}]`, `["C1","R1"] [{4 5}]`, `["R1","R2"] [{2 3}]`, `["R1"] [{1 2}]`, "[] [{0 1}]"}},
 		{`n(?n, count(?p)) :- pin(?p, ?n); n(?n, ?c), ?c > 1 => ?n, ?c`, []string{"GND 2 [{2 3} {4 5}]", "GND 3 [{3 4}]"}},
 		{`m(?n, ?c) :- pin(_, ?n), ?c = count(?p) : { pin(?p, ?n) }; m(?n, ?c), ?c > 1 => ?n, ?c`, []string{"GND 2 [{2 3} {4 5}]", "GND 3 [{3 4}]"}},
 	} {
@@ -445,7 +445,7 @@ func TestAcrossSplitsAListApart(t *testing.T) {
 	for _, r := range rows {
 		got = append(got, fmt.Sprintf("%s %v", r.Bind["list(x)"].S, slices.Collect(r.Versions.Ranges())))
 	}
-	if want := []string{"a b c d [{0 1}]", "a b c e [{1 2}]"}; !slices.Equal(got, want) {
+	if want := []string{`["a","b","c","d"] [{0 1}]`, `["a","b","c","e"] [{1 2}]`}; !slices.Equal(got, want) {
 		t.Errorf("got %v, want %v", got, want)
 	}
 }

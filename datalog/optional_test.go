@@ -385,7 +385,7 @@ func TestAnOptionalsAbsentReadsAsAbsentAnywhere(t *testing.T) {
 		{opt + ` => min(?w)`, "min(w)", "4"},
 		{opt + ` => max(?w)`, "max(w)", "5"},
 		{opt + ` => avg(?w)`, "avg(w)", "4.5"},
-		{opt + ` => list(?w)`, "list(w)", "4 5"},
+		{opt + ` => list(?w)`, "list(w)", "[4,5]"},
 		{opt + `, ?w < 10 => ?n`, "n", "d,x"},
 		{opt + `, ?w != 4 => ?n`, "n", "a,b,c,x"},
 		{opt + `, absent(?w) => ?n`, "n", "a,b,c"},

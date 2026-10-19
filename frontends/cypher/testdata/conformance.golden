@@ -120,7 +120,7 @@ MATCH (a:Package) WHERE a.name = 'app' RETURN a
   -> pkg(?a, _), ?a = "app" => ?a
 
 MATCH (a:Package) WHERE size(a.name) > 0x02 AND size(a.name) < 0o17 RETURN a
-  -> at 1:25 cypher: not supported yet: lists and maps as values (jaala#283): size()
+  -> pkg(?a, _), list.length(?a) > 2, list.length(?a) < 15 => ?a
 
 MATCH (a:Package)<-->(b) RETURN b
   -> cypher_step1(?x, ?y) :- imports(?x, ?y);
@@ -208,67 +208,68 @@ MATCH (a:Package) OPTIONAL MATCH (a)-[:IMPORTS]->(b) WHERE b.license = 'MIT' RET
   -> pkg(?a, _), optional { imports(?a, ?b), pkg(?b, ?b_license), ?b_license = "MIT" } => ?a, ?b
 
 MATCH (a:Package) UNWIND [1, 2] AS x RETURN a, x
-  -> at 1:19 cypher: not supported yet: lists and maps as values (jaala#283): UNWIND
+  -> pkg(?a, _), list.member("[1,2]", _, ?x) => ?a, ?x
 
 UNWIND $names AS n MATCH (a:Package {name: n}) RETURN a
-  -> at 1:1 cypher: not supported yet: lists and maps as values (jaala#283): UNWIND
+  -> pkg(?a, _), list.member(?names, _, ?n), ?a = ?n => ?a
 
 MATCH (a:Package) WHERE a.name IN $names RETURN a
-  -> at 1:32 cypher: not supported yet: lists and maps as values (jaala#283): IN over anything but a list written in the query
+  -> pkg(?a, _), list.member(?names, _, ?a) => ?a
 
 MATCH (a:Package) RETURN a {.name, .license}
-  -> at 1:28 cypher: not supported yet: lists and maps as values (jaala#283): a map projection
+  -> at 1:28 cypher: not supported yet: these lists and maps (jaala#405): a map projection
 
 MATCH (a:Package) RETURN a {.*, imports: count { (a)-->() }}
-  -> at 1:28 cypher: not supported yet: lists and maps as values (jaala#283): a map projection
+  -> at 1:28 cypher: not supported yet: these lists and maps (jaala#405): a map projection
 
 MATCH (a:Package) RETURN [x IN [1, 2, 3] WHERE x > 1 | x * 2] AS xs
-  -> at 1:26 cypher: not supported yet: lists and maps as values (jaala#283): a list comprehension
+  -> at 1:26 cypher: not supported yet: these lists and maps (jaala#405): a list comprehension
 
 MATCH (a:Package) RETURN [(a)-[:IMPORTS]->(b) | b.name] AS imported
-  -> at 1:26 cypher: not supported yet: lists and maps as values (jaala#283): a pattern comprehension
+  -> at 1:26 cypher: not supported yet: these lists and maps (jaala#405): a pattern comprehension
 
 MATCH (a:Package) RETURN [(a)-[:IMPORTS]->(b) WHERE b.license = 'MIT' | b.name] AS mit
-  -> at 1:26 cypher: not supported yet: lists and maps as values (jaala#283): a pattern comprehension
+  -> at 1:26 cypher: not supported yet: these lists and maps (jaala#405): a pattern comprehension
 
 MATCH (a:Package) RETURN [x IN [1, 2]] AS xs
-  -> at 1:26 cypher: not supported yet: lists and maps as values (jaala#283): a list comprehension
+  -> at 1:26 cypher: not supported yet: these lists and maps (jaala#405): a list comprehension
 
 MATCH (a:Package) WHERE all(x IN [1, 2] WHERE x > 0) RETURN a
-  -> at 1:25 cypher: not supported yet: lists and maps as values (jaala#283): all(x IN ...), a predicate over a list
+  -> at 1:25 cypher: not supported yet: these lists and maps (jaala#405): all(x IN ...), a predicate over a list
 
 MATCH (a:Package) WHERE any(x IN ['app'] WHERE x = a.name) AND none(y IN [] WHERE y = 1) AND single(z IN [1] WHERE z = 1) RETURN a
-  -> at 1:25 cypher: not supported yet: lists and maps as values (jaala#283): any(x IN ...), a predicate over a list
+  -> at 1:25 cypher: not supported yet: these lists and maps (jaala#405): any(x IN ...), a predicate over a list
 
 MATCH (a:Package) RETURN reduce(total = 0, x IN [1, 2, 3] | total + x) AS sum
-  -> at 1:26 cypher: not supported yet: lists and maps as values (jaala#283): reduce
+  -> at 1:26 cypher: not supported yet: these lists and maps (jaala#405): reduce
 
 MATCH (a:Package) RETURN [1, 2, 3][0], [1, 2, 3][1..2], [1, 2][..1], [1, 2][1..]
-  -> at 1:35 cypher: not supported yet: lists and maps as values (jaala#283): indexing or slicing a value
+  -> at 1:49 cypher: not supported yet: these lists and maps (jaala#405): slicing a list
 
 MATCH (a:Package) RETURN a[$key]
-  -> at 1:27 cypher: not supported yet: lists and maps as values (jaala#283): indexing or slicing a value
+  -> pkg(?a, _), ?_c = list.at(?a, ?key) => ?_c
 
 MATCH (a:Package) RETURN {name: a.name, license: a.license} AS m
-  -> at 1:26 cypher: not supported yet: lists and maps as values (jaala#283): a map
+  -> at 1:26 cypher: not supported yet: these lists and maps (jaala#405): a map
 
 MATCH (a:Package) RETURN {name: a.name}.name
-  -> at 1:26 cypher: not supported yet: lists and maps as values (jaala#283): a map
+  -> at 1:26 cypher: not supported yet: these lists and maps (jaala#405): a map
 
 MATCH (a:Package) WITH collect(a) AS ps RETURN size(ps)
-  -> at 1:48 cypher: not supported yet: lists and maps as values (jaala#283): size()
+  -> cypher_with1(list(?a)) :- pkg(?a, _);
+cypher_with1(?ps), ?_c = list.length(?ps) => ?_c
 
 MATCH (a:Package) RETURN COLLECT { MATCH (a)-->(b) RETURN b.name } AS names
-  -> at 1:26 cypher: not supported yet: lists and maps as values (jaala#283): a COLLECT { } subquery
+  -> at 1:26 cypher: not supported yet: these lists and maps (jaala#405): a COLLECT { } subquery
 
 MATCH (a:Package) RETURN labels(a)
-  -> at 1:26 cypher: not supported yet: lists and maps as values (jaala#283): labels()
+  -> at 1:26 cypher: not supported yet: these lists and maps (jaala#405): labels()
 
 MATCH (a:Package $props) RETURN a
-  -> at 1:18 cypher: not supported yet: lists and maps as values (jaala#283): a map parameter as a node's properties
+  -> at 1:18 cypher: not supported yet: these lists and maps (jaala#405): a map parameter as a node's properties
 
 FOREACH (x IN [1, 2] | CREATE (:Package {name: x}))
-  -> at 1:1 cypher: not supported yet: lists and maps as values (jaala#283): FOREACH
+  -> at 1:1 cypher: not supported yet: these lists and maps (jaala#405): FOREACH
 
 MATCH (a:Package) RETURN trim(a.name)
   -> at 1:26 cypher: not supported yet: this function (jaala#284): trim()
