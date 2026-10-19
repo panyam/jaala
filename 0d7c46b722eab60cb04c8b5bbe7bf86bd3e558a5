@@ -1,0 +1,9 @@
+selfcheck: pass
+ran: 20261019T221758Z, 21m39s on Darwin arm64, go1.27.2
+seeds: 5000, fuzz: 30s, cypher fuzz: 2m
+log: /Users/sri/.cache/jaala/selfcheck/0d7c46b-20261019T221758Z.log
+== generated programs: 5000 seeds
+== work against baselines
+== fuzzed query text: 30s per target, the Cypher compiler 2m
+== Soufflé differential: 5000 seeds
+== llama.cpp keeps a model to nl's grammar
