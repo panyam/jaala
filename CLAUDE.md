@@ -30,7 +30,13 @@ stores, which is why it was split (#320).
 work baselines, fuzzing, the same 5000 seeds against Soufflé when `souffle` is on PATH, and a real
 `llama-server` under nl's grammar when `make llama` has fetched it (each prints "could not run"
 otherwise). The corpus step takes about 5.5 minutes alone and runs under `-timeout 30m`, as the
-Soufflé step does (#381: under a load near 28 it passed go test's default 10 and failed). `make setup` installs both. Every Makefile recipe is a one-line call into `scripts/`
+Soufflé step does (#381: under a load near 28 it passed go test's default 10 and failed). `make setup` installs both.
+`make selfcheck` runs it on a commit (`REF`, default `origin/main`; `SEEDS`, `FUZZ`, `CYPHER_FUZZ` for a
+bigger run) in a worktree of its own, in the foreground with its log teed to `~/.cache/jaala/selfcheck/`,
+and records the result as a git note on that commit (`refs/notes/selfcheck`, pushed unless `NOPUSH`).
+`make selfcheck-status` reads the notes: the last pass on `main`, a failure since with the `git bisect
+start` that brackets it, and whether a run is due, which is once five PRs have merged since the last
+pass (`EVERY`). CI checks every PR; selfcheck runs on that cadence rather than per PR. Every Makefile recipe is a one-line call into `scripts/`
 (after mcpkit's): put a new target's shell there, never in the recipe. CI (`.github/workflows/ci.yml`) runs the set below, and a
 separate `souffle` job installs Soufflé 2.5's release `.deb` and compares 1000 seeds; all must pass:
 
@@ -1053,8 +1059,8 @@ unless `sliced`, and counts what it `shipped`. `pushing` (a
 
 ## Releasing
 
-Merge the PR, then start the CI set and `./selfcheck.sh` on the merged `main` (PRs that merged
-together were never tested together). The owner picks the version; so far releases are patch bumps
+Merge the PR, then start the CI set on the merged `main` (PRs that merged together were never
+tested together), and `make selfcheck` when `make selfcheck-status` says one is due. The owner picks the version; so far releases are patch bumps
 on v0.1.x, breaking changes included, pre-1.0, and a tag needn't wait for the checks: when they
 fail, fix it and tag the next patch. agni consumes tags only (`go get github.com/panyam/jaala@vX`),
 never a `replace`.
@@ -1135,7 +1141,7 @@ its `bench/external`, declaire#255: 2m44s on stores against 4.6s on mem) reopene
 at a filter, 14.6s; #293 (v0.1.57) ranked an all-free generator after held relations, 3.6s, under
 mem's 3.3s. #297 (v0.1.57) lets a store take `str.glob` with a push (`ns.FilterSource`), which x05
 needs Declaire to implement. All 18 jaala tickets closed. The earlier four are closed too: `mission_selfcheck` (#86, at v0.1.29) left `./selfcheck.sh` as the check to
-run on `main` after every merge and before every tag; `mission_docsite` (#104) left the docs site
+run on `main` (now every five merged PRs, `make selfcheck-status`); `mission_docsite` (#104) left the docs site
 with every example run by the engine; `mission_aggregate_answers` (#172, at v0.1.42) left Soufflé
 checking every aggregate program but `list`; and `mission_browser_memory` (#193, closed with agni
 #896) left the `Memory` benchmark's peak heap in use (not `B/op`, which the join's short-lived
@@ -1153,16 +1159,16 @@ Another session may tag a release while your PR is open: v0.1.65 shipped `nl` at
 Stacked PRs (each branched off the one below, its base that branch) review and merge in order, and
 GitHub retargets the next to `main` when its base merges; confirm each merge commit is an ancestor of
 `origin/main` before deleting branches. Merged first, the upper PR lands in the lower's branch, not
-`main` (#275 did): its issue stays open until the lower PR merges, and is closed by hand then. Run each branch's `./selfcheck.sh` in a detached worktree
-(`git worktree add --detach <dir> <branch>`) so the checkout stays free for the next branch, and
-remove the worktree after. A selfcheck run on the working tree while editing it tests half-written
+`main` (#275 did): its issue stays open until the lower PR merges, and is closed by hand then. A branch whose change the corpus or fuzzing should see at
+full size gets `make selfcheck REF=<branch>`, which makes the detached worktree itself, so the checkout
+stays free for the next branch. A selfcheck run on the working tree while editing it tests half-written
 code, and so does one whose tree gets a scratch test dropped in (a before/after capture belongs in
 another worktree). Run it in the background as `./selfcheck.sh > log 2>&1` with nothing after it: a trailing
 `; echo exit $?` made the task report 0 for a selfcheck that failed (#209's, which found #273).
 When several branches are in flight (parallel agents), run their selfchecks one at a time, and
 timings only on an otherwise idle machine; never `pkill -f selfcheck.sh`, which kills every run on
-the machine (#220's agent did). A branch rebased onto a moved `main` gets its selfcheck again, and
-so does `main` when two PRs branched from one base merge together (#305 and #306 did). Another
+the machine (#220's agent did). When two PRs branched from one base merge together (#305 and #306
+did), the next due run on `main` is the first that tests them together, so don't let it slip. Another
 session may be running one too: `selfcheck.sh` waits for it on its own (a lock directory under
 `~/.cache/jaala`, `JAALA_SELFCHECK_LOCK`). The `pgrep` loop it replaced matched its own shell and
 waited forever.
