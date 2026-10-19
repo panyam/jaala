@@ -39,6 +39,28 @@ type Result struct {
 // FirstTry reports whether the case passed with the first draft.
 func (r Result) FirstTry() bool { return r.Pass && len(r.Trace.Tries) == 1 }
 
+// Class sorts a failed case by what went wrong (ClassGrounding and the rest), "" for one that
+// passed: the budget when it ran out, the last try's class when Translate failed, and semantics for a
+// program that answered the wrong rows.
+func (r Result) Class() string {
+	var bs *BudgetSpent
+	switch {
+	case r.Pass:
+		return ""
+	case errors.As(r.Err, &bs):
+		return ClassBudget
+	case len(r.Trace.Tries) == 0:
+		return ClassModel
+	}
+	if c := r.Trace.Tries[len(r.Trace.Tries)-1].Class(); c != "" {
+		return c
+	}
+	if r.Err != nil {
+		return ClassConstruct // the program Translate accepted failed evaluating over the case's Base
+	}
+	return ClassSemantics
+}
+
 // A Report scores a translator over a set of Cases: how many passed, on the first try and after
 // retries, what the tries cost, and what the refused tries were refused for.
 type Report struct {
@@ -47,7 +69,10 @@ type Report struct {
 	Tries                  int
 	// Steps counts the actions the models asked for (Options.Actions), whose tokens and latency are
 	// in the totals beside the tries'.
-	Steps                             int
+	Steps int
+	// Votes counts the extra drafts Options.Vote drew, whose tokens and latency are in the totals
+	// too, and Escalations the answers moved on from for agreeing too little.
+	Votes, Escalations                int
 	TokensIn, TokensOut, TokensCached int
 	Latency                           time.Duration
 	// Refused counts the refused tries by Kind. Checked counts those refused with a
@@ -55,6 +80,8 @@ type Report struct {
 	// of check errors a model was told how to fix.
 	Refused        map[string]int
 	Checked, Fixed int
+	// Failures counts the cases that failed by Result.Class.
+	Failures map[string]int
 }
 
 // Eval runs each case's question through translate and scores its answer over b (#326). translate is
@@ -63,7 +90,7 @@ type Report struct {
 // evaluated over b with the planned SemiNaive. A case that fails, in translate or evaluating, fails
 // alone: Eval always scores every case, and stops early only when ctx is done.
 func Eval(ctx context.Context, cases []Case, b *datalog.Base, translate func(ctx context.Context, question string) (Program, Trace, error)) Report {
-	rep := Report{Refused: map[string]int{}}
+	rep := Report{Refused: map[string]int{}, Failures: map[string]int{}}
 	for _, c := range cases {
 		if ctx.Err() != nil {
 			break
@@ -90,6 +117,20 @@ func (rep *Report) add(res Result) {
 		if res.FirstTry() {
 			rep.PassedFirstTry++
 		}
+	}
+	if c := res.Class(); c != "" {
+		if rep.Failures == nil {
+			rep.Failures = map[string]int{}
+		}
+		rep.Failures[c]++
+	}
+	rep.Escalations += len(res.Trace.Escalations)
+	for _, t := range res.Trace.Votes {
+		rep.Votes++
+		rep.TokensIn += t.TokensIn
+		rep.TokensOut += t.TokensOut
+		rep.TokensCached += t.TokensCached
+		rep.Latency += t.Latency
 	}
 	for _, s := range res.Trace.Steps {
 		rep.Steps++
@@ -226,6 +267,12 @@ func (rep Report) String() string {
 	steps := ""
 	if rep.Steps > 0 {
 		steps = fmt.Sprintf(" and %d steps", rep.Steps)
+	}
+	if rep.Votes > 0 {
+		steps += fmt.Sprintf(", %d votes", rep.Votes)
+	}
+	if rep.Escalations > 0 {
+		steps += fmt.Sprintf(", %d escalated", rep.Escalations)
 	}
 	fmt.Fprintf(&b, "passed %d/%d%s, %d on the first try; %d tries%s, tokens %d in (%d cached), %d out\n",
 		rep.Passed, n, in, rep.PassedFirstTry, rep.Tries, steps, rep.TokensIn, rep.TokensCached, rep.TokensOut)

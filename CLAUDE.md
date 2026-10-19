@@ -104,7 +104,15 @@ GOARCH=wasm go test ./ns` (#417 ran `ns` that way).
   answer: each is a `Trace.Steps` entry, not a `Try`, so first-try counts answers, and the grammar
   wraps the draft's (`actionGrammar` renames its root `program`). The loop is language-blind: `try`
   runs through the front end, and a front end that is an `nl.Prober` (Cypher's) writes `look` and
-  `values` in its terms. Off by default, so `TestEval`'s goldens don't move.
+  `values` in its terms. Off by default, so `TestEval`'s goldens don't move. `find NAME` asks the
+  Grounder mid-loop, offered only when there is one. `Options.Vote` (`vote.go`) draws more answers
+  once one is accepted, each with `Prompt.Draw` (nlmodels seeds by it; at temperature 0 a vote agrees
+  by construction), keeps the rows most agree on (`voteKey`, a refused draft agreeing with nothing),
+  and sets `Program.Confidence`; `Options.Escalate` moves a disputed answer to the fallback, keeping it
+  if nothing better comes (`Trace.Escalations`); `Options.Budget` caps tokens and time
+  (`*BudgetSpent`). `Try.Class` and `Result.Class` sort failures as grounding, construct,
+  semantics, budget or model, reading a `CheckError` before `KindAnswer`, since datalog's order-by
+  kind is spelled `answer` too; `Report.Failures` counts them, outside `String`, so goldens hold.
 - **`nl.Grammar()` is GBNF built from a rule table** (`frontends/nl/grammar.go`, #323), and every text it
   accepts must parse: `TestEveryProgramTheGrammarWritesParses` samples 21,000 programs from the table
   over 70 seeds and every depth (one seed alone missed `-(9)` as a column). The other direction lives

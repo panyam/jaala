@@ -26,7 +26,9 @@ type Client struct {
 	Model string
 	// MaxTokens caps a reply's length (Ollama's num_predict); 512 by default.
 	MaxTokens int
-	// Temperature is sent as is. The default 0 decodes greedily, so a Trace repeats.
+	// Temperature is sent as is. The default 0 decodes greedily, so a Trace repeats, and an nl.Vote's
+	// drafts agree by construction: a vote wants a temperature above 0, and each of its drafts is
+	// seeded by its Draw.
 	Temperature float64
 	// HTTP sends the requests; http.DefaultClient by default.
 	HTTP *http.Client
@@ -53,6 +55,7 @@ type request struct {
 	Options  struct {
 		Temperature float64 `json:"temperature"`
 		NumPredict  int     `json:"num_predict,omitempty"`
+		Seed        int     `json:"seed,omitempty"`
 	} `json:"options"`
 }
 
@@ -70,7 +73,7 @@ func (c *Client) Complete(ctx context.Context, p nl.Prompt) (nl.Completion, erro
 		return nl.Completion{}, fmt.Errorf("ollama: no model named")
 	}
 	req := request{Model: c.Model}
-	req.Options.Temperature, req.Options.NumPredict = c.Temperature, c.MaxTokens
+	req.Options.Temperature, req.Options.NumPredict, req.Options.Seed = c.Temperature, c.MaxTokens, p.Draw
 	if p.Prefix != "" {
 		req.Messages = append(req.Messages, message{"system", p.Prefix})
 	}

@@ -28,6 +28,10 @@ type Prompt struct {
 	// Turns start with the question (and any grounded names), then alternate the model's drafts and
 	// what was wrong with each.
 	Turns []Turn
+	// Draw is which of a Vote's extra drafts this prompt asks for, from 1, and 0 for every other
+	// prompt. A Model that samples should vary its seed by it: asked the same prompt alike, a greedy
+	// decoder writes the same draft, and the vote agrees by construction.
+	Draw int
 	// Grammar is GBNF holding the reply to a program over the vocabulary (GrammarFor, #324), for a
 	// Model whose decoder takes one, as nlmodels' llama.cpp client does. A Model that can't use it
 	// ignores it: every draft is checked anyway, so the grammar only saves tries. "" when
@@ -100,6 +104,18 @@ type Options struct {
 	// Actions, when set, let a model look at the vocabulary and the data, and try drafts, before it
 	// answers (#393). The grammar sent becomes the actions' around the draft's.
 	Actions *Actions
+	// Vote, when set, draws more answers once a model has answered, and keeps the one most of them
+	// agree with (#393). Program.Confidence says how many agreed.
+	Vote *Vote
+	// Escalate, when above 0, moves an answer whose drafts agree less than this share
+	// (Confidence.Agreement) on to Fallback, recorded in Trace.Escalations. When the fallback answers
+	// nothing better, Translate returns the first such answer rather than failing. It needs a Vote:
+	// without one every answer agrees with itself.
+	Escalate float64
+	// Budget caps the tokens and time Translate spends on the question.
+	Budget Budget
+
+	grounder Grounder // the Grounder a find action asks
 }
 
 // A Program is what Translate accepted: its text, as the model wrote it less any Markdown fence, the
@@ -112,6 +128,8 @@ type Program struct {
 	// Language is the front end's the model wrote Text in, "" for jaala's, and Compiled the jaala
 	// program Text compiled to, which Query parses.
 	Language, Compiled string
+	// Confidence is what Translate knows about how far to trust it.
+	Confidence Confidence
 }
 
 // A Trace is every try Translate made, in order, whether or not one was accepted.
@@ -119,6 +137,10 @@ type Trace struct {
 	Tries []Try
 	// Steps are the actions the models asked for before answering (Options.Actions), in order.
 	Steps []Step
+	// Votes are the extra drafts Options.Vote drew, in order, each judged as an answer is.
+	Votes []Try
+	// Escalations are the answers moved on from for agreeing too little (Options.Escalate).
+	Escalations []Escalation
 }
 
 // A Try is one draft: the model, its text, why it was refused (nil and "" when accepted), what it cost
@@ -174,13 +196,15 @@ const instructions = `
 // then wraps the last try's.
 func Translate(ctx context.Context, question string, v *ns.Vocabulary, g Grounder, m Model, o Options) (Program, Trace, error) {
 	var tr Trace
+	if o.Pack != nil && g == nil {
+		g = o.Pack.Grounder
+	}
+	o.grounder = g
 	prefix, err := promptPrefix(v, o)
 	if err != nil {
 		return Program{}, tr, err
 	}
-	if o.Pack != nil && g == nil {
-		g = o.Pack.Grounder
-	}
+	spend := &spending{budget: o.Budget, start: time.Now()}
 	ask := question
 	if g != nil {
 		cands, err := g.Ground(ctx, question)
@@ -208,13 +232,14 @@ func Translate(ctx context.Context, question string, v *ns.Vocabulary, g Grounde
 	}
 	answerGrammar := grammar
 	if o.Actions != nil {
-		grammar = actionGrammar(grammar)
+		grammar = actionGrammar(grammar, g != nil)
 	}
 	models := []Model{m}
 	if o.Fallback != nil {
 		models = append(models, o.Fallback)
 	}
 	var last error
+	var held *Program // an answer escalated past, kept in case nothing better comes
 	for k, model := range models {
 		turns := []Turn{{RoleUser, ask}}
 		if k > 0 && errors.Is(last, errEmpty) {
@@ -228,11 +253,15 @@ func Translate(ctx context.Context, question string, v *ns.Vocabulary, g Grounde
 			if err := ctx.Err(); err != nil {
 				return Program{}, tr, err
 			}
+			if err := spend.check(); err != nil {
+				return Program{}, tr, err
+			}
 			g, oo := grammar, o
 			if o.Actions != nil && steps >= o.Actions.steps() {
 				g, oo.Actions = answerGrammar, nil // out of steps: the next reply is the answer
 			}
 			try, p, err := draft(ctx, model, Prompt{Prefix: prefix, Turns: turns, Grammar: g}, v, oo, refused)
+			spend.add(try.TokensIn, try.TokensOut)
 			if errors.Is(err, errAction) {
 				result := try.result
 				if asked[try.Text] {
@@ -251,6 +280,23 @@ func Translate(ctx context.Context, question string, v *ns.Vocabulary, g Grounde
 			t++
 			tr.Tries = append(tr.Tries, try)
 			if err == nil {
+				p.Confidence = Confidence{Drawn: 1, Agreed: 1, Ran: o.Base != nil, Judged: o.Pack != nil && o.Pack.Check != nil, Steps: steps}
+				if o.Vote != nil {
+					var votes []Try
+					conf := p.Confidence
+					p, votes = vote(ctx, model, Prompt{Prefix: prefix, Turns: turns, Grammar: answerGrammar}, p, v, o, spend)
+					conf.Drawn, conf.Agreed = p.Confidence.Drawn, p.Confidence.Agreed
+					p.Confidence = conf
+					tr.Votes = append(tr.Votes, votes...)
+				}
+				if o.Escalate > 0 && p.Confidence.Agreement() < o.Escalate && k < len(models)-1 {
+					tr.Escalations = append(tr.Escalations, Escalation{Model: model.Name(), Text: p.Text, Confidence: p.Confidence})
+					if held == nil {
+						held = &p
+					}
+					last = errLowAgreement
+					break
+				}
 				return p, tr, nil
 			}
 			last = err
@@ -269,8 +315,14 @@ func Translate(ctx context.Context, question string, v *ns.Vocabulary, g Grounde
 			turns = append(turns, Turn{RoleModel, try.Text}, Turn{RoleUser, strings.TrimRight(try.explain(err), "\n") + "\n\n" + fix})
 		}
 	}
+	if held != nil {
+		return *held, tr, nil
+	}
 	return Program{}, tr, fmt.Errorf("nl: no program checked after %d tries: %w", len(tr.Tries), last)
 }
+
+// errLowAgreement is an answer whose vote agreed less than Options.Escalate asks.
+var errLowAgreement = errors.New("the drafts agreed too little on an answer")
 
 // promptPrefix is every question's Prefix: the card and instructions, jaala's or the front end's, then
 // the pack's part, with the front end's examples in place of the pack's. Examples are checked first,
@@ -284,7 +336,7 @@ func promptPrefix(v *ns.Vocabulary, o Options) (string, error) {
 		}
 		prefix := card + instructions
 		if o.Actions != nil {
-			prefix += actionsPrefix(nil)
+			prefix += actionsPrefix(nil, o.grounder != nil)
 		}
 		if o.Pack != nil {
 			if err := o.Pack.Validate(v); err != nil {
@@ -310,7 +362,7 @@ func promptPrefix(v *ns.Vocabulary, o Options) (string, error) {
 	}
 	prefix := card + fe.Instructions()
 	if o.Actions != nil {
-		prefix += actionsPrefix(fe)
+		prefix += actionsPrefix(fe, o.grounder != nil)
 	}
 	if o.Pack != nil {
 		p := *o.Pack
