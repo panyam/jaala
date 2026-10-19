@@ -124,7 +124,9 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   pack, opts)` registers `query` (rows with witnesses, paged by an offset `page_token`, errors as tool
   errors carrying `nl.Explain`'s text), `schema` (the card, filtered by a module's or relation's
   path, and the pack's `Card` at `data`), `explain` (`Report.String`) and, with `Options.Model`,
-  `ask` (`nl.Translate` with the pack, `mode` local/frontier/both, panyam/declaire#300). The
+  `ask` (`nl.Translate` with the pack, `mode` local/frontier/both, panyam/declaire#300, and
+  `language` datalog/cypher, #386: Cypher through `cypher.NewFrontEnd` with `Pack.CypherExamples`,
+  `Pack.AskLanguage` the default, answered as the `cypher` tool answers). The
   instructions are written from the pack (`mcp.Instructions`, sent with mcpkit's `WithInstructions`,
   which mcpkit v0.8.2 put on the initialize result where clients read it: before, Claude Code saw
   none) unless `Pack.Instructions` replaces them word for word, which declaire#308's wording runs

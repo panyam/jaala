@@ -47,6 +47,9 @@ type pattern struct {
 	pos   Pos
 	nodes []nodePat
 	rels  []relPat
+	// refused is set for a pattern holding what parse refused (a quantified path, shortestPath), so
+	// it is read as a pattern though its nodes and rels don't say all of it.
+	refused bool
 }
 
 type nodePat struct {
@@ -54,6 +57,7 @@ type nodePat struct {
 	v      string // "" for an anonymous node
 	labels []string
 	props  []propEntry
+	where  expr // a WHERE inside the node, which parse ANDs into its MATCH's
 }
 
 type relPat struct {
@@ -63,7 +67,8 @@ type relPat struct {
 	props    []propEntry
 	dir      int // 1 left to right, -1 right to left, 0 either
 	varLen   bool
-	min, max int // with varLen: max -1 is unbounded
+	min, max int  // with varLen: max -1 is unbounded
+	where    expr // a WHERE inside the relationship, as a node's
 }
 
 type propEntry struct {
@@ -166,8 +171,8 @@ type (
 		patterns []pattern
 		where    expr
 	}
-	// unsupported is an expression parsed so it can be refused by name: a map, CASE, a literal Cypher
-	// has and jaala doesn't.
+	// unsupported is an expression parsed so it can be refused by name: one parse refuses (a map,
+	// CASE), or a literal Cypher has and jaala doesn't, refused when compiled.
 	unsupported struct {
 		pos Pos
 		err *Error

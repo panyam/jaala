@@ -183,7 +183,7 @@ func (w *world) query(q query) (projected, *Error) {
 func (c *compiler) carry(r returnClause) ([]carried, *Error) {
 	items := r.items
 	if r.star {
-		items = c.starItems(r.pos)
+		items = append(c.starItems(r.pos), r.items...)
 	}
 	var out []carried
 	seen := map[string]bool{}

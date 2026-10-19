@@ -1,0 +1,293 @@
+# Valid Neo4j 5 Cypher over the guide's graph, one query per block (blocks are separated by a blank
+# line, and a line starting with # is a note). TestEveryValidQueryParses requires each under
+# "## compiles or names a gap" to compile or be refused naming a gap, and each under
+# "## refused plainly" to be refused with no gap. testdata/conformance.golden says which.
+
+## compiles or names a gap
+
+# the subset
+MATCH (a:Package)-[:IMPORTS]->(b) WHERE a.name = 'app' RETURN b.name
+
+MATCH (a:Package {name: 'app'})<-[:IMPORTS]-(b) RETURN DISTINCT b.name AS importer ORDER BY importer DESC SKIP 1 LIMIT 2
+
+MATCH (a)-[:IMPORTS|DEPENDS_ON*1..3]-(b) RETURN a, b
+
+MATCH (a)-[:IMPORTS|:DEPENDS_ON]->(b) RETURN count(*) AS n
+
+MATCH (a:Package) WITH a, count { (a)-->() } AS out WHERE out > 0 RETURN a.name, out
+
+MATCH (a:Package) WHERE EXISTS { (a)-[:IMPORTS]->(:Package {license: 'MIT'}) } RETURN a
+
+MATCH (a:Package) RETURN a.name AS n UNION ALL MATCH (b:Package) RETURN b.name AS n
+
+MATCH (a:Package) RETURN a.name AS n UNION MATCH (b:Package) RETURN b.name AS n
+
+MATCH (a:Package) WHERE a.name STARTS WITH 'a' AND NOT a.name ENDS WITH 'z' OR a.name CONTAINS 'p' RETURN a
+
+MATCH (a:Package) WHERE a.name =~ 'a.*' XOR a.license IS NULL RETURN a
+
+MATCH (a:Package) WHERE a.license IS NOT NULL AND a.name IN ['app', 'api'] RETURN toUpper(a.name) + '!'
+
+MATCH (a:Package) RETURN min(a.name), max(a.name), collect(a.name)
+
+MATCH (a:Package) WHERE a:Package RETURN a
+
+MATCH (a:Package) WHERE NOT (a)-[:IMPORTS]->() RETURN a
+
+// a comment, and /* a block one */
+MATCH (a:Package) /* here */ RETURN a // and at the end
+
+MATCH (`a b`:`Package`) RETURN `a b`.name
+
+MATCH (a:Package) WHERE a.name = "app" RETURN a;
+
+match (a:Package) where a.name = 'app' return a
+
+MATCH (a:Package) WHERE a.name <> 'app' AND a.name != 'api' RETURN a
+
+MATCH (a:Package) WITH * RETURN a
+
+MATCH (a:Package) RETURN *, a.name AS n
+
+MATCH (a:Package) RETURN a.name ORDER BY a.name SKIP 1
+
+MATCH (a:Package) RETURN a.name ORDER BY a.name OFFSET 1
+
+CYPHER 5 MATCH (a:Package) RETURN a
+
+CYPHER runtime=slotted MATCH (a:Package) RETURN a
+
+PROFILE MATCH (a:Package) RETURN a
+
+MATCH (a:Package WHERE a.name = 'app') RETURN a
+
+MATCH (a:Package)-[:IMPORTS WHERE a.name <> 'x']->(b) RETURN b
+
+MATCH (a IS Package) RETURN a
+
+MATCH (a:Package) WHERE a IS Package RETURN a
+
+MATCH (a:Package&Package) RETURN a
+
+MATCH (a:Package) WHERE a.name = 'app' RETURN a
+
+MATCH (a:Package) WHERE size(a.name) > 0x02 AND size(a.name) < 0o17 RETURN a
+
+MATCH (a:Package)<-->(b) RETURN b
+
+MATCH (a:Package)--(b) RETURN b
+
+MATCH (a)-->(b), (b)-->(c) RETURN a, c
+
+CALL str.upper('a') YIELD upper RETURN upper
+
+MATCH (a:Package) RETURN replace(a.name, 'a', 'b'), split(a.name, 'p')[0], toLower(a.name)
+
+# relationships and paths, #279 to #281
+MATCH (a)-[r:IMPORTS]->(b) RETURN r
+
+MATCH p = (a)-[:IMPORTS]->(b) RETURN p
+
+MATCH p = shortestPath((a:Package)-[*]-(b:Package)) RETURN p
+
+MATCH (a:Package), (b:Package) RETURN allShortestPaths((a)-[*]-(b))
+
+MATCH p = SHORTEST 1 (a:Package)-[:IMPORTS]-+(b:Package) RETURN p
+
+MATCH ALL SHORTEST (a:Package)-[:IMPORTS]-+(b) RETURN b
+
+MATCH ANY (a:Package)-[:IMPORTS]->+(b) RETURN b
+
+MATCH SHORTEST 2 GROUPS (a:Package)-->{1,3}(b) RETURN b
+
+MATCH (a:Package) ((x)-[:IMPORTS]->(y)){1,3} (b) RETURN b
+
+MATCH ((x)-[:IMPORTS]->(y) WHERE x.name <> y.name)+ RETURN x
+
+MATCH (a:Package)-[:IMPORTS]->{2}(b) RETURN b
+
+MATCH (a:Package)-[:IMPORTS]->*(b) RETURN b
+
+MATCH (a)-[:IMPORTS*0..2]->(b) RETURN b
+
+MATCH (a)-[:IMPORTS*..20]->(b) RETURN b
+
+# OPTIONAL MATCH and null, #282
+OPTIONAL MATCH (a:Package) RETURN a
+
+MATCH (a:Package) OPTIONAL MATCH (a)-[:IMPORTS]->(b) WHERE b.license = 'MIT' RETURN a, b
+
+# lists and maps, #283
+MATCH (a:Package) UNWIND [1, 2] AS x RETURN a, x
+
+UNWIND $names AS n MATCH (a:Package {name: n}) RETURN a
+
+MATCH (a:Package) WHERE a.name IN $names RETURN a
+
+MATCH (a:Package) RETURN a {.name, .license}
+
+MATCH (a:Package) RETURN a {.*, imports: count { (a)-->() }}
+
+MATCH (a:Package) RETURN [x IN [1, 2, 3] WHERE x > 1 | x * 2] AS xs
+
+MATCH (a:Package) RETURN [(a)-[:IMPORTS]->(b) | b.name] AS imported
+
+MATCH (a:Package) RETURN [(a)-[:IMPORTS]->(b) WHERE b.license = 'MIT' | b.name] AS mit
+
+MATCH (a:Package) RETURN [x IN [1, 2]] AS xs
+
+MATCH (a:Package) WHERE all(x IN [1, 2] WHERE x > 0) RETURN a
+
+MATCH (a:Package) WHERE any(x IN ['app'] WHERE x = a.name) AND none(y IN [] WHERE y = 1) AND single(z IN [1] WHERE z = 1) RETURN a
+
+MATCH (a:Package) RETURN reduce(total = 0, x IN [1, 2, 3] | total + x) AS sum
+
+MATCH (a:Package) RETURN [1, 2, 3][0], [1, 2, 3][1..2], [1, 2][..1], [1, 2][1..]
+
+MATCH (a:Package) RETURN a[$key]
+
+MATCH (a:Package) RETURN {name: a.name, license: a.license} AS m
+
+MATCH (a:Package) RETURN {name: a.name}.name
+
+MATCH (a:Package) WITH collect(a) AS ps RETURN size(ps)
+
+MATCH (a:Package) RETURN COLLECT { MATCH (a)-->(b) RETURN b.name } AS names
+
+MATCH (a:Package) RETURN labels(a)
+
+MATCH (a:Package $props) RETURN a
+
+FOREACH (x IN [1, 2] | CREATE (:Package {name: x}))
+
+# functions, #284
+MATCH (a:Package) RETURN trim(a.name)
+
+MATCH (a:Package) RETURN CASE a.license WHEN 'MIT' THEN 'permissive' WHEN 'GPL', 'AGPL' THEN 'copyleft' ELSE 'other' END
+
+MATCH (a:Package) RETURN CASE WHEN a.license IS NULL THEN 'none' ELSE a.license END
+
+MATCH (a:Package) RETURN CASE size(a.name) WHEN > 3 THEN 'long' WHEN IS NULL THEN 'none' END
+
+MATCH (a:Package) WHERE a.name IS :: STRING RETURN a
+
+MATCH (a:Package) WHERE a.name IS NOT TYPED INTEGER NOT NULL RETURN a
+
+MATCH (a:Package) WHERE a.name :: LIST<STRING | INTEGER> RETURN a
+
+MATCH (a:Package) WHERE a.name IS :: ZONED DATETIME RETURN a
+
+MATCH (a:Package) WHERE a.name IS NFC NORMALIZED RETURN a
+
+MATCH (a:Package) WHERE a.name IS NOT NORMALIZED RETURN a
+
+MATCH (a:Package) RETURN a.name || '!' AS shout
+
+MATCH (a:Package) RETURN apoc.text.join([a.name], ',') AS j
+
+# writes, #287
+CREATE (a:Package {name: 'x'}) RETURN a
+
+CREATE (a:Package {name: 'x'})-[:IMPORTS]->(b:Package {name: 'y'})
+
+MERGE (a:Package {name: 'x'}) ON CREATE SET a.license = 'MIT' ON MATCH SET a += {seen: 1} RETURN a
+
+MATCH (a:Package) SET a.license = 'MIT', a:Library, a IS Tool RETURN a
+
+MATCH (a:Package) SET a = {name: 'x'}
+
+MATCH (a:Package) REMOVE a.license, a:Library
+
+MATCH (a:Package) DELETE a
+
+MATCH (a:Package) DETACH DELETE a
+
+MATCH (a:Package) NODETACH DELETE a
+
+MATCH (a:Package) CALL { WITH a SET a.seen = 1 } IN TRANSACTIONS OF 10 ROWS ON ERROR CONTINUE REPORT STATUS AS s RETURN s
+
+MATCH (a:Package) CALL (a) { SET a.seen = 1 } IN 2 CONCURRENT TRANSACTIONS
+
+# choosing a graph, #289
+USE other MATCH (a) RETURN a
+
+USE graph.byName('other') MATCH (a) RETURN a
+
+LOAD CSV WITH HEADERS FROM 'file:///p.csv' AS row FIELDTERMINATOR ';' RETURN row
+
+# no form in a program yet, #364
+MATCH (a:Package) WITH a ORDER BY a LIMIT 1 RETURN a
+
+CALL { MATCH (a:Package) RETURN a } RETURN a
+
+MATCH (a:Package) CALL (a) { MATCH (a)-->(b) RETURN b } RETURN b
+
+MATCH (a:Package) CALL (*) { MATCH (a)-->(b) RETURN b UNION MATCH (a)<--(b) RETURN b } RETURN b
+
+MATCH (a:Package) WHERE EXISTS { MATCH (a)-->(b) WHERE b.license = 'MIT' RETURN b } RETURN a
+
+MATCH (a:Package) WHERE COUNT { MATCH (a)-->(b) WITH b WHERE b.name <> 'x' RETURN b } > 1 RETURN a
+
+MATCH (a:Package) RETURN a LIMIT $n
+
+MATCH (a:Package) RETURN a SKIP $s LIMIT 1 + 1
+
+RETURN 1
+
+WITH 'app' AS n MATCH (a:Package {name: n}) RETURN a
+
+CALL db.labels()
+
+CALL db.labels() YIELD label
+
+MATCH (a:Package|Library) RETURN a
+
+MATCH (a:!Library) RETURN a
+
+MATCH (a:%) RETURN a
+
+MATCH (a:(Package|Library)&!Test) RETURN a
+
+MATCH (a)-[:IMPORTS&DEPENDS_ON]->(b) RETURN b
+
+MATCH (a)-[:!IMPORTS]->(b) RETURN b
+
+MATCH (a:Package) WHERE a:Package|Library RETURN a
+
+MATCH (a:Package) WHERE (a)-->(b WHERE b.license = 'MIT') RETURN a
+
+# the 16-alternative cap, #388
+MATCH (a:Package) WHERE a.name = 'a' XOR a.name = 'b' XOR a.name = 'c' XOR a.name = 'd' RETURN a
+
+MATCH (a:Package) WHERE a.name IN ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q'] RETURN a
+
+## refused plainly
+
+# what the compiler limits on purpose, saying how to write it instead
+MATCH (a:Package) RETURN a.name SKIP 1
+
+MATCH (a:Package) RETURN a.name ORDER BY a.license
+
+# not queries, or answering nothing
+
+SHOW INDEXES
+
+SHOW DATABASES YIELD name
+
+CREATE INDEX package_name FOR (a:Package) ON (a.name)
+
+CREATE CONSTRAINT FOR (a:Package) REQUIRE a.name IS UNIQUE
+
+DROP INDEX package_name
+
+GRANT TRAVERSE ON GRAPH * TO reader
+
+EXPLAIN MATCH (a:Package) RETURN a
+
+MATCH (a:Package) FINISH
+
+MATCH (a:Package) WHERE a.license = null RETURN a
+
+MATCH (a:Package) RETURN true
+
+MATCH (a:Package) RETURN a LIMIT 0

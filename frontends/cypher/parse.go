@@ -5,32 +5,43 @@ import (
 	"strings"
 )
 
-// The subset parse reads (EBNF, keywords in any case):
+// parse reads all of Neo4j 5's query syntax (#382). The subset it builds a tree for (EBNF, keywords
+// in any case):
 //
-//	statement = query { "UNION" [ "ALL" ] query } [ ";" ] ;
+//	statement = [ "CYPHER" options | "PROFILE" ] query { "UNION" [ "ALL" ] query } [ ";" ] ;
 //	query     = { reading } { "WITH" items [ "WHERE" expr ] { reading } } return ;   (* reading first *)
 //	reading   = match | call ;
 //	match     = "MATCH" pattern { "," pattern } [ "WHERE" expr ] ;
-//	call      = "CALL" name "(" [ expr { "," expr } ] ")" [ "YIELD" ( "*" | name [ "AS" name ] { "," ... } ) [ "WHERE" expr ] ] ;
+//	call      = "CALL" name [ "(" [ expr { "," expr } ] ")" ] [ "YIELD" ( "*" | name [ "AS" name ] { "," ... } ) [ "WHERE" expr ] ] ;
 //	pattern   = node { rel node } ;
-//	node      = "(" [ name ] { ":" name } [ props ] ")" ;
-//	rel       = ( "-" | "<-" ) [ "[" [ name ] [ ":" name { "|" [ ":" ] name } ] [ range ] [ props ] "]" ] ( "-" | "->" ) ;
+//	node      = "(" [ name ] [ ( ":" | "IS" ) labels ] [ props ] [ "WHERE" expr ] ")" ;
+//	labels    = name { ( ":" | "&" ) name } ;
+//	rel       = ( "-" | "<-" ) [ "[" [ name ] [ ":" name { "|" [ ":" ] name } ] [ range ] [ props ] [ "WHERE" expr ] "]" ] ( "-" | "->" ) ;
 //	range     = "*" [ int ] [ ".." [ int ] ] ;
 //	props     = "{" name ":" expr { "," name ":" expr } "}" ;
-//	return    = "RETURN" [ "DISTINCT" ] ( "*" | item { "," item } )
-//	            [ "ORDER" "BY" expr [ "ASC" | "DESC" ] { "," ... } ] [ "SKIP" int ] [ "LIMIT" int ] ;
+//	return    = "RETURN" [ "DISTINCT" ] ( "*" [ "," item { "," item } ] | item { "," item } )
+//	            [ "ORDER" "BY" expr [ "ASC" | "DESC" ] { "," ... } ] [ ( "SKIP" | "OFFSET" ) int ] [ "LIMIT" int ] ;
 //	item      = expr [ "AS" name ] ;
 //
-// Expressions follow openCypher's precedence: OR, XOR, AND, NOT, comparison (with the string tests,
-// IN and IS NULL), + and -, * / and %, unary minus, then a property, a label test, a call (split's
-// [i] too), EXISTS { } or COUNT { } (an optional MATCH, patterns and a WHERE), a literal, a
-// parameter, a parenthesized expression or a pattern. It also reads what it refuses, so a refusal
-// names the clause or the gap rather than failing to parse: OPTIONAL MATCH, UNWIND, CALL { }, the
-// writing clauses, a path variable, shortestPath, lists, maps, COLLECT { } and CASE.
+// A WHERE inside a node or relationship of a MATCH is ANDed into the clause's WHERE. Expressions
+// follow openCypher's precedence: OR, XOR, AND, NOT, comparison (with the string tests, IN, IS NULL
+// and IS Label), + and -, * / % and ^, unary minus, then a property, a label test, a call (split's
+// [i] too), EXISTS { } or COUNT { } (an optional MATCH, patterns and a WHERE), a literal (hex and
+// octal integers too), a parameter, a parenthesized expression or a pattern.
+//
+// The rest of Neo4j 5's queries it reads too (refused.go), recording a refusal naming the gap. The
+// first refusal in the text is parse's error, but only once the whole text has parsed, so a mistake
+// anywhere in it is reported before a gap. Backfilling a gap is building a node where its parse
+// function records the refusal. A command that isn't a query (SHOW, GRANT, CREATE INDEX, ...) is
+// refused at its first word.
 type parser struct {
 	toks []token
 	i    int
 	text string
+	// refused is the first refusal in the text so far, which parse returns when the text parses.
+	refused *Error
+	// braces is how many subqueries' { } the parser is inside, where a query may end without RETURN.
+	braces int
 }
 
 func parse(text string) (statement, error) {
@@ -43,7 +54,19 @@ func parse(text string) (statement, error) {
 	if perr != nil {
 		return statement{}, perr
 	}
+	if p.refused != nil {
+		return statement{}, p.refused
+	}
 	return st, nil
+}
+
+// refuse records e, Cypher a program can't express yet, and parsing goes on past it. It returns e as
+// an expression, for a refused expression's place in the tree.
+func (p *parser) refuse(e *Error) expr {
+	if p.refused == nil || e.Pos.Offset < p.refused.Pos.Offset {
+		p.refused = e
+	}
+	return unsupported{pos: e.Pos, err: e}
 }
 
 func (p *parser) peek() token { return p.toks[p.i] }
@@ -84,6 +107,13 @@ func (p *parser) expectSym(s, what string) *Error {
 	return p.unexpected(what)
 }
 
+func (p *parser) expect(kw, what string) *Error {
+	if p.accept(kw) {
+		return nil
+	}
+	return p.unexpected(what)
+}
+
 func (p *parser) unexpected(want string) *Error {
 	t := p.peek()
 	if t.kind == tEOF {
@@ -101,38 +131,30 @@ func (p *parser) name(what string) (string, *Error) {
 	return t.val, nil
 }
 
-// refusedClauses are clause keywords outside the subset, by the gap or ticket that would take them.
-var refusedClauses = map[string]gap{
-	"UNWIND": gapLists, "FOREACH": gapLists,
-	"CREATE": gapWrites, "MERGE": gapWrites, "SET": gapWrites, "DELETE": gapWrites, "DETACH": gapWrites, "REMOVE": gapWrites,
-	"USE": gapGraphs,
-}
-
-func (p *parser) refuseClause() *Error {
-	t := p.peek()
-	if t.is("OPTIONAL") {
-		return gapOptional.at(t.pos, "write the match without OPTIONAL, or as a second query")
-	}
-	for kw, g := range refusedClauses {
-		if t.is(kw) {
-			return g.at(t.pos, "%s", strings.ToUpper(t.val))
+// exprs reads expressions separated by commas.
+func (p *parser) exprs() ([]expr, *Error) {
+	var out []expr
+	for {
+		e, err := p.expr()
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+		if !p.acceptSym(",") {
+			return out, nil
 		}
 	}
-	return nil
 }
 
 func (p *parser) statement() (statement, *Error) {
 	var st statement
-	for {
-		q, err := p.query()
-		if err != nil {
-			return st, err
-		}
-		st.parts = append(st.parts, q)
-		if !p.accept("UNION") {
-			break
-		}
-		p.accept("ALL")
+	if err := p.prefix(); err != nil {
+		return st, err
+	}
+	parts, err := p.union()
+	st.parts = parts
+	if err != nil {
+		return st, err
 	}
 	p.acceptSym(";")
 	if t := p.peek(); t.kind != tEOF {
@@ -141,16 +163,56 @@ func (p *parser) statement() (statement, *Error) {
 	return st, nil
 }
 
+// union reads queries joined by UNION or UNION ALL.
+func (p *parser) union() ([]query, *Error) {
+	var parts []query
+	for {
+		q, err := p.query()
+		if err != nil {
+			return parts, err
+		}
+		parts = append(parts, q)
+		if !p.accept("UNION") {
+			return parts, nil
+		}
+		p.accept("ALL")
+	}
+}
+
 // query reads one UNION part: stages of MATCH and CALL clauses, each closed by a WITH, the last by
-// RETURN.
+// RETURN. A query that writes, ends with FINISH or a procedure's CALL, or sits inside a subquery's
+// { } may end without RETURN, which is refused.
 func (p *parser) query() (query, *Error) {
 	q := query{pos: p.peek().pos}
 	var cur stage
+	var ends *Pos // where the clause starts after which the query may end without RETURN
 	for {
-		if err := p.refuseClause(); err != nil {
+		t := p.peek()
+		if t.kind == tEOF || t.sym("}") || t.sym(";") || t.is("UNION") {
+			switch {
+			case ends != nil:
+				p.refuse(gapLater.at(*ends, "a query with no RETURN"))
+				return q, nil
+			case p.braces > 0 && t.sym("}"):
+				return q, nil
+			case len(q.stages) == 0 && len(cur.clauses) == 0:
+				return q, p.unexpected("MATCH")
+			}
+			return q, p.unexpected("WHERE, another MATCH, WITH or RETURN")
+		}
+		handled, canEnd, err := p.refusedClause()
+		if err != nil {
 			return q, err
 		}
-		t := p.peek()
+		if handled {
+			if canEnd {
+				ends = &t.pos
+			} else {
+				ends = nil
+			}
+			continue
+		}
+		ends = nil
 		switch {
 		case t.is("MATCH"):
 			p.i++
@@ -161,17 +223,15 @@ func (p *parser) query() (query, *Error) {
 			cur.clauses = append(cur.clauses, readClause{match: &m})
 		case t.is("CALL"):
 			p.i++
-			if p.peek().sym("{") {
-				return q, gapLater.at(t.pos, "a CALL { } subquery")
-			}
 			cc, err := p.callClause(t.pos)
 			if err != nil {
 				return q, err
 			}
 			cur.clauses = append(cur.clauses, readClause{call: &cc})
+			ends = &t.pos
 		case t.is("WITH"), t.is("RETURN"):
 			if len(q.stages) == 0 && len(cur.clauses) == 0 {
-				return q, p.unexpected("MATCH")
+				p.refuse(gapLater.at(t.pos, "a %s before any MATCH", strings.ToUpper(t.val)))
 			}
 			p.i++
 			r, err := p.returnClause(t.pos)
@@ -204,16 +264,11 @@ func (p *parser) query() (query, *Error) {
 
 func (p *parser) match(pos Pos) (matchClause, *Error) {
 	m := matchClause{pos: pos}
-	for {
-		pat, err := p.pattern(true)
-		if err != nil {
-			return m, err
-		}
-		m.patterns = append(m.patterns, pat)
-		if !p.acceptSym(",") {
-			break
-		}
+	pats, err := p.patterns()
+	if err != nil {
+		return m, err
 	}
+	m.patterns = pats
 	if p.accept("WHERE") {
 		e, err := p.expr()
 		if err != nil {
@@ -221,12 +276,64 @@ func (p *parser) match(pos Pos) (matchClause, *Error) {
 		}
 		m.where = e
 	}
+	m.where = andAll(append(inlineWheres(m.patterns), m.where)...)
 	return m, nil
 }
 
-// callClause reads a procedure call after CALL: name(args) [YIELD name [AS alias], ... | *] [WHERE].
+// patterns reads patterns separated by commas.
+func (p *parser) patterns() ([]pattern, *Error) {
+	var out []pattern
+	for {
+		pat, err := p.pattern()
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, pat)
+		if !p.acceptSym(",") {
+			return out, nil
+		}
+	}
+}
+
+// inlineWheres are the WHEREs written inside pats' nodes and relationships, in written order.
+func inlineWheres(pats []pattern) []expr {
+	var out []expr
+	for _, pat := range pats {
+		for i, n := range pat.nodes {
+			if n.where != nil {
+				out = append(out, n.where)
+			}
+			if i < len(pat.rels) && pat.rels[i].where != nil {
+				out = append(out, pat.rels[i].where)
+			}
+		}
+	}
+	return out
+}
+
+// andAll is the AND of the non-nil es, nil when there are none.
+func andAll(es ...expr) expr {
+	var out expr
+	for _, e := range es {
+		switch {
+		case e == nil:
+		case out == nil:
+			out = e
+		default:
+			out = binary{pos: e.at(), op: "AND", l: out, r: e}
+		}
+	}
+	return out
+}
+
+// callClause reads a procedure call after CALL: name[(args)] [YIELD name [AS alias], ... | *]
+// [WHERE], or a CALL { } subquery, refused.
 func (p *parser) callClause(pos Pos) (callClause, *Error) {
 	cc := callClause{pos: pos}
+	if p.peek().sym("{") || p.peek().sym("(") {
+		p.refuse(gapLater.at(pos, "a CALL { } subquery"))
+		return cc, p.callSubquery()
+	}
 	name, err := p.name("a procedure's name after CALL")
 	if err != nil {
 		return cc, err
@@ -239,19 +346,9 @@ func (p *parser) callClause(pos Pos) (callClause, *Error) {
 		name += "." + n
 	}
 	cc.name = name
-	if err := p.expectSym("(", "( after the procedure's name"); err != nil {
-		return cc, err
-	}
-	if !p.acceptSym(")") {
-		for {
-			e, err := p.expr()
-			if err != nil {
-				return cc, err
-			}
-			cc.args = append(cc.args, e)
-			if !p.acceptSym(",") {
-				break
-			}
+	if p.acceptSym("(") && !p.acceptSym(")") {
+		if cc.args, err = p.exprs(); err != nil {
+			return cc, err
 		}
 		if err := p.expectSym(")", ") to end the call"); err != nil {
 			return cc, err
@@ -294,7 +391,8 @@ func (p *parser) returnClause(pos Pos) (returnClause, *Error) {
 	r := returnClause{pos: pos, distinct: p.accept("DISTINCT")}
 	if p.acceptSym("*") {
 		r.star = true
-	} else {
+	}
+	if !r.star || p.acceptSym(",") {
 		for {
 			start := p.peek().pos.Offset
 			e, err := p.expr()
@@ -334,8 +432,8 @@ func (p *parser) returnClause(pos Pos) (returnClause, *Error) {
 			}
 		}
 	}
-	if p.accept("SKIP") {
-		n, err := p.count("SKIP")
+	if t := p.peek(); p.accept("SKIP") || p.accept("OFFSET") {
+		n, err := p.count(strings.ToUpper(t.val))
 		if err != nil {
 			return r, err
 		}
@@ -358,51 +456,97 @@ func (p *parser) returnClause(pos Pos) (returnClause, *Error) {
 	return r, nil
 }
 
+// count reads the number after SKIP, LIMIT or a range's * or ... A parameter or an expression there
+// is refused, counting 1 so parsing goes on.
 func (p *parser) count(what string) (int, *Error) {
 	t := p.peek()
-	if t.kind == tParam {
-		return 0, errAt(t.pos, "%s takes a number written in the query, not a parameter", what)
+	more := p.peekAt(1).kind == tSym && strings.Contains("+-*/%^", p.peekAt(1).text)
+	switch {
+	case t.kind == tNumber && !more:
+		n, err := strconv.Atoi(t.val)
+		if err != nil || n < 0 {
+			return 0, errAt(t.pos, "%s takes a whole number, not %s", what, t.text)
+		}
+		p.i++
+		return n, nil
+	case t.kind == tParam && !more:
+		p.refuse(gapLater.at(t.pos, "%s takes a number written in the query, not a parameter", what))
+		p.i++
+		return 1, nil
+	case t.kind == tNumber, t.kind == tParam, t.kind == tIdent && !t.quoted && !clauseWords[strings.ToUpper(t.val)], t.sym("("):
+		p.refuse(gapLater.at(t.pos, "%s takes a number written in the query, not an expression", what))
+		_, err := p.additive()
+		return 1, err
 	}
-	if t.kind != tNumber {
-		return 0, p.unexpected("a number after " + what)
-	}
-	n, err := strconv.Atoi(t.text)
-	if err != nil || n < 0 {
-		return 0, errAt(t.pos, "%s takes a whole number, not %s", what, t.text)
-	}
-	p.i++
-	return n, nil
+	return 0, p.unexpected("a number after " + what)
 }
 
-// pattern reads a chain of nodes and relationships. top is true in a MATCH, where a path variable or
-// shortestPath can appear, so it is refused by name.
-func (p *parser) pattern(top bool) (pattern, *Error) {
+// clauseWords begin a clause or a clause's part, so they end what comes before them.
+var clauseWords = map[string]bool{
+	"MATCH": true, "OPTIONAL": true, "WITH": true, "RETURN": true, "UNWIND": true, "CALL": true,
+	"CREATE": true, "MERGE": true, "SET": true, "DELETE": true, "DETACH": true, "NODETACH": true,
+	"REMOVE": true, "FOREACH": true, "USE": true, "LOAD": true, "FINISH": true, "UNION": true,
+	"WHERE": true, "ORDER": true, "SKIP": true, "OFFSET": true, "LIMIT": true,
+}
+
+// pattern reads a chain of nodes and relationships. A path variable or selector before it, a
+// shortestPath around it, and a quantified path pattern or relationship in it are read and refused.
+func (p *parser) pattern() (pattern, *Error) {
 	t := p.peek()
-	if top && t.kind == tIdent && p.peekAt(1).sym("=") {
-		return pattern{}, gapPaths.at(t.pos, "a path variable (%s = ...)", t.val)
+	if t.kind == tIdent && p.peekAt(1).sym("=") {
+		p.refuse(gapPaths.at(t.pos, "a path variable (%s = ...)", t.val))
+		p.i += 2
 	}
-	if t.is("shortestPath") || t.is("allShortestPaths") {
-		return pattern{}, gapShortest.at(t.pos, "%s", t.val)
+	if err := p.pathSelector(); err != nil {
+		return pattern{}, err
 	}
-	pat := pattern{pos: t.pos}
-	n, err := p.node()
-	if err != nil {
-		return pat, err
+	if t = p.peek(); t.is("shortestPath") || t.is("allShortestPaths") {
+		p.refuse(gapShortest.at(t.pos, "%s", t.val))
+		p.i++
+		if err := p.expectSym("(", "( after "+t.val); err != nil {
+			return pattern{}, err
+		}
+		if _, err := p.pattern(); err != nil {
+			return pattern{}, err
+		}
+		return pattern{pos: t.pos, refused: true}, p.expectSym(")", ") to end "+t.val)
 	}
-	pat.nodes = append(pat.nodes, n)
-	for p.peek().sym("-") || (p.peek().sym("<") && p.peekAt(1).sym("-")) {
+	pat := pattern{pos: p.peek().pos}
+	needNode := true
+	for {
+		if p.peek().sym("(") && p.peekAt(1).sym("(") {
+			if err := p.quantifiedPath(); err != nil {
+				return pat, err
+			}
+			pat.refused, needNode = true, false
+			if p.peek().sym("(") {
+				needNode = true // a node or another quantified path written right after it
+			}
+			continue
+		}
+		if needNode {
+			n, err := p.node()
+			if err != nil {
+				return pat, err
+			}
+			pat.nodes = append(pat.nodes, n)
+			needNode = false
+			continue
+		}
+		if !(p.peek().sym("-") || (p.peek().sym("<") && p.peekAt(1).sym("-"))) {
+			return pat, nil
+		}
 		r, err := p.rel()
 		if err != nil {
 			return pat, err
 		}
-		n, err := p.node()
-		if err != nil {
-			return pat, err
+		if q := p.peek(); p.quantifier(false) {
+			p.refuse(gapShortest.at(q.pos, "a quantified relationship"))
+			pat.refused = true
 		}
 		pat.rels = append(pat.rels, r)
-		pat.nodes = append(pat.nodes, n)
+		needNode = true
 	}
-	return pat, nil
 }
 
 func (p *parser) node() (nodePat, *Error) {
@@ -410,15 +554,16 @@ func (p *parser) node() (nodePat, *Error) {
 	if err := p.expectSym("(", "( to start a node"); err != nil {
 		return n, err
 	}
-	if p.peek().kind == tIdent {
+	if t := p.peek(); t.kind == tIdent && !t.is("WHERE") && !t.is("IS") {
 		n.v = p.next().val
 	}
-	for p.acceptSym(":") {
-		l, err := p.name("a label after :")
+	if t := p.peek(); t.sym(":") || t.is("IS") {
+		p.i++
+		labels, err := p.labels(t.pos, true)
 		if err != nil {
 			return n, err
 		}
-		n.labels = append(n.labels, l)
+		n.labels = labels
 	}
 	if p.peek().sym("{") {
 		props, err := p.props()
@@ -426,11 +571,89 @@ func (p *parser) node() (nodePat, *Error) {
 			return n, err
 		}
 		n.props = props
+	} else if t := p.peek(); t.kind == tParam {
+		p.refuse(gapLists.at(t.pos, "a map parameter as a node's properties"))
+		p.i++
 	}
-	if p.peek().kind == tParam {
-		return n, gapLists.at(p.peek().pos, "a map parameter as a node's properties")
+	if p.accept("WHERE") {
+		e, err := p.expr()
+		if err != nil {
+			return n, err
+		}
+		n.where = e
 	}
 	return n, p.expectSym(")", ") to end the node")
+}
+
+// labels reads a node's label expression after the : or IS at pos: a conjunction of names (A:B or
+// A&B) is its labels, and anything else (| ! % or parentheses) is refused.
+func (p *parser) labels(pos Pos, colons bool) ([]string, *Error) {
+	names, op, err := p.labelExpr(colons)
+	if op == '|' || op == '!' {
+		p.refuse(gapLater.at(pos, "a label expression with | ! %% or parentheses"))
+	}
+	return names, err
+}
+
+// labelExpr reads a label or type expression after : or IS: its names, and how they combine: 0 for
+// one name, '&' for a conjunction (A&B, or A:B where colons may), '|' for a disjunction (A|B, or A|:B
+// as types are written), and '!' for anything else (a negation, %, parentheses, or & and | mixed).
+func (p *parser) labelExpr(colons bool) ([]string, byte, *Error) {
+	var names []string
+	var op byte
+	combine := func(o byte) {
+		switch {
+		case op == 0:
+			op = o
+		case op != o:
+			op = '!'
+		}
+	}
+	var factor func() *Error
+	factor = func() *Error {
+		switch {
+		case p.acceptSym("!"):
+			combine('!')
+			return factor()
+		case p.acceptSym("%"):
+			combine('!')
+			return nil
+		case p.acceptSym("("):
+			ns, _, err := p.labelExpr(colons)
+			if err != nil {
+				return err
+			}
+			names = append(names, ns...)
+			combine('!')
+			return p.expectSym(")", ") to end the label expression")
+		}
+		n, err := p.name("a label after :")
+		if err != nil {
+			return err
+		}
+		names = append(names, n)
+		return nil
+	}
+	if err := factor(); err != nil {
+		return nil, 0, err
+	}
+	for {
+		t := p.peek()
+		switch {
+		case t.sym("&"), colons && t.sym(":") && !p.peekAt(1).sym(":"):
+			p.i++
+			combine('&')
+		case t.sym("|") && !p.peekAt(1).sym("|"):
+			p.i++
+			p.acceptSym(":")
+			combine('|')
+		default:
+			return names, op, nil
+		}
+		if err := factor(); err != nil {
+			return nil, 0, err
+		}
+	}
 }
 
 func (p *parser) rel() (relPat, *Error) {
@@ -443,21 +666,19 @@ func (p *parser) rel() (relPat, *Error) {
 		return r, err
 	}
 	if p.acceptSym("[") {
-		if t := p.peek(); t.kind == tIdent {
+		if t := p.peek(); t.kind == tIdent && !t.is("WHERE") && !t.is("IS") {
 			r.v = p.next().val
 		}
-		if p.acceptSym(":") {
-			for {
-				ty, err := p.name("a relationship type")
-				if err != nil {
-					return r, err
-				}
-				r.types = append(r.types, ty)
-				if !p.acceptSym("|") {
-					break
-				}
-				p.acceptSym(":")
+		if t := p.peek(); t.sym(":") || t.is("IS") {
+			p.i++
+			types, op, err := p.labelExpr(false)
+			if err != nil {
+				return r, err
 			}
+			if op == '&' || op == '!' {
+				p.refuse(gapLater.at(t.pos, "a relationship type expression with & ! %% or parentheses"))
+			}
+			r.types = types
 		}
 		if p.acceptSym("*") {
 			r.varLen, r.min, r.max = true, 1, -1
@@ -485,6 +706,16 @@ func (p *parser) rel() (relPat, *Error) {
 				return r, err
 			}
 			r.props = props
+		} else if t := p.peek(); t.kind == tParam {
+			p.refuse(gapLists.at(t.pos, "a map parameter as a relationship's properties"))
+			p.i++
+		}
+		if p.accept("WHERE") {
+			e, err := p.expr()
+			if err != nil {
+				return r, err
+			}
+			r.where = e
 		}
 		if err := p.expectSym("]", "] to end the relationship"); err != nil {
 			return r, err
@@ -605,11 +836,9 @@ func (p *parser) comparison() (expr, *Error) {
 			op = strings.ToUpper(t.val)
 		case t.is("IS"):
 			p.i++
-			not := p.accept("NOT")
-			if !p.accept("NULL") {
-				return nil, p.unexpected("NULL after IS")
+			if l, err = p.isTest(t, l); err != nil {
+				return nil, err
 			}
-			l = isNull{pos: t.pos, e: l, not: not}
 			continue
 		default:
 			return l, nil
@@ -622,10 +851,54 @@ func (p *parser) comparison() (expr, *Error) {
 	}
 }
 
+// isTest reads what follows IS: [NOT] NULL, or a label of a variable (n IS Person), and the type and
+// normalization tests, refused.
+func (p *parser) isTest(is token, l expr) (expr, *Error) {
+	not := p.accept("NOT")
+	t := p.peek()
+	switch {
+	case p.accept("NULL"):
+		return isNull{pos: is.pos, e: l, not: not}, nil
+	case t.sym(":") && p.peekAt(1).sym(":"), t.is("TYPED"):
+		return p.typeTest(is.pos)
+	case t.is("NORMALIZED"), (t.is("NFC") || t.is("NFD") || t.is("NFKC") || t.is("NFKD")) && p.peekAt(1).is("NORMALIZED"):
+		if !p.accept("NORMALIZED") {
+			p.i += 2
+		}
+		return p.refuse(gapFunctions.at(is.pos, "IS NORMALIZED")), nil
+	case t.kind == tIdent || t.sym("!") || t.sym("%") || t.sym("("):
+		v, ok := l.(varRef)
+		if !ok {
+			break
+		}
+		labels, err := p.labels(t.pos, true)
+		if err != nil {
+			return nil, err
+		}
+		var e expr = hasLabel{pos: v.pos, v: v.name, labels: labels}
+		if not {
+			e = negate{pos: is.pos, e: e}
+		}
+		return e, nil
+	}
+	return nil, p.unexpected("NULL after IS")
+}
+
 func (p *parser) additive() (expr, *Error) {
 	l, err := p.multiplicative()
-	for err == nil && (p.peek().sym("+") || p.peek().sym("-")) {
-		t := p.next()
+	for err == nil {
+		t := p.peek()
+		if t.sym("|") && p.peekAt(1).sym("|") && p.peekAt(1).pos.Offset == t.pos.Offset+1 {
+			p.i += 2
+			if _, err = p.multiplicative(); err == nil {
+				l = p.refuse(gapFunctions.at(t.pos, "|| (join text with +)"))
+			}
+			continue
+		}
+		if !t.sym("+") && !t.sym("-") {
+			break
+		}
+		p.i++
 		var r expr
 		if r, err = p.multiplicative(); err == nil {
 			l = binary{pos: t.pos, op: t.text, l: l, r: r}
@@ -667,13 +940,25 @@ func (p *parser) postfix() (expr, *Error) {
 	for {
 		t := p.peek()
 		switch {
+		case t.sym(":") && p.peekAt(1).sym(":"):
+			if e, err = p.typeTest(t.pos); err != nil {
+				return nil, err
+			}
 		case t.sym("."):
 			v, ok := e.(varRef)
 			if !ok {
+				var refusal *Error
 				if pr, ok := e.(propRef); ok {
-					return nil, gapLists.at(t.pos, "a property of %s.%s (a map value)", pr.v, pr.key)
+					refusal = gapLists.at(t.pos, "a property of %s.%s (a map value)", pr.v, pr.key)
+				} else {
+					refusal = gapLists.at(t.pos, "a property can only be read from a variable")
 				}
-				return nil, errAt(t.pos, "a property can only be read from a variable")
+				p.i++
+				if _, err := p.name("a property name after ."); err != nil {
+					return nil, err
+				}
+				e = p.refuse(refusal)
+				continue
 			}
 			p.i++
 			k, err := p.name("a property name after .")
@@ -686,34 +971,30 @@ func (p *parser) postfix() (expr, *Error) {
 			if !ok {
 				return e, nil
 			}
-			h := hasLabel{pos: v.pos, v: v.name}
-			for p.acceptSym(":") {
-				l, err := p.name("a label after :")
-				if err != nil {
-					return nil, err
-				}
-				h.labels = append(h.labels, l)
+			p.i++
+			labels, err := p.labels(t.pos, true)
+			if err != nil {
+				return nil, err
 			}
-			e = h
+			e = hasLabel{pos: v.pos, v: v.name, labels: labels}
 		case t.sym("["):
-			if c, ok := e.(call); ok && strings.EqualFold(c.name, "split") && len(c.args) == 2 {
-				p.i++
-				idx, err := p.expr()
-				if err != nil {
-					return nil, err
-				}
-				if err := p.expectSym("]", "] after the index"); err != nil {
-					return nil, err
-				}
+			idx, index, err := p.subscript()
+			if err != nil {
+				return nil, err
+			}
+			if c, ok := e.(call); ok && index && strings.EqualFold(c.name, "split") && len(c.args) == 2 {
 				e = call{pos: c.pos, name: splitIndex, args: append(c.args, idx)}
 				continue
 			}
-			return nil, gapLists.at(t.pos, "indexing or slicing a value")
+			e = p.refuse(gapLists.at(t.pos, "indexing or slicing a value"))
 		case t.sym("{"):
-			if _, ok := e.(varRef); ok {
-				return nil, gapLists.at(t.pos, "a map projection")
+			if _, ok := e.(varRef); !ok {
+				return e, nil
 			}
-			return e, nil
+			if err := p.mapProjection(); err != nil {
+				return nil, err
+			}
+			e = p.refuse(gapLists.at(t.pos, "a map projection"))
 		default:
 			return e, nil
 		}
@@ -731,7 +1012,7 @@ func (p *parser) atom() (expr, *Error) {
 		return strLit{pos: t.pos, s: t.val}, nil
 	case tNumber:
 		p.i++
-		return numLit{pos: t.pos, text: t.text}, nil
+		return numLit{pos: t.pos, text: t.val}, nil
 	case tParam:
 		p.i++
 		return paramRef{pos: t.pos, name: t.val}, nil
@@ -745,15 +1026,32 @@ func (p *parser) atom() (expr, *Error) {
 			p.i++
 			return unsupported{pos: t.pos, err: errAt(t.pos, "null never equals anything: write IS NULL or IS NOT NULL")}, nil
 		case t.is("CASE"):
-			return nil, gapFunctions.at(t.pos, "CASE")
+			return p.caseExpr()
 		case t.is("COLLECT") && p.peekAt(1).sym("{"):
-			return nil, gapLists.at(t.pos, "a COLLECT { } subquery")
+			p.i++
+			e := p.refuse(gapLists.at(t.pos, "a COLLECT { } subquery"))
+			if !p.peekAt(1).sym("(") {
+				return e, p.braced()
+			}
+			p.i++ // {, and patterns with a WHERE, as EXISTS { } takes them
+			if _, err := p.patterns(); err != nil {
+				return nil, err
+			}
+			if p.accept("WHERE") {
+				if _, err := p.expr(); err != nil {
+					return nil, err
+				}
+			}
+			return e, p.expectSym("}", "} to end the subquery")
 		case t.is("EXISTS") && p.peekAt(1).sym("{"), t.is("COUNT") && p.peekAt(1).sym("{"):
 			return p.subquery()
 		case t.is("shortestPath"), t.is("allShortestPaths"):
-			return nil, gapShortest.at(t.pos, "%s", t.val)
+			if _, err := p.pattern(); err != nil {
+				return nil, err
+			}
+			return p.refuse(gapShortest.at(t.pos, "%s", t.val)), nil
 		}
-		if p.peekAt(1).sym("(") || (p.peekAt(1).sym(".") && p.peekAt(2).kind == tIdent && p.peekAt(3).sym("(")) {
+		if p.callAhead() {
 			return p.call()
 		}
 		p.i++
@@ -761,56 +1059,80 @@ func (p *parser) atom() (expr, *Error) {
 	case tSym:
 		switch t.text {
 		case "(":
-			save := p.i
-			if pat, err := p.pattern(false); err == nil && len(pat.rels) > 0 {
+			save, refused := p.i, p.refused
+			if pat, err := p.pattern(); err == nil && (len(pat.rels) > 0 || pat.refused) {
+				if ws := inlineWheres([]pattern{pat}); len(ws) > 0 {
+					p.refuse(gapLater.at(ws[0].at(), "a WHERE inside a pattern in an expression"))
+				}
 				return patExpr{pos: t.pos, p: pat}, nil
 			}
-			p.i = save + 1
+			p.i, p.refused = save+1, refused
 			e, err := p.expr()
 			if err != nil {
 				return nil, err
 			}
 			return e, p.expectSym(")", ")")
 		case "[":
-			p.i++
-			l := listLit{pos: t.pos}
-			if p.acceptSym("]") {
-				return l, nil
-			}
-			for {
-				e, err := p.expr()
-				if err != nil {
-					return nil, err
-				}
-				l.items = append(l.items, e)
-				if !p.acceptSym(",") {
-					break
-				}
-			}
-			return l, p.expectSym("]", "] to end the list")
+			return p.list()
 		case "{":
-			return nil, gapLists.at(t.pos, "a map")
+			return p.refuse(gapLists.at(t.pos, "a map")), p.mapLiteral()
 		}
 	}
 	return nil, p.unexpected("an expression")
 }
 
-// subquery reads EXISTS { [MATCH] pattern, ... [WHERE expr] } or COUNT { ... }.
+// callAhead says whether the name at p starts a call: name( or a namespaced name.name...(.
+func (p *parser) callAhead() bool {
+	n := 1
+	for p.peekAt(n).sym(".") && p.peekAt(n+1).kind == tIdent {
+		n += 2
+	}
+	return p.peekAt(n).sym("(")
+}
+
+// list reads a list literal, or a list or pattern comprehension, refused.
+func (p *parser) list() (expr, *Error) {
+	t := p.next() // [
+	if p.peek().kind == tIdent && p.peekAt(1).is("IN") {
+		p.i += 2
+		if _, err := p.expr(); err != nil {
+			return nil, err
+		}
+		return p.refuse(gapLists.at(t.pos, "a list comprehension")), p.comprehensionTail(false)
+	}
+	if p.peek().sym("(") || (p.peek().kind == tIdent && p.peekAt(1).sym("=")) {
+		save, refused := p.i, p.refused
+		if pat, err := p.pattern(); err == nil && (len(pat.rels) > 0 || pat.refused) && (p.peek().is("WHERE") || p.peek().sym("|")) {
+			p.refused = refused
+			return p.refuse(gapLists.at(t.pos, "a pattern comprehension")), p.comprehensionTail(true)
+		}
+		p.i, p.refused = save, refused
+	}
+	l := listLit{pos: t.pos}
+	if p.acceptSym("]") {
+		return l, nil
+	}
+	items, err := p.exprs()
+	if err != nil {
+		return nil, err
+	}
+	l.items = items
+	return l, p.expectSym("]", "] to end the list")
+}
+
+// subquery reads EXISTS { [MATCH] pattern, ... [WHERE expr] } or COUNT { ... }, and one of several
+// clauses, refused.
 func (p *parser) subquery() (expr, *Error) {
 	t := p.next()
 	p.next() // {
+	body := p.i
 	sq := subquery{pos: t.pos, count: t.is("COUNT")}
 	p.accept("MATCH")
-	for {
-		pat, err := p.pattern(false)
-		if err != nil {
-			return nil, err
-		}
-		sq.patterns = append(sq.patterns, pat)
-		if !p.acceptSym(",") {
-			break
-		}
+	pats, err := p.patterns()
+	if err != nil {
+		return nil, err
 	}
+	sq.patterns = pats
 	if p.accept("WHERE") {
 		e, err := p.expr()
 		if err != nil {
@@ -818,8 +1140,16 @@ func (p *parser) subquery() (expr, *Error) {
 		}
 		sq.where = e
 	}
-	if t := p.peek(); t.is("RETURN") || t.is("WITH") || t.is("MATCH") {
-		return nil, gapLater.at(t.pos, "a %s { } subquery of several clauses", strings.ToUpper(sq.kind()))
+	sq.where = andAll(append(inlineWheres(sq.patterns), sq.where)...)
+	if c := p.peek(); c.kind == tIdent && !c.quoted && clauseWords[strings.ToUpper(c.val)] {
+		p.refuse(gapLater.at(c.pos, "a %s { } subquery of several clauses", strings.ToUpper(sq.kind())))
+		p.i = body
+		p.braces++
+		_, err := p.union()
+		p.braces--
+		if err != nil {
+			return nil, err
+		}
 	}
 	return sq, p.expectSym("}", "} to end the subquery")
 }
@@ -836,6 +1166,9 @@ func (p *parser) call() (expr, *Error) {
 	}
 	c := call{pos: t.pos, name: name}
 	p.next() // (
+	if e, ok, err := p.listFunction(t, name); ok {
+		return e, err
+	}
 	if p.acceptSym("*") {
 		c.star = true
 		return c, p.expectSym(")", ") after *")
@@ -844,15 +1177,10 @@ func (p *parser) call() (expr, *Error) {
 	if p.acceptSym(")") {
 		return c, nil
 	}
-	for {
-		e, err := p.expr()
-		if err != nil {
-			return nil, err
-		}
-		c.args = append(c.args, e)
-		if !p.acceptSym(",") {
-			break
-		}
+	args, err := p.exprs()
+	if err != nil {
+		return nil, err
 	}
+	c.args = args
 	return c, p.expectSym(")", ") to end the call")
 }

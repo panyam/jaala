@@ -81,3 +81,42 @@ func TestAFrontEndsExampleMustCompile(t *testing.T) {
 		t.Errorf("asked %d times", len(m.asked))
 	}
 }
+
+// A draft that compiles and answers nothing goes back at the Cypher that matched nothing (#386):
+// the pattern under a caret and the program's variables in the query's names, not the compiled
+// literal alone, which names nothing the model wrote.
+func TestAnEmptyAnswerIsExplainedAtItsCypher(t *testing.T) {
+	v, b := guide.Deps(t)
+	m := &replies{texts: []string{
+		"MATCH (p:Package)-[:IMPORTS]->(q:Package)\nWHERE p.name = 'app'\nMATCH (q)-[:IMPORTS]->(r:Package {license: 'GPL'}) RETURN r.name",
+		`MATCH (p:Package {name: 'app'})-[:IMPORTS]->(q) RETURN q.name`,
+	}}
+	p, tr, err := nl.Translate(context.Background(), "what does app import?", v, nil, m, nl.Options{Base: b, FrontEnd: cypher.NewFrontEnd(depsGraph)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tr.Tries[0].Kind != nl.KindEmpty || len(p.Rows) != 1 {
+		t.Fatalf("tries %v, program %+v", tr.Tries, p)
+	}
+	fed := m.asked[1].Turns[2].Text
+	for _, want := range []string{"answered no rows", "line 3, column 23:\n  MATCH (q)-[:IMPORTS]->(r:Package {license: 'GPL'})", "\n                        ^\n"} {
+		if !strings.Contains(fed, want) {
+			t.Errorf("fed back %q, want %q in it", fed, want)
+		}
+	}
+	if strings.Contains(fed, "?r") {
+		t.Errorf("fed back %q, which names the program's variables", fed)
+	}
+	// an EXISTS that matched nothing ends its trail in the rule cypher_exists wrote, whose literal
+	// the goal's report only reaches through Because
+	m = &replies{texts: []string{
+		"MATCH (p:Package) WHERE EXISTS { (p)-[:IMPORTS]->(:Package {license: 'GPL'}) } RETURN p.name",
+		`MATCH (p:Package) RETURN p.name`,
+	}}
+	if _, _, err := nl.Translate(context.Background(), "what imports a GPL package?", v, nil, m, nl.Options{Base: b, FrontEnd: cypher.NewFrontEnd(depsGraph)}); err != nil {
+		t.Fatal(err)
+	}
+	if fed := m.asked[1].Turns[2].Text; !strings.Contains(fed, "because") || !strings.Contains(fed, "line 1, column 25:") {
+		t.Errorf("fed back %q, want the trail through the rule, at the EXISTS", fed)
+	}
+}

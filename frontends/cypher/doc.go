@@ -39,6 +39,9 @@
 // The rest it refuses with an *Error naming the issue that would let it: a relationship variable
 // read anywhere (#279), paths as values (#280), shortest paths and long or zero-length bounds
 // (#281), OPTIONAL MATCH (#282), lists, maps and UNWIND (#283), functions beyond the aggregates
-// above (#284), writes (#287) and USE (#289), and CALL { } subqueries and an ORDER BY, SKIP or
-// LIMIT inside a WITH or a UNION part (#364).
+// above (#284), writes (#287), USE and LOAD CSV (#289), CALL { } subqueries, an ORDER BY, SKIP or
+// LIMIT inside a WITH or a UNION part, a label expression beyond A&B and a query without a MATCH
+// or a RETURN (#364), and a WHERE of more than 16 alternatives (#388). It parses all of Neo4j 5's
+// query syntax to do that (#382), so valid Cypher is refused by its gap rather than as a typo, and a
+// mistake anywhere in the text is reported before a gap.
 package cypher

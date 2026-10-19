@@ -8,7 +8,7 @@ type Pos struct {
 }
 
 // An Error is a Cypher text Compile refused, with where the piece it is about starts. Gap is set when
-// the text is Cypher a program can't express yet: the jaala issue that would let it (#279 to #289),
+// the text is Cypher a program can't express yet: the jaala issue that would let it (#279 to #289, #364, #388),
 // and Capability says what that is in words a model can act on. A Gap of 0 is a mistake in the text
 // or against the graph view, such as an unknown label.
 type Error struct {
@@ -42,6 +42,7 @@ var (
 	gapFunctions = gap{284, "this function"}
 	gapWrites    = gap{287, "writing to the graph"}
 	gapGraphs    = gap{289, "choosing a graph"}
+	gapDisjuncts = gap{388, "a WHERE of more than 16 alternatives"}
 	// What a program has no form for yet: CALL { } subqueries, and an order or limit inside a WITH
 	// or a UNION part.
 	gapLater = gap{364, ""}

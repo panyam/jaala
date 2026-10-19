@@ -42,8 +42,8 @@ func FuzzCompile(f *testing.F) {
 			}
 			return
 		}
-		for _, r := range p.Text {
-			if r < 0x20 && r != '\t' && r != '\n' && r != '\r' && !strings.ContainsRune(text, r) {
+		for i, r := range p.Text {
+			if r < 0x20 && r != '\t' && r != '\n' && r != '\r' && !strings.ContainsRune(text, r) && !inString(p.Text, i) {
 				t.Fatalf("%q compiled to text holding a control character the query doesn't, one of the compiler's markers: %q", text, p.Text)
 			}
 		}
@@ -64,4 +64,20 @@ func FuzzCompile(f *testing.F) {
 			t.Fatalf("%q compiled to %s, which doesn't check: %v", text, p.Text, err)
 		}
 	})
+}
+
+// inString says whether the byte at i of a program's text is inside a "string", where a value the
+// query wrote as an escape ('\b') may put a control character. A backslash keeps the next character
+// in the string, as jaala's lexer reads it.
+func inString(text string, i int) bool {
+	in := false
+	for j := 0; j < i; j++ {
+		switch {
+		case in && text[j] == '\\':
+			j++
+		case text[j] == '"':
+			in = !in
+		}
+	}
+	return in
 }
