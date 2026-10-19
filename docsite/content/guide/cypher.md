@@ -60,6 +60,8 @@ The parser reads all of Neo4j 5's query syntax ([#382](https://github.com/panyam
 
 `cypher.Grammar(graph)` holds a model to the subset as GBNF, which llama.cpp decodes under: `MATCH`, `WHERE`, `WITH`, `UNION`, `EXISTS { }`, and `RETURN` with its aggregates, `ORDER BY`, `SKIP` and `LIMIT`. Its only names are the graph's labels, types and properties. It leaves out `CALL`, `$parameters` and everything refused below. Every text it accepts parses. Whether the query means something, such as returning a variable it matched, is still `Compile`'s to say, as a program's is `Validate`'s.
 
+With `nl.Options.Actions`, the front end is an `nl.Prober` ([#393](https://github.com/panyam/jaala/issues/393), [looking before answering]({{.Site.PathPrefix}}/guide/plain-language/#looking-before-answering)): `look Package` describes a label or a relationship type, and `values Package.license` lists a property's values through a Cypher query of its own.
+
 Each refusal goes back as `Explain` writes it, a mistyped label with the label it likely meant, and a construct jaala can't express yet as the kind `gap`, so a report counts which gaps real questions hit. The last example above is a model mistyping a label and fixing it on its second try.
 
 ## Errors in the query's terms

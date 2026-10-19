@@ -42,9 +42,12 @@ func (r Result) FirstTry() bool { return r.Pass && len(r.Trace.Tries) == 1 }
 // A Report scores a translator over a set of Cases: how many passed, on the first try and after
 // retries, what the tries cost, and what the refused tries were refused for.
 type Report struct {
-	Cases                             []Result
-	Passed, PassedFirstTry            int
-	Tries                             int
+	Cases                  []Result
+	Passed, PassedFirstTry int
+	Tries                  int
+	// Steps counts the actions the models asked for (Options.Actions), whose tokens and latency are
+	// in the totals beside the tries'.
+	Steps                             int
 	TokensIn, TokensOut, TokensCached int
 	Latency                           time.Duration
 	// Refused counts the refused tries by Kind. Checked counts those refused with a
@@ -87,6 +90,13 @@ func (rep *Report) add(res Result) {
 		if res.FirstTry() {
 			rep.PassedFirstTry++
 		}
+	}
+	for _, s := range res.Trace.Steps {
+		rep.Steps++
+		rep.TokensIn += s.TokensIn
+		rep.TokensOut += s.TokensOut
+		rep.TokensCached += s.TokensCached
+		rep.Latency += s.Latency
 	}
 	for _, t := range res.Trace.Tries {
 		rep.Tries++
@@ -213,8 +223,12 @@ func (rep Report) String() string {
 	if l := rep.Language(); l != "" {
 		in = " in " + l
 	}
-	fmt.Fprintf(&b, "passed %d/%d%s, %d on the first try; %d tries, tokens %d in (%d cached), %d out\n",
-		rep.Passed, n, in, rep.PassedFirstTry, rep.Tries, rep.TokensIn, rep.TokensCached, rep.TokensOut)
+	steps := ""
+	if rep.Steps > 0 {
+		steps = fmt.Sprintf(" and %d steps", rep.Steps)
+	}
+	fmt.Fprintf(&b, "passed %d/%d%s, %d on the first try; %d tries%s, tokens %d in (%d cached), %d out\n",
+		rep.Passed, n, in, rep.PassedFirstTry, rep.Tries, steps, rep.TokensIn, rep.TokensCached, rep.TokensOut)
 	var kinds []string
 	for k := range rep.Refused {
 		kinds = append(kinds, k)

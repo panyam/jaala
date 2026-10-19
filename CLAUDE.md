@@ -87,6 +87,11 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   (the model picks the columns' names and order) and rows as a multiset unless `Ordered`. `TestEval`
   is #322's exercise until Declaire's arm runs: the guide's vocabulary, a scripted small model and
   fallback (`byQuestion`), and the report in `frontends/nl/testdata/eval.golden` (`-update`).
+  `Options.Actions` (#393, `actions.go`) lets a model reply `look`, `values` or `try` before its
+  answer: each is a `Trace.Steps` entry, not a `Try`, so first-try counts answers, and the grammar
+  wraps the draft's (`actionGrammar` renames its root `program`). The loop is language-blind: `try`
+  runs through the front end, and a front end that is an `nl.Prober` (Cypher's) writes `look` and
+  `values` in its terms. Off by default, so `TestEval`'s goldens don't move.
 - **`nl.Grammar()` is GBNF built from a rule table** (`frontends/nl/grammar.go`, #323), and every text it
   accepts must parse: `TestEveryProgramTheGrammarWritesParses` samples 21,000 programs from the table
   over 70 seeds and every depth (one seed alone missed `-(9)` as a column). The other direction lives

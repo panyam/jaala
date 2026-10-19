@@ -53,6 +53,18 @@ A model is the host's: `Translate` calls an `nl.Model`, a name and a `Complete` 
 
 `Translate` returns the accepted `nl.Program` (its text, `Query`, rows when it ran, and the model that wrote it) and an `nl.Trace` of every try, also when it fails: the model, the text, the error and its `Kind`, tokens in, out and cached, latency, and, for a draft run over `Options.Base`, the `datalog.Report` of that run. An empty answer's error is an `nl.EmptyAnswer`, whose `Why` is the run's `Report.Empty`. `Kind` is a `CheckError`'s kind, or `parse`, `eval`, `empty`, `repeat`, `answer` or `model`, so a host counts where its retries went without reading messages.
 
+## Looking before answering
+
+A model drafting blind guesses at what the data holds, and on Declaire's questions most of a local model's failures were guesses that answered nothing: an edge kind, an attribute's value, an id's spelling ([#393](https://github.com/panyam/jaala/issues/393)). `Options.Actions` lets it look first. Each reply may then be an action instead of an answer, and its result comes back as the next turn:
+
+- `look NAME`: a relation's signature and whole doc, or a module's members.
+- `values TARGET`: up to `Actions.Sample` (10) of one argument's values, as `pkg.license` or `pkg.1`, run as `pkg(_, ?v) => ?v limit 10`.
+- `try` on its own line, then a draft: it runs with at most `Sample` rows, and sends back its rows, or why it answered none, as an empty answer is explained.
+
+Any other reply is the answer, judged as a draft always is. An action doesn't spend a try. `Actions.Steps` (6) caps them per model, a repeated one is answered with a note that it was asked already, and once they run out the next reply must be the answer, under the answer's grammar. The grammar sent wraps the draft's, so a model under GBNF writes only a well-formed action or a draft. `Trace.Steps` records each action with what went back and what it cost, and `Report` counts steps and their tokens beside the tries, so the first-try rate still counts answers.
+
+The loop doesn't read the drafts' language: a `try` goes through the front end as an answer does, and a front end that implements `nl.Prober` answers `look` and `values` in its own terms. Cypher's does, so a model writing Cypher asks `values Package.license` and the probe runs as `MATCH (n:Package) RETURN DISTINCT n.license LIMIT 10`.
+
 ## Front ends
 
 A model needn't write jaala's syntax. `Options.FrontEnd` names a language it writes instead ([#354](https://github.com/panyam/jaala/issues/354)), and Cypher's is `cypher.NewFrontEnd(graph, examples...)` ([asking in Cypher]({{.Site.PathPrefix}}/guide/cypher/#a-model-writing-cypher)). The prompt is then the front end's card, instructions and examples, followed by the pack's `About` and data `Card` but not its jaala examples. The grammar sent is the front end's. Each draft is compiled before it's checked and run, and every refusal goes back as the front end explains it, in the draft's language and at its place in the draft. Everything else is unchanged: repeats, empty answers, the fallback and the pack's `Check`. An empty answer goes back at the draft's place too: `cypher.Explain` puts the caret under the pattern that wrote the literal `Report.Empty` ends at ([#386](https://github.com/panyam/jaala/issues/386)).
