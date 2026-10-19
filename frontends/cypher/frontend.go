@@ -73,3 +73,44 @@ func (f frontEnd) Compile(v *ns.Vocabulary, text string) (nl.Compiled, error) {
 	}
 	return c, err
 }
+
+// Look describes a label or a relationship type for nl.Actions (#393): its properties, and for a
+// label those the host computes and those its facts may name. Any other name is answered with what
+// the graph does have.
+func (f frontEnd) Look(_ *ns.Vocabulary, name string) (string, error) {
+	name = strings.TrimLeft(name, ":")
+	var labels, types []string
+	for _, n := range f.g.Nodes {
+		if n.Label == name {
+			text := fmt.Sprintf("(:%s%s)", n.Label, propsText(n.Props))
+			if len(f.g.Derived) > 0 {
+				text += fmt.Sprintf("\nand%s, which the host computes for any node", propsText(f.g.Derived))
+			}
+			if f.g.Props != nil {
+				text += "\nand any other key its facts name"
+			}
+			return text, nil
+		}
+		labels = append(labels, n.Label)
+	}
+	for _, e := range f.g.Edges {
+		if e.Type == name {
+			return fmt.Sprintf("-[:%s%s]->", e.Type, propsText(e.Props)), nil
+		}
+		types = append(types, e.Type)
+	}
+	return "", fmt.Errorf("look %s: the graph's labels are %s, and its relationship types %s", name, strings.Join(labels, ", "), strings.Join(types, ", "))
+}
+
+// Probe is the query listing a node property's values, for nl.Actions' values: target is
+// Label.property.
+func (f frontEnd) Probe(_ *ns.Vocabulary, target string, limit int) (string, error) {
+	label, prop, ok := strings.Cut(strings.TrimLeft(target, ":"), ".")
+	if !ok || label == "" || prop == "" {
+		return "", fmt.Errorf("values %s: name a label and one of its properties, such as Label.property", target)
+	}
+	return fmt.Sprintf("MATCH (n:`%s`) RETURN DISTINCT n.`%s` LIMIT %d", label, prop, limit), nil
+}
+
+// ValuesTarget is how Probe's target is written.
+func (frontEnd) ValuesTarget() string { return "Label.property" }
