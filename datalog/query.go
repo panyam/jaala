@@ -99,6 +99,10 @@ type Literal struct {
 	Neg     *Atom
 	Compare *Compare
 	Agg     *BodyAggregate
+	// Opt is `optional { body }` (#282): the clause's row holds whether body matches or not, and a
+	// variable only body binds is absent when it doesn't. lowerOptionals rewrites it into rules before
+	// anything else reads the program, so nothing after it sees one.
+	Opt *Body
 	// at is the literal's written position in its body (1-based), set for a witnessed Eval before any
 	// rewrite; 0 marks a literal a rewrite added. See Witness.
 	at int

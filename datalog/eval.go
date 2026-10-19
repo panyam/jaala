@@ -369,7 +369,10 @@ func evaluateOn(b *Base, gen int64, q Query, o evalOptions, rewrite func(*Base, 
 	if err := b.run.done(); err != nil {
 		return nil, err
 	}
-	q, err := lowerBodyAggregates(q, "")
+	q, err := lowerOptionals(q, "", b.reg)
+	if err == nil {
+		q, err = lowerBodyAggregates(q, "")
+	}
 	if err != nil {
 		return nil, err
 	}

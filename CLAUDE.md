@@ -181,7 +181,14 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   refusal and matched everything (#352's second PR caught it). An OR becomes a `cypher_match` rule
   per alternative, a WHERE pattern or `EXISTS { }` a `cypher_exists` rule over the nodes it shares
   (each a stand-in, `nodeVar.of`, so reading one's column inside reads it there), `COUNT { }` a
-  body aggregate (so a node with no match counts 0), a variable length (`*m..n`, a
+  body aggregate (so a node with no match counts 0), an `OPTIONAL MATCH` an `optional { }` holding
+  its nodes' label atoms, relationships and WHERE (`optPart`, `into`, `closeOptionals`, #282), a
+  property RETURN reads through Props on one of its nodes, or a value computed from it, in braces of
+  its own, and `count(b)` over its node a `sum` of a `?_seen` its braces bind; Cypher's null rules
+  are written into the program: `guards` adds `not absent(...)` to `=` (both sides), `<>` and text
+  tests over a `nullable` operand (a label's column, an optional node or its property, a carried
+  value, a node a WITH carried from an optional, `nodeVar.absent`), and `IS NULL` reads a variable
+  too; what's still refused names #400. A variable length (`*m..n`, a
   quantifier, `shortestPath` or a path selector, the last two keeping only the nodes) `graph.closure`
   over the type's relation or a `cypher_step` helper (#281), and a path variable over one relationship
   (`p = (a)-[:T*]->(b)`, `declarePath`) `graph.paths` as a trail, or `"shortest"` under
@@ -831,6 +838,22 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   and refuses a call that doesn't bind an input, a negated call, and a counting caller of a
   projecting input relation (#139's multiplicity). Validate and module resolution (at `Check`) run
   the same lowering for its errors. `ArgSig.Input` marks the argument.
+- **`optional { body }` is lowered to rules before body aggregates are** (`optional.go`, #282),
+  in every place they are (`evaluateOn`, `validateBound`, `ColumnKinds`, per module): `dom(S)` from
+  the clause's positive literals not reading what the braces bind, `has(S)` (from `dom` only when
+  the braces can't bind S themselves, or a recursive clause's optional recursed through its
+  negation), `opt(S, N)` once per match and `opt(S, absent…)` when `not has(S)`. N is everything the
+  braces bind, read elsewhere or not, so the clause keeps a row per match as a join does. Names start
+  `optional` and `aggSep`, so module checks and `whereRule` treat them as a body aggregate's. Absent
+  keeps jaala's meaning (equal to absent, no order, skipped by `count(distinct)`, `sum`, `min`, `max`,
+  `list`); a front end with other null rules writes them, as Cypher's does. The typer lets an absent
+  head constant abstain, or every variable an optional binds lost its type. Soufflé counts an optional
+  unsupported (its only absent sentinel is a number); `TestAnOptionalIsALeftOuterJoin` holds it to a
+  join written in Go instead. The corpus wraps a graph atom now and then (`generator.optionals`); it
+  found the recursive clause, an expression's variable the rewrite missed, and a pushed group shared
+  by two rules at different written places (`push.go` names a group by its literals' positions
+  when witnessing). #370's `bindEqualities` leaves alone text that reads as a number: `=` compares a
+  number with text by their text, which a join doesn't.
 - **An aggregate in a body is lowered to rules before anything else runs** (`bodyagg.go`, #71).
   `?v = f(?x) : { body }` becomes a domain relation of the shared variables (the clause's positive
   relations that don't read an aggregate's value; no citations, no witness), a head aggregate over

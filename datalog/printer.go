@@ -51,6 +51,8 @@ func (l Literal) String() string {
 	switch {
 	case l.Agg != nil:
 		return "?" + string(l.Agg.Result) + " = " + (Term{Agg: &l.Agg.Agg}).String() + " : { " + l.Agg.Body.String() + " }"
+	case l.Opt != nil:
+		return "optional { " + l.Opt.String() + " }"
 	case l.Pos != nil:
 		return l.Pos.String()
 	case l.Neg != nil:

@@ -42,6 +42,7 @@ type matchClause struct {
 	pos      Pos
 	patterns []pattern
 	where    expr
+	optional bool // OPTIONAL MATCH (#282)
 }
 
 // A pattern is a chain of nodes joined by relationships: rels[i] joins nodes[i] and nodes[i+1].

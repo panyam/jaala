@@ -68,7 +68,8 @@ type genLit struct {
 	args []string
 	op   string
 	agg  *genAgg
-	fact string // the variable `as` binds the atom's fact to (#279), "" for none
+	fact string   // the variable `as` binds the atom's fact to (#279), "" for none
+	opt  []genLit // optional { opt } (#282), the literal's only content
 }
 
 // genAgg is `result = fn : { body }` (#71).
@@ -78,6 +79,9 @@ type genAgg struct {
 }
 
 func (l genLit) String() string {
+	if l.opt != nil {
+		return "optional { " + joinLits(l.opt) + " }"
+	}
 	if l.agg != nil {
 		return l.agg.result + " = " + l.agg.fn + " : { " + joinLits(l.agg.body) + " }"
 	}
@@ -308,6 +312,9 @@ type generator struct {
 	// paths it binds.
 	walks  *rand.Rand
 	npaths int
+	// optionals wraps an atom over a graph relation in optional { } now and then (#282), from a stream
+	// of its own.
+	optionals *rand.Rand
 }
 
 // newGenerator draws a program for facts from rnd. Arithmetic depends on the graph's units as drawn,
@@ -326,6 +333,9 @@ func newGenerator(rnd *rand.Rand, facts genFacts) *generator {
 	h = fnv.New64a()
 	fmt.Fprint(h, "walks", facts.n, facts.edges, facts.weights)
 	g.walks = rand.New(rand.NewSource(int64(h.Sum64())))
+	h = fnv.New64a()
+	fmt.Fprint(h, "optionals", facts.n, facts.edges, facts.weights)
+	g.optionals = rand.New(rand.NewSource(int64(h.Sum64())))
 	if facts.units == nil {
 		h := fnv.New64a()
 		fmt.Fprint(h, "arith", facts.n, facts.edges, facts.weights)
@@ -585,7 +595,38 @@ func (g *generator) body(layer int, recursive bool) *genBody {
 	}
 	g.compareFacts(b)
 	g.compute(b)
+	g.optional(b)
 	return b
+}
+
+// optional now and then makes an atom over a graph relation, one not the body's first positive
+// literal, optional (#282): its row holds whether the atom matches, what only it binds absent when it
+// doesn't. A derived relation stays outside, since an optional over one the clause reaches itself
+// through doesn't stratify.
+func (g *generator) optional(b *genBody) {
+	if g.optionals == nil || g.optionals.Float64() >= 0.15 {
+		return
+	}
+	var at []int
+	first := true
+	for i, l := range b.lits {
+		if l.rel == "" || l.neg || l.agg != nil || l.opt != nil {
+			continue
+		}
+		if first {
+			first = false
+			continue
+		}
+		if l.fact == "" && slices.ContainsFunc(genGraphRels, func(r genRel) bool { return r.name == l.rel }) {
+			at = append(at, i)
+		}
+	}
+	if len(at) == 0 {
+		return
+	}
+	i := at[g.optionals.Intn(len(at))]
+	b.lits[i] = genLit{opt: []genLit{b.lits[i]}}
+	g.shapes["optional"] = true
 }
 
 // closure now and then makes the literal of two nodes just drawn a walk of its relation (#281), min 1
@@ -1672,7 +1713,7 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 			}
 		}
 	}
-	shapes := []string{"program", "recursion", "negation", "head aggregate", "goal aggregate", "body aggregate", "bound goal", "set-bound goal", "arithmetic", "bound fact", "avg", "closure", "paths"}
+	shapes := []string{"program", "recursion", "negation", "head aggregate", "goal aggregate", "body aggregate", "bound goal", "set-bound goal", "arithmetic", "bound fact", "avg", "closure", "paths", "optional"}
 	var counts, issues []string
 	for _, sh := range shapes {
 		counts = append(counts, fmt.Sprintf("%s %d/%d", sh, compared[sh+"/plain"], compared[sh+"/witnessed"]))
@@ -1692,6 +1733,9 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 	}
 	if compared["closure/plain"] == 0 || compared["closure/witnessed"] == 0 {
 		t.Errorf("control: no program walked a relation with graph.closure (#281)")
+	}
+	if compared["optional/plain"] == 0 || compared["optional/witnessed"] == 0 {
+		t.Errorf("control: no program matched optionally (#282)")
 	}
 	if compared["paths/plain"] == 0 || compared["paths/witnessed"] == 0 {
 		t.Errorf("control: no program listed paths with graph.paths (#280)")

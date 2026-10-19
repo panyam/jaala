@@ -1,0 +1,3 @@
+fixture: deps
+query: package(?p), optional { test(?t, ?p) } => ?p, ?t
+expect: [[api, api_test], [app, absent], [auth, auth_fuzz], [auth, auth_test], [cache, absent], [config, absent], [db, db_test], [legacy, absent], [log, absent], [metrics, absent], [util, util_test]]

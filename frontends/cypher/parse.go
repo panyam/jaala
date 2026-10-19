@@ -217,12 +217,17 @@ func (p *parser) query() (query, *Error) {
 		}
 		ends = nil
 		switch {
-		case t.is("MATCH"):
+		case t.is("MATCH"), t.is("OPTIONAL") && p.peekAt(1).is("MATCH"):
+			optional := t.is("OPTIONAL")
 			p.i++
+			if optional {
+				p.i++
+			}
 			m, err := p.match(t.pos)
 			if err != nil {
 				return q, err
 			}
+			m.optional = optional
 			cur.clauses = append(cur.clauses, readClause{match: &m})
 		case t.is("CALL"):
 			p.i++

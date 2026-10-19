@@ -19,8 +19,9 @@
 // selector, which keep the match's nodes), a path variable over one relationship, p = (a)-[:T*]->(b),
 // as graph.paths (#280): each trail as a value, or with shortestPath or SHORTEST 1 one shortest path
 // per pair, read by length(p), nodes(p), relationships(p) (the edges' facts, through a helper of three
-// arguments, wire) and x IN nodes(p), WHERE (comparisons, AND, OR, XOR,
-// NOT, IS NULL, STARTS WITH, ENDS WITH, CONTAINS, =~, IN over a written list, a label test, a
+// arguments, wire) and x IN nodes(p), OPTIONAL MATCH after a MATCH as jaala's optional { } (#282),
+// its nodes, relationships and WHERE inside the braces, WHERE (comparisons, AND, OR, XOR,
+// NOT, IS NULL on a property or a variable, STARTS WITH, ENDS WITH, CONTAINS, =~, IN over a written list, a label test, a
 // pattern, EXISTS { } and COUNT { }, the last a body aggregate so a node with no match counts 0),
 // WITH stages with their aggregates and WHERE, UNION and UNION ALL, CALL proc(args) YIELD over a
 // predicate or relation of the vocabulary (each YIELD at the argument its label names), and RETURN
@@ -36,8 +37,14 @@
 //   - The rows are distinct, as a program's answer is: RETURN without DISTINCT answers each row
 //     once, and count(x) counts distinct bindings of the match, not paths. Cypher's duplicate rows
 //     need a relationship as a value (#279).
-//   - A property read through the graph's Props relation, or a Derived one, is a match: a node without it has no row,
-//     where Cypher would answer null (#282).
+//   - A property read through the graph's Props relation, or a Derived one, is a match: a node without
+//     it has no row, where Cypher would answer null, unless an OPTIONAL MATCH declared the node, whose
+//     property RETURN reads is read optionally (#400).
+//   - Null is jaala's absent, and Cypher's rules for it are written into the program: a comparison or
+//     text test over a value that may be absent (a label's column, a node or value an OPTIONAL MATCH
+//     bound, a value a WITH carried) is guarded with not absent(...), so it filters the row as Cypher's
+//     unknown does, and count(b) over an optional node sums a marker its braces bind. count(p.x) over
+//     a column that may be absent still counts the node (#400).
 //   - A variable-length match without a path variable is reachability: it doesn't keep Cypher's rule
 //     that a path uses a relationship once, which can differ for a bounded range over a cycle. Bind
 //     the path, p = (...), for trails (#280). A zero-length one from a node nothing else binds pairs
@@ -49,7 +56,8 @@
 //
 // The rest it refuses with an *Error naming the issue that would let it: a relationship variable
 // read anywhere (#279), a path variable over more than one relationship, ALL SHORTEST and SHORTEST k
-// paths as values, shortestPath as a value outside p = (...), and quantified path patterns (#398), OPTIONAL MATCH (#282), lists, maps and UNWIND (#283), functions beyond the aggregates
+// paths as values, shortestPath as a value outside p = (...), and quantified path patterns (#398), an OPTIONAL MATCH before any MATCH, with an OR in its WHERE or
+// adding a label to an earlier node (#400), lists, maps and UNWIND (#283), functions beyond the aggregates
 // above (#284), writes (#287), USE and LOAD CSV (#289), CALL { } subqueries, an ORDER BY, SKIP or
 // LIMIT inside a WITH or a UNION part, a label expression beyond A&B and a query without a MATCH
 // or a RETURN (#364), and a WHERE of more than 16 alternatives (#388). It parses all of Neo4j 5's

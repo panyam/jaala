@@ -11,7 +11,7 @@ import (
 	"github.com/panyam/mcpkit/core"
 )
 
-const cypherDesc = `Ask a Cypher query over %s: MATCH patterns, WHERE, and RETURN with DISTINCT, count, min, max, sum, collect, ORDER BY, SKIP and LIMIT. The answer names the program it ran and gives each row the facts it was derived from. Bind $parameters with params. Constructs it can't take yet (OPTIONAL MATCH, paths, UNWIND, writes) come back as an error naming them, so rewrite rather than retry. %s`
+const cypherDesc = `Ask a Cypher query over %s: MATCH and OPTIONAL MATCH patterns, variable lengths and a path variable over one relationship (p = (a)-[:T*]->(b), with length, nodes and relationships), WHERE, WITH, and RETURN with DISTINCT, count, min, max, sum, collect, ORDER BY, SKIP and LIMIT. The answer names the program it ran and gives each row the facts it was derived from. Bind $parameters with params. Constructs it can't take yet (UNWIND and lists, CASE, writes) come back as an error naming them, so rewrite rather than retry. %s`
 
 type cypherInput struct {
 	Query     string         `json:"query" jsonschema:"required" jsonschema_description:"A Cypher query: MATCH ... WHERE ... RETURN ..."`

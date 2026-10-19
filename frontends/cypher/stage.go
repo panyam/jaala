@@ -45,9 +45,23 @@ type compiler struct {
 	rels   map[string]Pos    // relationship variables, which nothing may read (#279)
 	values map[string]string // value variables (a WITH's or a YIELD's) to their jaala variable
 	vorder []string
-	shared []frag  // literals every disjunct holds
-	scope  *[]frag // where a property read through Props or a computed value goes
-	kv     map[*[]frag]map[string]string
+	shared []frag     // literals every disjunct holds
+	opts   []*optPart // the stage's OPTIONAL MATCHes, in order (#282)
+	// optValues are the value variables an OPTIONAL MATCH binds: a path's.
+	optValues map[string]bool
+	inPart    int     // the OPTIONAL MATCH whose WHERE is compiling, inside whose braces its nodes are bound
+	scope     *[]frag // where a property read through Props or a computed value goes
+	kv        map[*[]frag]map[string]string
+}
+
+// An optPart is one OPTIONAL MATCH (#282): the literals its optional { } holds (its nodes' labels,
+// its relationships and its WHERE), and seen, a variable its braces bind to 1, which count over one of
+// its nodes sums, so a row with nothing matched counts 0 as Cypher's count(b) skips a null b.
+type optPart struct {
+	pos   Pos
+	conds []expr
+	lits  []frag
+	seen  string
 }
 
 func (w *world) stage() *compiler {
@@ -55,11 +69,13 @@ func (w *world) stage() *compiler {
 		values: map[string]string{}}
 }
 
-// carried is a variable a WITH hands on: a node, with the labels it has, or a value.
+// carried is a variable a WITH hands on: a node, with the labels it has, or a value; absent says an
+// OPTIONAL MATCH bound the node, so it may be absent in the next stage too.
 type carried struct {
 	name   string
 	node   bool
 	labels []string
+	absent bool
 }
 
 type stageIn struct {
@@ -206,7 +222,7 @@ func (c *compiler) carry(r returnClause) ([]carried, *Error) {
 		cr := carried{name: name}
 		if isVar {
 			if n, ok := c.nodes[v.name]; ok {
-				cr.node, cr.labels = true, append([]string(nil), n.labels...)
+				cr.node, cr.labels, cr.absent = true, append([]string(nil), n.labels...), n.opt > 0 || n.absent
 			}
 		}
 		out = append(out, cr)
@@ -240,7 +256,7 @@ func (c *compiler) compileStage(in *stageIn, s stage, where expr) (projected, *E
 			}
 			if it.node {
 				n := &nodeVar{name: it.name, jv: c.fresh(it.name), labels: it.labels, slots: map[string]*slot{},
-					endpoint: true, carried: true}
+					endpoint: true, carried: true, absent: it.absent}
 				c.name(n.jv, it.name)
 				c.nodes[it.name] = n
 				c.order = append(c.order, n)
@@ -255,6 +271,7 @@ func (c *compiler) compileStage(in *stageIn, s stage, where expr) (projected, *E
 	type relAt struct {
 		r        relPat
 		from, to *nodeVar
+		opt      int // the OPTIONAL MATCH it's in, from 1
 	}
 	var rels []relAt
 	var calls []frag // after the patterns, which bind what a call reads: Naive runs a call where it's written
@@ -291,27 +308,71 @@ func (c *compiler) compileStage(in *stageIn, s stage, where expr) (projected, *E
 			continue
 		}
 		m := rc.match
+		var part *optPart
+		condsTo := &conds
+		if m.optional {
+			if len(c.order) == 0 {
+				return projected{}, gapOptional.at(m.pos, "an OPTIONAL MATCH before any MATCH: start with a MATCH")
+			}
+			part = &optPart{pos: m.pos}
+			c.opts = append(c.opts, part)
+			condsTo = &part.conds
+		}
 		for _, pat := range m.patterns {
 			ns := make([]*nodeVar, len(pat.nodes))
 			for i, np := range pat.nodes {
-				n, err := c.declareNode(np, &conds)
+				old := c.nodes[np.v]
+				if part != nil && np.v != "" && old != nil && old.opt != len(c.opts) {
+					for _, l := range np.labels {
+						if !contains(old.labels, l) {
+							return projected{}, gapOptional.at(np.pos, "a label an OPTIONAL MATCH adds to %s, which a match before it bound", np.v)
+						}
+					}
+				}
+				n, err := c.declareNode(np, condsTo)
 				if err != nil {
 					return projected{}, err
+				}
+				if part != nil && (np.v == "" || old == nil) {
+					n.opt = len(c.opts)
 				}
 				ns[i] = n
 			}
 			if err := c.declarePath(&pat); err != nil {
 				return projected{}, err
 			}
+			if part != nil && pat.path != "" {
+				if c.optValues == nil {
+					c.optValues = map[string]bool{}
+				}
+				c.optValues[pat.path] = true
+			}
 			for i, r := range pat.rels {
 				if err := c.declareRel(r); err != nil {
 					return projected{}, err
 				}
 				ns[i].endpoint, ns[i+1].endpoint = true, true
-				rels = append(rels, relAt{r, ns[i], ns[i+1]})
+				at := relAt{r: r, from: ns[i], to: ns[i+1]}
+				if part != nil {
+					at.opt = len(c.opts)
+				}
+				rels = append(rels, at)
 			}
 		}
-		if m.where != nil {
+		if m.where != nil && part != nil {
+			for _, e := range conjuncts(m.where) {
+				if h, ok := e.(hasLabel); ok {
+					if n := c.nodes[h.v]; n == nil || n.opt != len(c.opts) {
+						return projected{}, gapOptional.at(h.pos, "a label an OPTIONAL MATCH's WHERE tests on %s, which a match before it bound", h.v)
+					}
+					if err := c.declareLabels(h); err != nil {
+						return projected{}, err
+					}
+					continue
+				}
+				part.conds = append(part.conds, e)
+			}
+		} else if m.where != nil {
 			if err := addWhere(m.where); err != nil {
 				return projected{}, err
 			}
@@ -319,8 +380,13 @@ func (c *compiler) compileStage(in *stageIn, s stage, where expr) (projected, *E
 	}
 	for _, n := range c.order {
 		for _, l := range n.labels {
-			// A carried node was matched already, so its label atom is needed only to read a column.
-			c.shared = append(c.shared, at(n.pos, frag{nodeAtm{n: n, label: l, lazy: n.carried}}))
+			// A carried node was matched already, so its label atom is needed only to read a column,
+			// and one that may be absent reads it optionally, so the row stays when it is.
+			f := at(n.pos, frag{nodeAtm{n: n, label: l, lazy: n.carried}})
+			if n.absent {
+				f = frag{optBraces{lits: []frag{f}}}
+			}
+			c.into(n.opt, f)
 		}
 	}
 	for _, r := range rels {
@@ -329,7 +395,7 @@ func (c *compiler) compileStage(in *stageIn, s stage, where expr) (projected, *E
 		if err != nil {
 			return projected{}, err
 		}
-		c.shared = append(c.shared, at(r.r.pos, f))
+		c.into(r.opt, at(r.r.pos, f))
 	}
 	c.shared = append(c.shared, calls...)
 
@@ -389,8 +455,12 @@ func (c *compiler) compileStage(in *stageIn, s stage, where expr) (projected, *E
 	}
 
 	// The answer, then the conditions, so a value they read is known before the equalities settle.
+	returnedFrom := len(c.shared)
 	ret, err := c.returning(s.proj)
 	if err != nil {
+		return projected{}, err
+	}
+	if err := c.optionalConditions(); err != nil {
 		return projected{}, err
 	}
 	disjuncts, derr := c.dnf(rest)
@@ -442,9 +512,10 @@ func (c *compiler) compileStage(in *stageIn, s stage, where expr) (projected, *E
 			if err != nil {
 				return projected{}, err
 			}
-			c.shared = append(c.shared, at(n.pos, f))
+			c.into(n.opt, at(n.pos, f))
 		}
 	}
+	c.closeOptionals(returnedFrom)
 	out := projected{cols: ret.cols, order: ret.order, limit: ret.limit, skip: ret.skip}
 	if len(bodies) == 1 {
 		out.lits = append(append([]frag{}, c.shared...), bodies[0]...)
@@ -522,6 +593,128 @@ func (c *compiler) declarePath(pat *pattern) *Error {
 	r.path, r.selector, r.edges = pat.path, pat.selector, c.edgePaths[pat.path]
 	c.addValue(pat.path)
 	return nil
+}
+
+// into adds f to the literals every disjunct holds, or to the k'th OPTIONAL MATCH's braces.
+func (c *compiler) into(k int, f frag) {
+	if k > 0 {
+		c.opts[k-1].lits = append(c.opts[k-1].lits, f)
+		return
+	}
+	c.shared = append(c.shared, f)
+}
+
+// optionalConditions compiles each OPTIONAL MATCH's WHERE into its braces, where a property it reads
+// is read too, so a row whose optional part fails it keeps its row with the part absent.
+func (c *compiler) optionalConditions() *Error {
+	defer func() { c.scope, c.inPart = &c.shared, 0 }()
+	for k, part := range c.opts {
+		c.inPart = k + 1
+		if len(part.conds) == 0 {
+			continue
+		}
+		ds, err := c.dnf(part.conds)
+		if err != nil {
+			return err
+		}
+		if len(ds) != 1 {
+			return gapOptional.at(part.pos, "an OR in an OPTIONAL MATCH's WHERE")
+		}
+		c.scope = &part.lits
+		for _, cd := range ds[0] {
+			c.cur = startOf(cd.e)
+			f, err := c.condition(cd.e, cd.neg)
+			if err != nil {
+				return err
+			}
+			part.lits = append(part.lits, at(startOf(cd.e), f))
+		}
+	}
+	return nil
+}
+
+// closeOptionals writes each OPTIONAL MATCH's braces into the literals every disjunct holds, and, of
+// what RETURN read (c.shared from from), wraps each literal reading an optional part in braces of its
+// own: a property read through Props, or a value computed from the part, is absent when the part
+// is, as Cypher's null is, rather than dropping the row.
+func (c *compiler) closeOptionals(from int) {
+	if len(c.opts) == 0 && !slices.ContainsFunc(c.order, func(n *nodeVar) bool { return n.absent }) {
+		return
+	}
+	optVars := map[string]bool{}
+	for _, n := range c.order {
+		if n.opt == 0 && !n.absent {
+			continue
+		}
+		optVars["?"+n.jv] = true
+		for _, s := range n.slots {
+			if s.jv != "" {
+				optVars["?"+s.jv] = true
+			}
+		}
+	}
+	for _, v := range c.vorder {
+		if c.optValues[v] {
+			optVars["?"+c.values[v]] = true
+		}
+	}
+	shared := append([]frag(nil), c.shared[:from]...)
+	var after []frag
+	for _, f := range c.shared[from:] {
+		if !c.readsOptional(f, optVars) {
+			shared = append(shared, f)
+			continue
+		}
+		for _, v := range varsIn(c.render(f)) {
+			optVars[v] = true // what it binds is absent with it, for what reads it next
+		}
+		after = append(after, frag{optBraces{lits: []frag{f}}})
+	}
+	for _, part := range c.opts {
+		lits := part.lits
+		if part.seen != "" {
+			lits = append(lits, frag{"?" + part.seen + " = 1 * 1"})
+		}
+		if len(lits) > 0 {
+			shared = append(shared, at(part.pos, frag{optBraces{lits: lits}}))
+		}
+	}
+	c.shared = append(shared, after...)
+}
+
+// readsOptional reports whether f reads a node an OPTIONAL MATCH declared, or one of vars.
+func (c *compiler) readsOptional(f frag, vars map[string]bool) bool {
+	for _, el := range f {
+		switch el := el.(type) {
+		case keyArg:
+			if el.n.opt > 0 || el.n.absent {
+				return true
+			}
+		case keyVal:
+			if el.n.opt > 0 || el.n.absent {
+				return true
+			}
+		case nodeAtm:
+			if el.n.opt > 0 || el.n.absent {
+				return true
+			}
+		case origin:
+			if c.readsOptional(el.f, vars) {
+				return true
+			}
+		case frag:
+			if c.readsOptional(el, vars) {
+				return true
+			}
+		case string:
+			for _, v := range varsIn(el) {
+				if vars[v] {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func (c *compiler) addValue(name string) {

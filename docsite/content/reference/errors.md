@@ -395,6 +395,18 @@ A `not` with the wrong number of arguments. Over a rewritten relation it can nam
 
 A closure walks a relation's facts from their first argument to their second. To walk a wider relation, such as `edge(from, kind, to)`, write a rule of two arguments reading it, `calls(?a, ?b) :- edge(?a, "CALLS", ?b)`, and walk that. A relation it can't name at all is reported as `query: graph.closure over unknown relation …`.
 
+`query: optional { … } needs a relation outside its braces to match first: optional keeps a row the rest of its clause matched`, `query: optional { … } holds another optional in its braces: write them one after the other`
+
+An optional keeps the rows its clause finds without it, so the clause needs a positive relation outside the braces ([#282](https://github.com/panyam/jaala/issues/282)). Two optionals written one after the other match in turn, as two `OPTIONAL MATCH`es do.
+
+`query: optional { … } reads ?…, which no relation binds: one inside the braces or outside them must`, `query: optional { … } shares ?… with the rest of its clause, so a relation outside the braces that reads nothing they bind must bind it`
+
+A variable the braces share with the rest of the clause has to be bound on one side: outside, by a relation that doesn't need what the braces bind, or inside, when it's what the optional binds and is absent without a match.
+
+`query: an optional's body … must close with }`, `query: optional { } holds nothing to match`
+
+`optional` is followed by braces holding at least one literal.
+
 `query: graph.paths needs a relation of 2 args, from and to, or 3, from, edge and to; … takes …`
 
 `graph.paths` walks a relation of two arguments, or of three when the middle one names the edge ([#280](https://github.com/panyam/jaala/issues/280)). Its other refusals read as `graph.closure`'s do, with its own name: `graph.paths takes 7 args`, a relation that isn't a text constant, an unknown relation, a predicate, or one taking an argument from its caller.

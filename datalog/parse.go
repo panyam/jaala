@@ -20,7 +20,8 @@ import (
 //	              [ "limit" count ] [ "offset" count ] ]
 //	            | ( "?-" | "=>" ) literals ;          (* asks literals with no projection, #276 *)
 //	literals    = literal { "," literal } ;
-//	literal     = atom [ "as" variable ] | ( "not" | "!" ) atom | comparison | bodyagg ; (* "not atom" = stratified negation; "as ?r" binds the fact, #279 *)
+//	literal     = atom [ "as" variable ] | ( "not" | "!" ) atom | comparison | bodyagg | optional ; (* "not atom" = stratified negation; "as ?r" binds the fact, #279 *)
+//	optional    = "optional" "{" literals "}" ;       (* holds whether literals match; what only they bind is absent when not, #282 *)
 //	bodyagg     = variable "=" aggregate ":" "{" literals "}" ; (* per shared variable's value, #71 *)
 //	atom        = relation "(" [ term { "," term } ] ")" ;
 //	comparison  = operand op operand ;
@@ -491,6 +492,9 @@ func parseLiterals(body span) ([]Literal, error) {
 // body }` an aggregate over a body of its own, another parenthesised piece a positive atom, anything
 // else a comparison. An atom followed by `as ?r` binds ?r to the fact it matched (#279).
 func parseLiteral(s span) (Literal, error) {
+	if t := s.first(); t.kind == tokWord && t.text == "optional" && s.hi-s.lo > 1 && s.is(1, "{") {
+		return parseOptional(s)
+	}
 	if parts := s.split(":"); len(parts) == 2 && parts[1].is(0, "{") {
 		return parseBodyAggregate(parts[0], parts[1])
 	}
@@ -562,6 +566,23 @@ func parseUnnamed(s span) (Literal, error) {
 		return Literal{}, err
 	}
 	return Literal{Compare: &cmp}, nil
+}
+
+// parseOptional parses `optional { literals }` (#282).
+func parseOptional(s span) (Literal, error) {
+	n := s.hi - s.lo
+	if !s.is(n-1, "}") {
+		return Literal{}, s.errorf("query: an optional's body %q must close with }", s.text())
+	}
+	inner := s.tokens(2, n-1)
+	if inner.empty() {
+		return Literal{}, inner.errorf("query: optional { } holds nothing to match")
+	}
+	lits, err := parseLiterals(inner)
+	if err != nil {
+		return Literal{}, err
+	}
+	return Literal{Opt: &Body{Literals: lits}}, nil
 }
 
 // parseBodyAggregate parses `?v = func([distinct] ?x) : { body }`, split at its top-level colon.

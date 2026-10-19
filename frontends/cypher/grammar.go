@@ -60,9 +60,11 @@ func grammarRules(g Graph) []gbnf.Rule {
 	}
 	return []gbnf.Rule{
 		{Name: "root", E: seq{ref("query"), star(seq{alt{lit(" UNION "), lit(" UNION ALL ")}, ref("query")})}},
-		{Name: "query", E: seq{list(ref("match"), " "),
-			star(seq{lit(" WITH "), list(ref("witem"), ", "), opt(seq{lit(" WHERE "), ref("expr")}), star(seq{lit(" "), ref("match")})}),
+		{Name: "query", E: seq{ref("match"), star(seq{lit(" "), ref("omatch")}),
+			star(seq{lit(" WITH "), list(ref("witem"), ", "), opt(seq{lit(" WHERE "), ref("expr")}), star(seq{lit(" "), ref("omatch")})}),
 			lit(" "), ref("return")}},
+		// an OPTIONAL MATCH after a match (#282), which keeps the row with absent where it fails
+		{Name: "omatch", E: alt{ref("match"), seq{lit("OPTIONAL "), ref("match")}}},
 		{Name: "match", E: seq{lit("MATCH "), list(alt{ref("pattern"), seq{lit("shortestPath("), ref("pattern"), lit(")")}, ref("path")}, ", "), opt(seq{lit(" WHERE "), ref("expr")})}},
 		{Name: "pattern", E: seq{ref("node"), gbnf.UpTo(seq{ref("rel"), ref("node")}, 3)}},
 		// a path variable binds a path of one relationship, which may have a variable length (#280)

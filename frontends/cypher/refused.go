@@ -26,11 +26,6 @@ func (p *parser) refusedClause() (handled, ends bool, err *Error) {
 	}
 	word := strings.ToUpper(t.val)
 	switch {
-	case t.is("OPTIONAL") && p.peekAt(1).is("MATCH"):
-		p.refuse(gapOptional.at(t.pos, "write the match without OPTIONAL, or as a second query"))
-		p.i += 2
-		_, err := p.match(t.pos)
-		return true, false, err
 	case t.is("UNWIND"):
 		p.refuse(gapLists.at(t.pos, "UNWIND"))
 		p.i++

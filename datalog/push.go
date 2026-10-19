@@ -287,6 +287,15 @@ func (g *pushGroup) atom(b *Base) *Atom {
 	for _, f := range g.filter {
 		name += ", " + f.String()
 	}
+	// and the literals' written positions, which a witnessed Eval splices their witnesses back in at:
+	// two rules pushing the same atoms at different places shared the first's (#282's corpus found it)
+	if slices.ContainsFunc(g.lits, func(l Literal) bool { return l.at != 0 }) {
+		at := make([]string, len(g.lits))
+		for k, l := range g.lits {
+			at[k] = strconv.Itoa(l.at)
+		}
+		name += " @" + strings.Join(at, ",")
+	}
 	a := &Atom{Relation: pushPrefix + "{" + name + "}"}
 	seen := map[Var]bool{}
 	for _, lit := range g.lits {
