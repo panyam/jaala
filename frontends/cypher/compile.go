@@ -1243,8 +1243,9 @@ func (c *compiler) condition(e expr, neg bool) (frag, *Error) {
 				}
 				return append(frag{not + "path.node(?" + p + ", _, ", x, ")"}, g...), nil
 			}
-			// x IN l, a list a value, a property or a parameter holds (#283)
-			l, err := c.value(e.r)
+			// x IN l, a list a value, a property or a parameter holds (#283); an expression is computed
+			// into a variable first, since an atom's argument is a term (FuzzCompile: 0 IN -(a))
+			l, err := c.term(e.r)
 			if err != nil {
 				return nil, err
 			}
