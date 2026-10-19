@@ -34,5 +34,15 @@
 // lookup binding a key, endpoint or Props node is indexed (ns.IndexedLookups), so the planner runs
 // those first.
 //
+// A join, a count and a page go to the server too (#412). Push writes a conjunction as a MATCH per
+// atom (separate clauses, since one MATCH never binds a relationship twice, which would lose the row
+// where two atoms read one fact) and the conditions the server matches exactly as jaala does: node
+// ids, text and absent values. A number's constant or join, and an ordering comparison, are left to
+// the engine, which checks every row again. Summarize groups by each value with its unit and
+// spelling and counts the matches, and is refused where a constant or join isn't exact, since the
+// engine can't check a summary's matches. A page orders by _ord, the hex of a node id's UTF-8, which
+// every server orders as jaala orders text; Neo4j ordered a parameter's strings by UTF-16 unit, though
+// its stored ids came out right. Options.LookupsOnly turns all of it off.
+//
 // It is a module of its own, as the front ends are, so the Neo4j driver reaches only its importers.
 package bolt

@@ -85,6 +85,34 @@ func open(t testing.TB, d neo4j.DriverWithContext, g cypher.Graph, schemas map[s
 type counting struct {
 	*Store
 	lookups, batches, batchedValues, whole, shipped int
+	pushes, summaries, pages                        int
+}
+
+func (c *counting) Push(ctx context.Context, cj ns.Conjunction) iter.Seq2[[]ns.Tuple, error] {
+	c.pushes++
+	if cj.Page != nil {
+		c.pages++
+	}
+	return func(yield func([]ns.Tuple, error) bool) {
+		for row, err := range c.Store.Push(ctx, cj) {
+			c.shipped += len(row)
+			if !yield(row, err) {
+				return
+			}
+		}
+	}
+}
+
+func (c *counting) Summarize(ctx context.Context, cj ns.Conjunction, s ns.Summary) iter.Seq2[ns.SummaryRow, error] {
+	c.summaries++
+	return func(yield func(ns.SummaryRow, error) bool) {
+		for row, err := range c.Store.Summarize(ctx, cj, s) {
+			c.shipped++
+			if !yield(row, err) {
+				return
+			}
+		}
+	}
 }
 
 func (c *counting) Lookup(ctx context.Context, rel string, bound map[int]ns.Value) ([]ns.Tuple, error) {

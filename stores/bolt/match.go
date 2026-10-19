@@ -135,45 +135,14 @@ func (m match) query(r *relation, filters map[int]filter, batched bool) (string,
 		n := m.node
 		q := prefix + "MATCH (x:" + nodeLabel + ":" + quote(n.Label) + ")" + where(all) + " RETURN " + ret + "x.id AS id, properties(x) AS p"
 		return q, params, func(rec *neo4j.Record) (ns.Tuple, error) {
-			props, id := recProps(rec), recString(rec, "id")
-			t := ns.Tuple{Vals: make([]ns.Value, r.schema.Arity)}
-			t.Vals[n.Key] = ns.S(id)
-			for i, c := range n.Fixed {
-				t.Vals[i] = ns.S(c)
-			}
-			for p, i := range n.Props {
-				if i == n.Key {
-					continue
-				}
-				v, err := get(props, p)
-				if err != nil {
-					return t, err
-				}
-				t.Vals[i] = v
-			}
-			t.ID, t.Cites = meta(props, "_id:"+n.Label, "_cites:"+n.Label)
-			return t, nil
+			return nodeTuple(r, n, recString(rec, "id"), recProps(rec))
 		}
 	case m.edge != nil:
 		e := m.edge
 		q := prefix + "MATCH (a:" + nodeLabel + ")-[e:" + quote(e.Type) + "]->(b:" + nodeLabel + ")" + where(all) +
 			" RETURN " + ret + "a.id AS from, b.id AS to, properties(e) AS p"
 		return q, params, func(rec *neo4j.Record) (ns.Tuple, error) {
-			props := recProps(rec)
-			t := ns.Tuple{Vals: make([]ns.Value, r.schema.Arity)}
-			t.Vals[e.From], t.Vals[e.To] = ns.S(recString(rec, "from")), ns.S(recString(rec, "to"))
-			for i, c := range e.Fixed {
-				t.Vals[i] = ns.S(c)
-			}
-			for p, i := range e.Props {
-				v, err := get(props, p)
-				if err != nil {
-					return t, err
-				}
-				t.Vals[i] = v
-			}
-			t.ID, t.Cites = meta(props, "_id", "_cites")
-			return t, nil
+			return edgeTuple(r, e, recString(rec, "from"), recString(rec, "to"), recProps(rec))
 		}
 	}
 	pr := m.props
@@ -188,16 +157,7 @@ func (m match) query(r *relation, filters map[int]filter, batched bool) (string,
 		" WHERE k <> 'id' AND NOT k STARTS WITH '_' AND NOT k IN $labelled" + kw +
 		" RETURN " + ret + "x.id AS id, k AS k, properties(x) AS p"
 	return q, params, func(rec *neo4j.Record) (ns.Tuple, error) {
-		props, k := recProps(rec), recString(rec, "k")
-		t := ns.Tuple{Vals: make([]ns.Value, r.schema.Arity)}
-		t.Vals[pr.Node], t.Vals[pr.Key] = ns.S(recString(rec, "id")), ns.S(k)
-		v, err := get(props, k)
-		if err != nil {
-			return t, err
-		}
-		t.Vals[pr.Value] = v
-		t.ID, t.Cites = meta(props, "_id."+k, "_cites."+k)
-		return t, nil
+		return propTuple(r, pr, recString(rec, "id"), recString(rec, "k"), recProps(rec))
 	}
 }
 
