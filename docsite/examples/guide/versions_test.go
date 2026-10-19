@@ -65,6 +65,48 @@ func Example_diff() {
 	// - api util [api.go:4]
 }
 
+// A session's edits are a change set over the last revision, read through
+// an overlay before anything is saved: api drops log for util. Effective
+// is what the session changes, and a commit keeps it as revision 3, which
+// the Base answers at as it does any other.
+func Example_session() {
+	src, ctx := history(), context.Background()
+	v, err := vocabulary(src)
+	if err != nil {
+		panic(err)
+	}
+	var edit ns.Changes
+	edit.Remove("imports", ns.Tuple{Vals: []ns.Value{ns.S("api"), ns.S("log")}}).
+		Add("imports", ns.Tuple{Vals: []ns.Value{ns.S("api"), ns.S("util")}, Cites: []string{"session:1"}})
+	session := ns.Overlay(src, edit)
+	q := datalog.MustParse(`deps.depends_on("app", ?d) => ?d`)
+	rows, _ := datalog.SemiNaive{}.Eval(ctx, q, datalog.MustBase(v, session))
+	fmt.Println("session:", depsOf(rows))
+	changed, _ := session.Effective(ctx)
+	fmt.Println("changes:", len(changed.Added("imports")), "added,", len(changed.Removed("imports")), "removed")
+	b := datalog.MustBase(v, src)
+	if err := src.Commit(edit, 2, 3); err != nil {
+		panic(err)
+	}
+	for _, rev := range []ns.Version{2, 3} {
+		rows, _ := datalog.SemiNaive{}.Eval(ctx, q, b, datalog.At(rev))
+		fmt.Println("revision", rev, depsOf(rows))
+	}
+	// Output:
+	// session: [api util]
+	// changes: 1 added, 1 removed
+	// revision 2 [api log]
+	// revision 3 [api util]
+}
+
+func depsOf(rows []datalog.Row) []string {
+	var out []string
+	for _, r := range rows {
+		out = append(out, r.Bind["d"].S)
+	}
+	return out
+}
+
 // Across evaluates once over a range of revisions, and each row carries
 // the revisions it holds in, so "since when does app depend on log" is one
 // query rather than one per revision.

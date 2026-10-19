@@ -63,6 +63,10 @@ A federation walks across its members whatever `Holds` says: each start value go
 
 A recursive rule whose step is several literals, `r(?a, ?c) :- r(?a, ?b), edge(?b, ?m), call(?m, ?c)`, walks a conjunction rather than a relation ([#250](https://github.com/panyam/jaala/issues/250)). A store implementing `ns.ConjunctionWalkSource` is asked once, `WalkConjunction(ctx, c, in, out, start)`, for every match of the step from the start values, following each match's `out` value as the next `in`, and jaala files each reached value's matches as the batched push (#246) of that value would have. It walks only a step the planner keeps as one pushed group: when the demand rewrite stores part of the step in a prefix relation (a literal bound by constants, such as a kind filter, is often split off that way), the rounds go to batched pushes instead. A federation walks a step only through a lone member.
 
+## A session over a store
+
+`ns.Overlay` wraps a store with a session's edits ([#288](https://github.com/panyam/jaala/issues/288)) and keeps its lookups, batches, index answers and filters. A conjunction, a walk or a summary goes to the store only when the session touched none of its relations, so a store is never asked a question its facts alone would answer wrongly. The [versions]({{.Site.PathPrefix}}/guide/versions/#sessions) page covers sessions and commits.
+
 ## Versions from stores
 
 A source serving several versions of its facts can serve each one as a store of its own (`ns.SourceAt`), and everything above then works at a version. The [versions]({{.Site.PathPrefix}}/guide/versions/#versions-from-stores) page covers it, with `Federation.Timed` for stores whose histories differ.

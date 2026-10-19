@@ -43,5 +43,7 @@
 //
 // The engine never writes to a Source. A host edits its facts through a Changes, a change set of the
 // facts to add to and remove from each base relation, which it builds from an edit (or from the diff
-// between two versions) and applies to its own store, checked first against the vocabulary.
+// between two versions) and applies to its own store, checked first against the vocabulary. Until it
+// commits, Overlay serves its store with a session's change set applied, passing on the store's
+// interfaces, and a commit keeps the session as a new version (TimedMemSource.Commit).
 package ns

@@ -1,6 +1,10 @@
 package ns
 
-import "context"
+import (
+	"context"
+	"fmt"
+	"strconv"
+)
 
 // A TimedTuple is a fact with the versions it holds in (#179). A fact is its values: the same values
 // in two versions are one TimedTuple whose Versions hold both, however their citations differ, so a
@@ -144,6 +148,7 @@ type TimedMemSource struct {
 	*MemSource
 	versions VersionSet
 	timed    map[string][]TimedTuple
+	commits  int
 }
 
 // NewTimedMemSource returns an empty TimedMemSource serving the versions vs.
@@ -163,6 +168,82 @@ func (m *TimedMemSource) AddTimed(rel string, t TimedTuple) *TimedMemSource {
 }
 
 func (m *TimedMemSource) Versions() VersionSet { return m.versions }
+
+// Version moves with each Commit, so a Base over the source reads the committed version's facts.
+func (m *TimedMemSource) Version() string { return strconv.Itoa(m.commits) }
+
+// Commit adds version to, holding version from's facts with c applied (#288): each fact from holds that
+// c doesn't name holds in to too, with from's citations, each fact c adds holds in to with c's
+// citations, under the ID it already had when the source holds it in another version, and no other fact
+// holds in to, whatever range it was added with. Base.Diff from
+// from to to is then c's changes that change from, as a session's OverlaySource.Effective reports
+// them. A fact is its values, each read as its argument's declared type, as the engine reads it.
+//
+// A host's own TimedSource commits a session the same way: the new version is the old one's facts with
+// the change set applied, and the facts a version shares with another keep one TimedTuple. Commit
+// refuses a from the source doesn't serve, a to it serves already, and a relation it doesn't declare.
+// It is not safe to call while a Base over the source is evaluating.
+func (m *TimedMemSource) Commit(c Changes, from, to Version) error {
+	if !m.versions.Contains(from) {
+		return fmt.Errorf("query: commit: version %d is not one the source serves", from)
+	}
+	if to == Open || m.versions.Contains(to) {
+		return fmt.Errorf("query: commit: version %d is one the source serves already", to)
+	}
+	for _, rel := range c.rels {
+		if _, ok := m.Schema(rel); !ok {
+			return fmt.Errorf("query: commit: the source declares no relation %q", rel)
+		}
+	}
+	at := Span(to, to+1)
+	hold := func(t *TimedTuple, cites []string) {
+		t.Versions = t.Versions.Union(at)
+		t.Cites = append([]TimedCites{{Versions: at, Cites: cites}}, t.Cites...)
+	}
+	rels := append([]string(nil), c.rels...)
+	for rel := range m.timed {
+		if c.byRel[rel] == nil {
+			rels = append(rels, rel)
+		}
+	}
+	for _, rel := range rels {
+		s, _ := m.Schema(rel)
+		key := func(vals []Value) string { return typedKey(s, vals) }
+		named := map[string]change{}
+		if r := c.byRel[rel]; r != nil {
+			for _, k := range r.keys {
+				ch := r.facts[k]
+				named[key(ch.t.Vals)] = ch
+			}
+		}
+		ts := m.timed[rel]
+		held := map[string]bool{}
+		for i := range ts {
+			k := key(ts[i].Vals)
+			held[k] = true
+			switch ch, ok := named[k]; {
+			case ok && ch.add:
+				hold(&ts[i], ch.t.Cites)
+			case !ok && ts[i].Versions.Contains(from):
+				hold(&ts[i], ts[i].CitesAt(from))
+			default:
+				ts[i].Versions = ts[i].Versions.Minus(at)
+			}
+		}
+		if r := c.byRel[rel]; r != nil {
+			for _, k := range r.keys {
+				ch := r.facts[k]
+				if ch.add && !held[key(ch.t.Vals)] {
+					ts = append(ts, TimedTuple{Vals: ch.t.Vals, Versions: at, Cites: []TimedCites{{Versions: at, Cites: ch.t.Cites}}, ID: ch.t.ID})
+				}
+			}
+		}
+		m.timed[rel] = ts
+	}
+	m.versions = m.versions.Union(at)
+	m.commits++
+	return nil
+}
 
 func (m *TimedMemSource) TimedTuples(_ context.Context, rel string) ([]TimedTuple, error) {
 	return m.timed[rel], nil

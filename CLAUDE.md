@@ -281,6 +281,17 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   counted `Kept`. A Federation always batches, a member without `LookupBatch` asked per value. A
   recursive rule batches per round, so a walk costs a call per level (`deep-walk`); that's the floor
   without the store walking itself (#231, moved to pushdown, #213).
+- **A session is an `ns.Overlay` over a Source, with its edits an `ns.Changes`** (`ns/overlay.go`,
+  `ns/changes.go`, #287, #288). A fact is its values, keyed by `joinKey` under the argument's
+  declared type (`typedKey`), the last operation on one wins, and a named fact replaces every copy.
+  The overlay implements every store interface: lookups and batches go to the base and get every
+  added fact of the relation (allowed by Lookup's contract, and nothing in `ns` folds units), while
+  a push, walk or summary goes to the base only when the session touched none of its relations.
+  `Version` is the base's plus an FNV fingerprint of the change set, so a session's Base drops its
+  caches per edit. `TimedMemSource.Commit` is the reference commit and is `Versioned` for it; a fact
+  added with an open range has the new version taken out when the commit drops it. The corpus runs
+  every program over a session undoing edits to its facts (`agreeOverlaid`, over a pushing and a
+  batching store, with a control per path).
 - **A `Federation` is a Source over several (`ns/federation.go`, #211), so it lives in `ns`, beside
   `MemSource`.** A relation is the union of its members'; a lookup goes only to the members whose
   `Holds` allows the bound values. The engine asks `ns.LookupRelations` per relation (`lookable`),

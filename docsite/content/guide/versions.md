@@ -48,3 +48,13 @@ An aggregate across versions is cut at the versions where its inputs change ([#1
 ## `Diff`
 
 `Base.Diff(ctx, rel, from, to)` lists the facts of a base relation that hold in `to` and not `from`, with `to`'s citations, and those that held in `from` and not `to`, with `from`'s. Facts are compared as the engine reads them, as the relation's declared types with units folded, so `"1.0"` served in one version and `1` in the next is one unchanged number. A fact whose citations changed and nothing else isn't in either list.
+
+## Sessions
+
+A session's edits are checked as if they were applied before anything is saved, and then kept as a new version or thrown away ([#288](https://github.com/panyam/jaala/issues/288)). The engine never writes to a source, so an edit is an `ns.Changes`, the facts to add to and remove from each base relation ([#287](https://github.com/panyam/jaala/issues/287)), and `ns.Overlay(src, changes)` is a source serving `src`'s facts minus the ones removed, plus the ones added. A base over it answers with the session's own writes, as `Example_session` shows, and the base over `src` never sees them. Throwing the session away means dropping the overlay; an undo is the change sets before the last one, composed with `Changes.Then`.
+
+A fact is named by its values, read as its argument's declared type as a lookup reads it, so a removal names a fact as the store serves it, units and all. The last operation on a fact wins, and a fact the change set names is replaced wherever the store holds it, every copy, so adding a fact the store holds already holds it once, with the session's citations.
+
+An overlay passes on every store interface its source implements. A lookup or a batch goes to the store, and the facts the session adds join every answer for that relation. A pushed conjunction, a walk or a summary goes to the store only when it reads no relation the session touched; otherwise the planner solves it literal by literal through lookups, since the store's own join can't see the session. Each overlay's `Version` is the source's joined with a fingerprint of its change set, so a base kept over a session drops what it held when an edit makes a new overlay.
+
+`Effective` is what a session changes: the removals of facts the store holds and the additions of facts it doesn't, which is what a host rechecks. A commit keeps them as a new version. `TimedMemSource.Commit(changes, from, to)` adds version `to` holding `from`'s facts with the changes applied, so `Diff` from `from` to `to` lists the session's effective changes, and a host's own timed store commits the same way. To edit an older version, overlay that version's source (`SourceAt`) rather than the timed source, whose plain reads serve its latest.
