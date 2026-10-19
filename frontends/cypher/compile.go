@@ -63,7 +63,7 @@ func Compile(v *ns.Vocabulary, g Graph, text string, opts ...Option) (Program, e
 	for _, o := range opts {
 		o(w)
 	}
-	w.marks, w.marking = chooseMarks(text, g, w.paramVals)
+	w.marks, w.marking = chooseMarks(text+decoded(text), g, w.paramVals)
 	prog, cerr := w.compile(st)
 	if cerr != nil {
 		return Program{}, cerr

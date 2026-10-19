@@ -53,6 +53,7 @@ func typed(t *testing.T) (*ns.Vocabulary, *datalog.Base, cypher.Graph) {
 func TestACheckErrorIsLocatedInTheCypher(t *testing.T) {
 	v, b, g := typed(t)
 	for _, c := range []struct{ name, query, at string }{
+		{"past a value holding the control characters a marker would be", "MATCH (p:Package)\nWHERE p.name <> '\\u0001\\u0002\\u0003' AND p.loc > 'big' RETURN p", "p.loc > 'big'"},
 		{"a comparison of unlike types", "MATCH (p:Package)\nWHERE p.loc > 'big' RETURN p", "p.loc > 'big'"},
 		{"a value a Domain refuses, written inline", "MATCH (p:Package {tier: 'middle'}) RETURN p", "tier: 'middle'"},
 		{"the equality, not the first node of its label", "MATCH (p:Package)-[:IMPORTS]->(q:Package)\nWHERE q.tier = 'middle' RETURN p", "q.tier = 'middle'"},
@@ -68,6 +69,9 @@ func TestACheckErrorIsLocatedInTheCypher(t *testing.T) {
 			_, err = datalog.SemiNaive{}.Eval(context.Background(), p.Query, b)
 			if err == nil {
 				t.Fatalf("%s ran", p.Text)
+			}
+			if strings.Contains(c.query, `\u0001`) && !strings.Contains(p.Text, "\"\x01\x02\x03\"") {
+				t.Fatalf("the value's control characters were read as markers: %q", p.Text)
 			}
 			pos, ok := p.Locate(err)
 			want := strings.Index(c.query, c.at)

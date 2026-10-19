@@ -175,6 +175,19 @@ func numberLen(s string) int {
 	return i
 }
 
+// decoded is the value of every string in text, which can hold a character text writes only as an
+// escape ('\b', '\u0001').
+func decoded(text string) string {
+	toks, _ := lex(text)
+	var b strings.Builder
+	for _, t := range toks {
+		if t.kind == tString {
+			b.WriteString(t.val)
+		}
+	}
+	return b.String()
+}
+
 func digitsLen(s string) int {
 	n := 0
 	for n < len(s) && s[n] >= '0' && s[n] <= '9' {
