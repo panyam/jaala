@@ -115,10 +115,9 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   once (nlmodels/v0.1.65) with no consumer, and nothing is tagged under that prefix again. `./selfcheck.sh` runs a real
   `llama-server` on llama.cpp's 1 MB test model when `make llama` has fetched it (Homebrew's
   llama.cpp ships no GBNF validator, so a server is the only check llama.cpp reads the grammar): every reply must
-  stay inside the grammar as `internal/gbnf` reads it. The model (`frontends/nlmodels/testdata/stories260K.gguf`)
-  is gitignored and found by a relative path, so a selfcheck worktree needs its own copy (`mkdir -p`
-  its `testdata` and `cp` it in after `git worktree add`: the directory holds nothing tracked, so
-  the worktree lacks it and a bare `cp` fails), or the step reports "could not run". `llama-server` exits with "Abort
+  stay inside the grammar as `internal/gbnf` reads it. The model lives outside the checkout, at
+  `~/.cache/jaala/stories260K.gguf` (`$XDG_CACHE_HOME` if set, or `JAALA_LLAMA_MODEL`), so every
+  worktree and clone uses the one copy; without it the step reports "could not run". `llama-server` exits with "Abort
   trap: 6" when selfcheck's cleanup kills it, after its test, which is not a failure.
 - **`frontends/mcp` is a module of its own too** (#347), on mcpkit, so its dependencies reach no
   host that doesn't serve agents; CI's `mcp` job tests it, and `SUB_MODS_TO_TAG` tags it. `mcp.New(v,

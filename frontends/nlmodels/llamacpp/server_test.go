@@ -18,7 +18,7 @@ import (
 // recognizer can't check. Any model will do, even llama.cpp's 1 MB test model, since the grammar is
 // what's tested; ./selfcheck.sh runs it on that one when `make llama` has fetched it:
 //
-//	llama-server -m frontends/nlmodels/testdata/stories260K.gguf --port 18089 --chat-template chatml
+//	llama-server -m ~/.cache/jaala/stories260K.gguf --port 18089 --chat-template chatml
 //	JAALA_LLAMACPP_URL=http://127.0.0.1:18089 go test ./llamacpp -run RealServer -v
 //
 // Every reply has to stay inside the grammar as nl's recognizer reads it, token by token. The test
