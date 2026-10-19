@@ -49,6 +49,12 @@ GOOS=js GOARCH=wasm go build ./...
 go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '^vendor/'   # must print nothing
 ```
 
+CI only builds for wasm. To run a package's tests there (Node on PATH), go's runner refuses a large
+environment ("total length of command line and environment variables exceeds limit"), so start it
+from an empty one: `env -i HOME=$HOME GOCACHE=$(go env GOCACHE) GOMODCACHE=$(go env GOMODCACHE)
+PATH="$(go env GOROOT)/lib/wasm:$(go env GOROOT)/bin:$(dirname $(which node)):/usr/bin:/bin" GOOS=js
+GOARCH=wasm go test ./ns` (#417 ran `ns` that way).
+
 ## Constraints
 
 - **Standard library only, and it must build for wasm.** agni runs the engine in the browser, and
@@ -1198,7 +1204,7 @@ Most of what a host derives while ingesting stays in Go however much jaala grows
 Declaire's linkers are rules waiting on nothing in jaala since v0.1.71 (declaire#205), and moving them
 retires its hand-built linker store. agni's net roles and part classes could be rules too, but some 90
 Go rules, guards, trace and rendering read them off `check.Model`, so a rule there duplicates the Go
-until agni#1061 settles the model's shape. Write statements (#287) add edits; they replace no ingestion.
+until agni#1061 settles the model's shape. Write statements (#404, compiling into #287's change sets) add edits; they replace no ingestion.
 
 agni (github.com/panyam/agni) is the first host and Declaire (github.com/panyam/declaire) the
 second. Cross-repo work is split by repo: jaala issues are worked from jaala sessions, host issues
