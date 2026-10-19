@@ -62,8 +62,8 @@ func TestEveryQueryTheGrammarWritesParses(t *testing.T) {
 }
 
 // The queries the guide's questions are answered with (the exercise's drafts, and the docs') are in
-// the grammar, so a model decoding under it can write them. control: one using XOR, which the grammar
-// leaves out, isn't.
+// the grammar, so a model decoding under it can write them. control: names the graph doesn't have
+// aren't.
 func TestTheGrammarHoldsTheGuidesAnswers(t *testing.T) {
 	g := Graph{
 		Nodes: []Node{{Label: "Package", Relation: "pkg", Key: 0, Props: map[string]int{"name": 0, "license": 1}}},
@@ -84,13 +84,13 @@ func TestTheGrammarHoldsTheGuidesAnswers(t *testing.T) {
 		`MATCH (a:Package {name: 'app'})-[:IMPORTS*]->(b:Package) RETURN b.name AS dependency, b.license AS license ORDER BY dependency`,
 		`MATCH (p:Package)-[:IMPORTS]->(q:Package) WITH p, count(q) AS n WHERE n > 1 RETURN p.name, n`,
 		`MATCH (p:Package) WHERE NOT EXISTS { MATCH (p)-[:IMPORTS]->() } RETURN p.name`,
+		`MATCH (p:Package) WHERE p.name = 'a' XOR p.license IS NULL OR p.name = 'b' RETURN p`, // XOR binds tighter than OR (#377)
 	} {
 		if !recognizer.Accepts(q) {
 			t.Errorf("the grammar refuses %q", q)
 		}
 	}
 	for _, q := range []string{
-		`MATCH (p:Package) WHERE p.name = 'a' XOR p.name = 'b' RETURN p`, // XOR, which it leaves out
 		`MATCH (p:Pkg) RETURN p`,                // a label the graph doesn't have
 		`MATCH (p)-[:CALLS]->(q) RETURN p`,      // a type it doesn't have
 		`MATCH (p:Package) RETURN p.maintainer`, // a property it doesn't have
