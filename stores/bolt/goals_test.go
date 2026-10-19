@@ -134,6 +134,9 @@ var codeGoals = []string{
 	`tag(?f, ?t), tag(?g, ?u), ?t = ?u => ?f, ?g`,
 	`edge(?a, "calls", ?b, _) => ?b order by ?b limit 1`,
 	`edge(?a, "calls", ?b, _) => ?a, ?b order by ?b desc, ?a limit 2`,
+	`calls(?a, ?b) :- edge(?a, "calls", ?b, _); reach(?a, ?b) :- calls(?a, ?b); reach(?a, ?c) :- reach(?a, ?b), calls(?b, ?c); reach("main", ?x) => ?x`,
+	`calls(?a, ?b) :- edge(?a, "calls", ?b, _); graph.closure("calls", "main", ?x, 1, 2, ?h) => ?x, ?h`,
+	`calls(?a, ?b) :- edge(?a, "calls", ?b, _); graph.closure("calls", ?x, "lex", 1, 0, ?h) => ?x, ?h`,
 }
 
 func TestCodeGoalsAgree(t *testing.T) {
@@ -156,8 +159,8 @@ func TestCodeGoalsAgree(t *testing.T) {
 					t.Errorf("%s: over bolt %q (%v), over memory %q (%v)", text, rows(got), err, rows(want), werr)
 				}
 			}
-			if st.pushes == 0 || st.summaries == 0 || st.pages == 0 {
-				t.Errorf("control: %d pushes, %d summaries and %d pages, and each should be some", st.pushes, st.summaries, st.pages)
+			if st.pushes == 0 || st.summaries == 0 || st.pages == 0 || st.walks == 0 {
+				t.Errorf("control: %d pushes, %d summaries, %d pages and %d walks, and each should be some", st.pushes, st.summaries, st.pages, st.walks)
 			}
 		})
 	}
