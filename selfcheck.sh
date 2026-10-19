@@ -84,7 +84,7 @@ fi
 
 echo "== llama.cpp keeps a model to nl's grammar"
 llama_ran=yes
-model=frontends/nlmodels/testdata/stories260K.gguf
+model=${JAALA_LLAMA_MODEL:-${XDG_CACHE_HOME:-$HOME/.cache}/jaala/stories260K.gguf}
 if command -v llama-server >/dev/null 2>&1 && [ -f "$model" ]; then
 	# A real decoder reading the grammar nl renders (#330), on llama.cpp's 1 MB test model.
 	port=$((18000 + $$ % 1000))
