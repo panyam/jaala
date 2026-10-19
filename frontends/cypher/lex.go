@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -33,7 +34,7 @@ func (t token) is(kw string) bool {
 func (t token) sym(s string) bool { return t.kind == tSym && t.text == s }
 
 // symbols are tried longest first.
-var symbols = []string{"..", "<>", "!=", "<=", ">=", "=~", "(", ")", "[", "]", "{", "}", ":", ",", ".", "|", "*", "-", "+", "/", "%", "^", "<", ">", "=", ";"}
+var symbols = []string{"..", "<>", "!=", "<=", ">=", "=~", "!", "&", "(", ")", "[", "]", "{", "}", ":", ",", ".", "|", "*", "-", "+", "/", "%", "^", "<", ">", "=", ";"}
 
 // lex reads text into tokens, ending with a tEOF token at the end of the text.
 func lex(text string) ([]token, error) {
@@ -94,14 +95,20 @@ func lex(text string) ([]token, error) {
 		case c == '$':
 			n := identLen(text[i+1:])
 			if n == 0 {
+				n = digitsLen(text[i+1:]) // $0, a positional parameter
+			}
+			if n == 0 {
 				return nil, errAt(start, "a $ must be followed by a parameter's name")
 			}
 			toks = append(toks, token{kind: tParam, text: text[i : i+1+n], val: text[i+1 : i+1+n], pos: start})
 			advance(text[i : i+1+n])
 			i += 1 + n
 		case c >= '0' && c <= '9':
-			n := numberLen(text[i:])
-			toks = append(toks, token{kind: tNumber, text: text[i : i+n], val: text[i : i+n], pos: start})
+			n, val := numberLen(text[i:]), text[i:i+numberLen(text[i:])]
+			if m, v, ok := radixNumber(text[i:]); ok {
+				n, val = m, v
+			}
+			toks = append(toks, token{kind: tNumber, text: text[i : i+n], val: val, pos: start})
 			advance(text[i : i+n])
 			i += n
 		default:
@@ -168,6 +175,44 @@ func numberLen(s string) int {
 	return i
 }
 
+func digitsLen(s string) int {
+	n := 0
+	for n < len(s) && s[n] >= '0' && s[n] <= '9' {
+		n++
+	}
+	return n
+}
+
+// radixNumber reads a hexadecimal (0x1F) or octal (0o17) integer s starts with, returning its length
+// as written and its value in decimal, which is how the compiler writes a number.
+func radixNumber(s string) (int, string, bool) {
+	if len(s) < 3 || s[0] != '0' {
+		return 0, "", false
+	}
+	base := 0
+	switch s[1] {
+	case 'x', 'X':
+		base = 16
+	case 'o', 'O':
+		base = 8
+	default:
+		return 0, "", false
+	}
+	digits := "01234567"
+	if base == 16 {
+		digits = "0123456789abcdefABCDEF"
+	}
+	n := 2
+	for n < len(s) && strings.IndexByte(digits, s[n]) >= 0 {
+		n++
+	}
+	v, err := strconv.ParseInt(s[2:n], base, 64)
+	if n == 2 || err != nil {
+		return 0, "", false
+	}
+	return n, strconv.FormatInt(v, 10), true
+}
+
 // lexString reads the quoted string s starts with, returning its value and its length as written.
 func lexString(s string) (string, int, error) {
 	q := s[0]
@@ -187,6 +232,22 @@ func lexString(s string) (string, int, error) {
 			case 'r':
 				b.WriteByte('\r')
 			case '\\', '\'', '"':
+				b.WriteByte(s[i])
+			case 'b':
+				b.WriteByte('\b')
+			case 'f':
+				b.WriteByte('\f')
+			case 'u', 'U':
+				width := 4
+				if s[i] == 'U' {
+					width = 8
+				}
+				if r, err := strconv.ParseUint(s[i+1:min(i+1+width, len(s))], 16, 32); err == nil && i+width < len(s) {
+					b.WriteRune(rune(r))
+					i += width
+					continue
+				}
+				b.WriteByte('\\')
 				b.WriteByte(s[i])
 			default:
 				b.WriteByte('\\')

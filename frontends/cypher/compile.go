@@ -1434,7 +1434,7 @@ func (c *compiler) dnf(es []expr) ([][]cond, *Error) {
 	for _, e := range es {
 		d, err := c.dnfOf(e, false)
 		if err == errTooManyDisjuncts {
-			return nil, errAt(e.at(), "this WHERE expands to more than %d alternatives", maxDisjuncts)
+			return nil, gapDisjuncts.at(e.at(), "this WHERE expands to more than %d alternatives", maxDisjuncts)
 		}
 		if err != nil {
 			return nil, err
@@ -1446,7 +1446,7 @@ func (c *compiler) dnf(es []expr) ([][]cond, *Error) {
 			}
 		}
 		if len(next) > maxDisjuncts {
-			return nil, errAt(e.at(), "this WHERE expands to more than %d alternatives", maxDisjuncts)
+			return nil, gapDisjuncts.at(e.at(), "this WHERE expands to more than %d alternatives", maxDisjuncts)
 		}
 		out = next
 	}
@@ -1540,7 +1540,7 @@ func (c *compiler) returning(r returnClause) (returned, *Error) {
 	var out returned
 	items := r.items
 	if r.star {
-		items = c.starItems(r.pos)
+		items = append(c.starItems(r.pos), r.items...)
 		if len(items) == 0 {
 			return out, errAt(r.pos, "RETURN * with no named variable")
 		}

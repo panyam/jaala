@@ -286,6 +286,8 @@ func TestGapsAreRefusedByName(t *testing.T) {
 		{`MATCH (a:Package) WITH a ORDER BY a LIMIT 1 RETURN a`, 364, "WITH a ORDER"},
 		{`MATCH (a:Package) RETURN a.name AS n UNION MATCH (b:Package) RETURN b.name AS n LIMIT 1`, 364, "RETURN b.name"},
 		{`CALL { MATCH (a:Package) RETURN a } RETURN a`, 364, "CALL {"},
+		{`MATCH (a:Package) RETURN a LIMIT $n`, 364, "$n"},
+		{`RETURN 1`, 364, "RETURN"},
 		{`MATCH (a:Package) WHERE EXISTS { MATCH (a)-->(b) RETURN b } RETURN a`, 364, "RETURN b }"},
 	} {
 		_, err := cypher.Compile(v, depsGraph, c.cypher)
@@ -316,10 +318,8 @@ func TestMistakesSayWhatTheGraphHolds(t *testing.T) {
 		{`MATCH (a:Package) RETURN a LIMIT 0`, "LIMIT 0 answers nothing", "0"},
 		{`MATCH (a:Package) WHERE a.license = null RETURN a`, "write IS NULL", "null"},
 		{`MATCH (a:Package) WHERE a.license = true RETURN a`, "no booleans", "true"},
-		{`MATCH (a:Package) RETURN a LIMIT $n`, "not a parameter", "$n"},
 		{`MATCH (a:Package RETURN a`, "expected ) to end the node", "RETURN"},
 		{`MATCH (a:Package) RETURN 'x'`, "RETURN of a constant", "'x'"},
-		{`RETURN 1`, "expected MATCH", "RETURN"},
 		{`MATCH (a:Package) RETURN a extra`, `unexpected "extra"`, "extra"},
 		{`MATCH (p:Package) WHERE p.name = $x OR p.name = 'log' RETURN p`, "which datalog.Bind can't reach: compile with cypher.Params", "$x"},
 		{`MATCH (p:Package {name: $x}) WHERE p.license = 'MIT' OR p.license = '' RETURN p.license`, "which datalog.Bind can't reach", "$x"},

@@ -1,0 +1,450 @@
+## compiles or names a gap
+
+MATCH (a:Package)-[:IMPORTS]->(b) WHERE a.name = 'app' RETURN b.name
+  -> pkg("app", _), imports("app", ?b) => ?b
+
+MATCH (a:Package {name: 'app'})<-[:IMPORTS]-(b) RETURN DISTINCT b.name AS importer ORDER BY importer DESC SKIP 1 LIMIT 2
+  -> pkg("app", _), imports(?b, "app") => ?b order by ?b desc limit 2 offset 1
+
+MATCH (a)-[:IMPORTS|DEPENDS_ON*1..3]-(b) RETURN a, b
+  -> cypher_step1(?x, ?y) :- imports(?x, ?y);
+cypher_step1(?x, ?y) :- imports(?y, ?x);
+cypher_step1(?x, ?y) :- deps.depends_on(?x, ?y);
+cypher_step1(?x, ?y) :- deps.depends_on(?y, ?x);
+cypher_reach1(?x, ?y) :- cypher_step1(?x, ?y);
+cypher_reach1(?x, ?y) :- cypher_step1(?x, ?y1), cypher_step1(?y1, ?y);
+cypher_reach1(?x, ?y) :- cypher_step1(?x, ?y1), cypher_step1(?y1, ?y2), cypher_step1(?y2, ?y);
+cypher_reach1(?a, ?b) => ?a, ?b
+
+MATCH (a)-[:IMPORTS|:DEPENDS_ON]->(b) RETURN count(*) AS n
+  -> cypher_step1(?x, ?y) :- imports(?x, ?y);
+cypher_step1(?x, ?y) :- deps.depends_on(?x, ?y);
+cypher_step1(?a, ?b) => count(?a)
+
+MATCH (a:Package) WITH a, count { (a)-->() } AS out WHERE out > 0 RETURN a.name, out
+  -> cypher_step1(?x, ?y) :- imports(?x, ?y);
+cypher_step1(?x, ?y) :- deps.depends_on(?x, ?y);
+cypher_with1(?a, ?_count) :- pkg(?a, _), ?_count = count(?_n) : { cypher_step1(?a, ?_n) };
+cypher_with1(?a, ?out), ?out > 0 => ?a, ?out
+
+MATCH (a:Package) WHERE EXISTS { (a)-[:IMPORTS]->(:Package {license: 'MIT'}) } RETURN a
+  -> cypher_exists1(?a) :- pkg(?_n, ?_n_license), imports(?a, ?_n), ?_n_license = "MIT";
+pkg(?a, _), cypher_exists1(?a) => ?a
+
+MATCH (a:Package) RETURN a.name AS n UNION ALL MATCH (b:Package) RETURN b.name AS n
+  -> cypher_union1(?a) :- pkg(?a, _);
+cypher_union1(?b) :- pkg(?b, _);
+cypher_union1(?n) => ?n
+
+MATCH (a:Package) RETURN a.name AS n UNION MATCH (b:Package) RETURN b.name AS n
+  -> cypher_union1(?a) :- pkg(?a, _);
+cypher_union1(?b) :- pkg(?b, _);
+cypher_union1(?n) => ?n
+
+MATCH (a:Package) WHERE a.name STARTS WITH 'a' AND NOT a.name ENDS WITH 'z' OR a.name CONTAINS 'p' RETURN a
+  -> cypher_match1(?a) :- pkg(?a, _), str.prefix(?a, "a"), not str.suffix(?a, "z");
+cypher_match1(?a) :- pkg(?a, _), str.contains(?a, "p");
+cypher_match1(?a) => ?a
+
+MATCH (a:Package) WHERE a.name =~ 'a.*' XOR a.license IS NULL RETURN a
+  -> cypher_match1(?a) :- pkg(?a, ?a_license), str.match(?a, "^(?:a.*)$"), not absent(?a_license);
+cypher_match1(?a) :- pkg(?a, ?a_license), not str.match(?a, "^(?:a.*)$"), absent(?a_license);
+cypher_match1(?a) => ?a
+
+MATCH (a:Package) WHERE a.license IS NOT NULL AND a.name IN ['app', 'api'] RETURN toUpper(a.name) + '!'
+  -> cypher_match1(?_c) :- pkg(?a, ?a_license), ?_c = str.concat(str.upper(?a), "!"), not absent(?a_license), ?a = "app";
+cypher_match1(?_c) :- pkg(?a, ?a_license), ?_c = str.concat(str.upper(?a), "!"), not absent(?a_license), ?a = "api";
+cypher_match1(?_c) => ?_c
+
+MATCH (a:Package) RETURN min(a.name), max(a.name), collect(a.name)
+  -> pkg(?a, _) => min(?a), max(?a), list(?a)
+
+MATCH (a:Package) WHERE a:Package RETURN a
+  -> pkg(?a, _) => ?a
+
+MATCH (a:Package) WHERE NOT (a)-[:IMPORTS]->() RETURN a
+  -> cypher_exists1(?a) :- imports(?a, ?_n);
+pkg(?a, _), not cypher_exists1(?a) => ?a
+
+// a comment, and /* a block one */
+MATCH (a:Package) /* here */ RETURN a // and at the end
+  -> pkg(?a, _) => ?a
+
+MATCH (`a b`:`Package`) RETURN `a b`.name
+  -> pkg(?a_b, _) => ?a_b
+
+MATCH (a:Package) WHERE a.name = "app" RETURN a;
+  -> pkg(?a, _), ?a = "app" => ?a
+
+match (a:Package) where a.name = 'app' return a
+  -> pkg(?a, _), ?a = "app" => ?a
+
+MATCH (a:Package) WHERE a.name <> 'app' AND a.name != 'api' RETURN a
+  -> pkg(?a, _), ?a != "app", ?a != "api" => ?a
+
+MATCH (a:Package) WITH * RETURN a
+  -> cypher_with1(?a) :- pkg(?a, _);
+cypher_with1(?a) => ?a
+
+MATCH (a:Package) RETURN *, a.name AS n
+  -> pkg(?a, _) => ?a, ?a
+
+MATCH (a:Package) RETURN a.name ORDER BY a.name SKIP 1
+  -> pkg(?a, _) => ?a order by ?a offset 1
+
+MATCH (a:Package) RETURN a.name ORDER BY a.name OFFSET 1
+  -> pkg(?a, _) => ?a order by ?a offset 1
+
+CYPHER 5 MATCH (a:Package) RETURN a
+  -> pkg(?a, _) => ?a
+
+CYPHER runtime=slotted MATCH (a:Package) RETURN a
+  -> pkg(?a, _) => ?a
+
+PROFILE MATCH (a:Package) RETURN a
+  -> pkg(?a, _) => ?a
+
+MATCH (a:Package WHERE a.name = 'app') RETURN a
+  -> pkg(?a, _), ?a = "app" => ?a
+
+MATCH (a:Package)-[:IMPORTS WHERE a.name <> 'x']->(b) RETURN b
+  -> pkg(?a, _), imports(?a, ?b), ?a != "x" => ?b
+
+MATCH (a IS Package) RETURN a
+  -> pkg(?a, _) => ?a
+
+MATCH (a:Package) WHERE a IS Package RETURN a
+  -> pkg(?a, _) => ?a
+
+MATCH (a:Package&Package) RETURN a
+  -> pkg(?a, _) => ?a
+
+MATCH (a:Package) WHERE a.name = 'app' RETURN a
+  -> pkg(?a, _), ?a = "app" => ?a
+
+MATCH (a:Package) WHERE size(a.name) > 0x02 AND size(a.name) < 0o17 RETURN a
+  -> at 1:25 cypher: not supported yet: lists and maps as values (jaala#283): size()
+
+MATCH (a:Package)<-->(b) RETURN b
+  -> cypher_step1(?x, ?y) :- imports(?x, ?y);
+cypher_step1(?x, ?y) :- imports(?y, ?x);
+cypher_step1(?x, ?y) :- deps.depends_on(?x, ?y);
+cypher_step1(?x, ?y) :- deps.depends_on(?y, ?x);
+pkg(?a, _), cypher_step1(?a, ?b) => ?b
+
+MATCH (a:Package)--(b) RETURN b
+  -> cypher_step1(?x, ?y) :- imports(?x, ?y);
+cypher_step1(?x, ?y) :- imports(?y, ?x);
+cypher_step1(?x, ?y) :- deps.depends_on(?x, ?y);
+cypher_step1(?x, ?y) :- deps.depends_on(?y, ?x);
+pkg(?a, _), cypher_step1(?a, ?b) => ?b
+
+MATCH (a)-->(b), (b)-->(c) RETURN a, c
+  -> cypher_step1(?x, ?y) :- imports(?x, ?y);
+cypher_step1(?x, ?y) :- deps.depends_on(?x, ?y);
+cypher_step2(?x, ?y) :- imports(?x, ?y);
+cypher_step2(?x, ?y) :- deps.depends_on(?x, ?y);
+cypher_step1(?a, ?b), cypher_step2(?b, ?c) => ?a, ?c
+
+CALL str.upper('a') YIELD upper RETURN upper
+  -> str.upper("a", ?upper) => ?upper
+
+MATCH (a:Package) RETURN replace(a.name, 'a', 'b'), split(a.name, 'p')[0], toLower(a.name)
+  -> pkg(?a, _), ?_c = str.replace(?a, "a", "b"), ?_c1 = str.split(?a, "p", 0), ?_c2 = str.lower(?a) => ?_c, ?_c1, ?_c2
+
+MATCH (a)-[r:IMPORTS]->(b) RETURN r
+  -> at 1:35 cypher: not supported yet: binding a relationship to a variable (jaala#279): r is a relationship: return or compare its endpoints instead
+
+MATCH p = (a)-[:IMPORTS]->(b) RETURN p
+  -> at 1:7 cypher: not supported yet: paths as values (jaala#280): a path variable (p = ...)
+
+MATCH p = shortestPath((a:Package)-[*]-(b:Package)) RETURN p
+  -> at 1:7 cypher: not supported yet: paths as values (jaala#280): a path variable (p = ...)
+
+MATCH (a:Package), (b:Package) RETURN allShortestPaths((a)-[*]-(b))
+  -> at 1:39 cypher: not supported yet: shortest paths and zero-length or long bounded reach (jaala#281): allShortestPaths
+
+MATCH p = SHORTEST 1 (a:Package)-[:IMPORTS]-+(b:Package) RETURN p
+  -> at 1:7 cypher: not supported yet: paths as values (jaala#280): a path variable (p = ...)
+
+MATCH ALL SHORTEST (a:Package)-[:IMPORTS]-+(b) RETURN b
+  -> at 1:7 cypher: not supported yet: shortest paths and zero-length or long bounded reach (jaala#281): a path selector (ALL SHORTEST)
+
+MATCH ANY (a:Package)-[:IMPORTS]->+(b) RETURN b
+  -> at 1:7 cypher: not supported yet: shortest paths and zero-length or long bounded reach (jaala#281): a path selector (ANY)
+
+MATCH SHORTEST 2 GROUPS (a:Package)-->{1,3}(b) RETURN b
+  -> at 1:7 cypher: not supported yet: shortest paths and zero-length or long bounded reach (jaala#281): a path selector (SHORTEST 2 GROUPS)
+
+MATCH (a:Package) ((x)-[:IMPORTS]->(y)){1,3} (b) RETURN b
+  -> at 1:19 cypher: not supported yet: shortest paths and zero-length or long bounded reach (jaala#281): a quantified path pattern
+
+MATCH ((x)-[:IMPORTS]->(y) WHERE x.name <> y.name)+ RETURN x
+  -> at 1:7 cypher: not supported yet: shortest paths and zero-length or long bounded reach (jaala#281): a quantified path pattern
+
+MATCH (a:Package)-[:IMPORTS]->{2}(b) RETURN b
+  -> at 1:31 cypher: not supported yet: shortest paths and zero-length or long bounded reach (jaala#281): a quantified relationship
+
+MATCH (a:Package)-[:IMPORTS]->*(b) RETURN b
+  -> at 1:31 cypher: not supported yet: shortest paths and zero-length or long bounded reach (jaala#281): a quantified relationship
+
+MATCH (a)-[:IMPORTS*0..2]->(b) RETURN b
+  -> at 1:10 cypher: not supported yet: shortest paths and zero-length or long bounded reach (jaala#281): a zero-length match (*0..): start the range at 1
+
+MATCH (a)-[:IMPORTS*..20]->(b) RETURN b
+  -> at 1:10 cypher: not supported yet: shortest paths and zero-length or long bounded reach (jaala#281): a bounded match longer than 8 hops: write * for any length
+
+OPTIONAL MATCH (a:Package) RETURN a
+  -> at 1:1 cypher: not supported yet: OPTIONAL MATCH and null values (jaala#282): write the match without OPTIONAL, or as a second query
+
+MATCH (a:Package) OPTIONAL MATCH (a)-[:IMPORTS]->(b) WHERE b.license = 'MIT' RETURN a, b
+  -> at 1:19 cypher: not supported yet: OPTIONAL MATCH and null values (jaala#282): write the match without OPTIONAL, or as a second query
+
+MATCH (a:Package) UNWIND [1, 2] AS x RETURN a, x
+  -> at 1:19 cypher: not supported yet: lists and maps as values (jaala#283): UNWIND
+
+UNWIND $names AS n MATCH (a:Package {name: n}) RETURN a
+  -> at 1:1 cypher: not supported yet: lists and maps as values (jaala#283): UNWIND
+
+MATCH (a:Package) WHERE a.name IN $names RETURN a
+  -> at 1:32 cypher: not supported yet: lists and maps as values (jaala#283): IN over anything but a list written in the query
+
+MATCH (a:Package) RETURN a {.name, .license}
+  -> at 1:28 cypher: not supported yet: lists and maps as values (jaala#283): a map projection
+
+MATCH (a:Package) RETURN a {.*, imports: count { (a)-->() }}
+  -> at 1:28 cypher: not supported yet: lists and maps as values (jaala#283): a map projection
+
+MATCH (a:Package) RETURN [x IN [1, 2, 3] WHERE x > 1 | x * 2] AS xs
+  -> at 1:26 cypher: not supported yet: lists and maps as values (jaala#283): a list comprehension
+
+MATCH (a:Package) RETURN [(a)-[:IMPORTS]->(b) | b.name] AS imported
+  -> at 1:26 cypher: not supported yet: lists and maps as values (jaala#283): a pattern comprehension
+
+MATCH (a:Package) RETURN [(a)-[:IMPORTS]->(b) WHERE b.license = 'MIT' | b.name] AS mit
+  -> at 1:26 cypher: not supported yet: lists and maps as values (jaala#283): a pattern comprehension
+
+MATCH (a:Package) RETURN [x IN [1, 2]] AS xs
+  -> at 1:26 cypher: not supported yet: lists and maps as values (jaala#283): a list comprehension
+
+MATCH (a:Package) WHERE all(x IN [1, 2] WHERE x > 0) RETURN a
+  -> at 1:25 cypher: not supported yet: lists and maps as values (jaala#283): all(x IN ...), a predicate over a list
+
+MATCH (a:Package) WHERE any(x IN ['app'] WHERE x = a.name) AND none(y IN [] WHERE y = 1) AND single(z IN [1] WHERE z = 1) RETURN a
+  -> at 1:25 cypher: not supported yet: lists and maps as values (jaala#283): any(x IN ...), a predicate over a list
+
+MATCH (a:Package) RETURN reduce(total = 0, x IN [1, 2, 3] | total + x) AS sum
+  -> at 1:26 cypher: not supported yet: lists and maps as values (jaala#283): reduce
+
+MATCH (a:Package) RETURN [1, 2, 3][0], [1, 2, 3][1..2], [1, 2][..1], [1, 2][1..]
+  -> at 1:35 cypher: not supported yet: lists and maps as values (jaala#283): indexing or slicing a value
+
+MATCH (a:Package) RETURN a[$key]
+  -> at 1:27 cypher: not supported yet: lists and maps as values (jaala#283): indexing or slicing a value
+
+MATCH (a:Package) RETURN {name: a.name, license: a.license} AS m
+  -> at 1:26 cypher: not supported yet: lists and maps as values (jaala#283): a map
+
+MATCH (a:Package) RETURN {name: a.name}.name
+  -> at 1:26 cypher: not supported yet: lists and maps as values (jaala#283): a map
+
+MATCH (a:Package) WITH collect(a) AS ps RETURN size(ps)
+  -> at 1:48 cypher: not supported yet: lists and maps as values (jaala#283): size()
+
+MATCH (a:Package) RETURN COLLECT { MATCH (a)-->(b) RETURN b.name } AS names
+  -> at 1:26 cypher: not supported yet: lists and maps as values (jaala#283): a COLLECT { } subquery
+
+MATCH (a:Package) RETURN labels(a)
+  -> at 1:26 cypher: not supported yet: lists and maps as values (jaala#283): labels()
+
+MATCH (a:Package $props) RETURN a
+  -> at 1:18 cypher: not supported yet: lists and maps as values (jaala#283): a map parameter as a node's properties
+
+FOREACH (x IN [1, 2] | CREATE (:Package {name: x}))
+  -> at 1:1 cypher: not supported yet: lists and maps as values (jaala#283): FOREACH
+
+MATCH (a:Package) RETURN trim(a.name)
+  -> at 1:26 cypher: not supported yet: this function (jaala#284): trim()
+
+MATCH (a:Package) RETURN CASE a.license WHEN 'MIT' THEN 'permissive' WHEN 'GPL', 'AGPL' THEN 'copyleft' ELSE 'other' END
+  -> at 1:26 cypher: not supported yet: this function (jaala#284): CASE
+
+MATCH (a:Package) RETURN CASE WHEN a.license IS NULL THEN 'none' ELSE a.license END
+  -> at 1:26 cypher: not supported yet: this function (jaala#284): CASE
+
+MATCH (a:Package) RETURN CASE size(a.name) WHEN > 3 THEN 'long' WHEN IS NULL THEN 'none' END
+  -> at 1:26 cypher: not supported yet: this function (jaala#284): CASE
+
+MATCH (a:Package) WHERE a.name IS :: STRING RETURN a
+  -> at 1:32 cypher: not supported yet: this function (jaala#284): a type predicate (IS ::)
+
+MATCH (a:Package) WHERE a.name IS NOT TYPED INTEGER NOT NULL RETURN a
+  -> at 1:32 cypher: not supported yet: this function (jaala#284): a type predicate (IS ::)
+
+MATCH (a:Package) WHERE a.name :: LIST<STRING | INTEGER> RETURN a
+  -> at 1:32 cypher: not supported yet: this function (jaala#284): a type predicate (IS ::)
+
+MATCH (a:Package) WHERE a.name IS :: ZONED DATETIME RETURN a
+  -> at 1:32 cypher: not supported yet: this function (jaala#284): a type predicate (IS ::)
+
+MATCH (a:Package) WHERE a.name IS NFC NORMALIZED RETURN a
+  -> at 1:32 cypher: not supported yet: this function (jaala#284): IS NORMALIZED
+
+MATCH (a:Package) WHERE a.name IS NOT NORMALIZED RETURN a
+  -> at 1:32 cypher: not supported yet: this function (jaala#284): IS NORMALIZED
+
+MATCH (a:Package) RETURN a.name || '!' AS shout
+  -> at 1:33 cypher: not supported yet: this function (jaala#284): || (join text with +)
+
+MATCH (a:Package) RETURN apoc.text.join([a.name], ',') AS j
+  -> at 1:26 cypher: not supported yet: this function (jaala#284): apoc.text.join()
+
+CREATE (a:Package {name: 'x'}) RETURN a
+  -> at 1:1 cypher: not supported yet: writing to the graph (jaala#287): CREATE
+
+CREATE (a:Package {name: 'x'})-[:IMPORTS]->(b:Package {name: 'y'})
+  -> at 1:1 cypher: not supported yet: writing to the graph (jaala#287): CREATE
+
+MERGE (a:Package {name: 'x'}) ON CREATE SET a.license = 'MIT' ON MATCH SET a += {seen: 1} RETURN a
+  -> at 1:1 cypher: not supported yet: writing to the graph (jaala#287): MERGE
+
+MATCH (a:Package) SET a.license = 'MIT', a:Library, a IS Tool RETURN a
+  -> at 1:19 cypher: not supported yet: writing to the graph (jaala#287): SET
+
+MATCH (a:Package) SET a = {name: 'x'}
+  -> at 1:19 cypher: not supported yet: writing to the graph (jaala#287): SET
+
+MATCH (a:Package) REMOVE a.license, a:Library
+  -> at 1:19 cypher: not supported yet: writing to the graph (jaala#287): REMOVE
+
+MATCH (a:Package) DELETE a
+  -> at 1:19 cypher: not supported yet: writing to the graph (jaala#287): DELETE
+
+MATCH (a:Package) DETACH DELETE a
+  -> at 1:19 cypher: not supported yet: writing to the graph (jaala#287): DETACH
+
+MATCH (a:Package) NODETACH DELETE a
+  -> at 1:19 cypher: not supported yet: writing to the graph (jaala#287): NODETACH
+
+MATCH (a:Package) CALL { WITH a SET a.seen = 1 } IN TRANSACTIONS OF 10 ROWS ON ERROR CONTINUE REPORT STATUS AS s RETURN s
+  -> at 1:19 cypher: not supported yet (jaala#364): a CALL { } subquery
+
+MATCH (a:Package) CALL (a) { SET a.seen = 1 } IN 2 CONCURRENT TRANSACTIONS
+  -> at 1:19 cypher: not supported yet (jaala#364): a CALL { } subquery
+
+USE other MATCH (a) RETURN a
+  -> at 1:1 cypher: not supported yet: choosing a graph (jaala#289): USE
+
+USE graph.byName('other') MATCH (a) RETURN a
+  -> at 1:1 cypher: not supported yet: choosing a graph (jaala#289): USE
+
+LOAD CSV WITH HEADERS FROM 'file:///p.csv' AS row FIELDTERMINATOR ';' RETURN row
+  -> at 1:1 cypher: not supported yet: choosing a graph (jaala#289): LOAD CSV
+
+MATCH (a:Package) WITH a ORDER BY a LIMIT 1 RETURN a
+  -> at 1:19 cypher: not supported yet (jaala#364): ORDER BY, SKIP or LIMIT inside a WITH: keep them on the RETURN
+
+CALL { MATCH (a:Package) RETURN a } RETURN a
+  -> at 1:1 cypher: not supported yet (jaala#364): a CALL { } subquery
+
+MATCH (a:Package) CALL (a) { MATCH (a)-->(b) RETURN b } RETURN b
+  -> at 1:19 cypher: not supported yet (jaala#364): a CALL { } subquery
+
+MATCH (a:Package) CALL (*) { MATCH (a)-->(b) RETURN b UNION MATCH (a)<--(b) RETURN b } RETURN b
+  -> at 1:19 cypher: not supported yet (jaala#364): a CALL { } subquery
+
+MATCH (a:Package) WHERE EXISTS { MATCH (a)-->(b) WHERE b.license = 'MIT' RETURN b } RETURN a
+  -> at 1:74 cypher: not supported yet (jaala#364): a EXISTS { } subquery of several clauses
+
+MATCH (a:Package) WHERE COUNT { MATCH (a)-->(b) WITH b WHERE b.name <> 'x' RETURN b } > 1 RETURN a
+  -> at 1:49 cypher: not supported yet (jaala#364): a COUNT { } subquery of several clauses
+
+MATCH (a:Package) RETURN a LIMIT $n
+  -> at 1:34 cypher: not supported yet (jaala#364): LIMIT takes a number written in the query, not a parameter
+
+MATCH (a:Package) RETURN a SKIP $s LIMIT 1 + 1
+  -> at 1:33 cypher: not supported yet (jaala#364): SKIP takes a number written in the query, not a parameter
+
+RETURN 1
+  -> at 1:1 cypher: not supported yet (jaala#364): a RETURN before any MATCH
+
+WITH 'app' AS n MATCH (a:Package {name: n}) RETURN a
+  -> at 1:1 cypher: not supported yet (jaala#364): a WITH before any MATCH
+
+CALL db.labels()
+  -> at 1:1 cypher: not supported yet (jaala#364): a query with no RETURN
+
+CALL db.labels() YIELD label
+  -> at 1:1 cypher: not supported yet (jaala#364): a query with no RETURN
+
+MATCH (a:Package|Library) RETURN a
+  -> at 1:9 cypher: not supported yet (jaala#364): a label expression with | ! % or parentheses
+
+MATCH (a:!Library) RETURN a
+  -> at 1:9 cypher: not supported yet (jaala#364): a label expression with | ! % or parentheses
+
+MATCH (a:%) RETURN a
+  -> at 1:9 cypher: not supported yet (jaala#364): a label expression with | ! % or parentheses
+
+MATCH (a:(Package|Library)&!Test) RETURN a
+  -> at 1:9 cypher: not supported yet (jaala#364): a label expression with | ! % or parentheses
+
+MATCH (a)-[:IMPORTS&DEPENDS_ON]->(b) RETURN b
+  -> at 1:12 cypher: not supported yet (jaala#364): a relationship type expression with & ! % or parentheses
+
+MATCH (a)-[:!IMPORTS]->(b) RETURN b
+  -> at 1:12 cypher: not supported yet (jaala#364): a relationship type expression with & ! % or parentheses
+
+MATCH (a:Package) WHERE a:Package|Library RETURN a
+  -> at 1:26 cypher: not supported yet (jaala#364): a label expression with | ! % or parentheses
+
+MATCH (a:Package) WHERE (a)-->(b WHERE b.license = 'MIT') RETURN a
+  -> at 1:50 cypher: not supported yet (jaala#364): a WHERE inside a pattern in an expression
+
+MATCH (a:Package) WHERE a.name = 'a' XOR a.name = 'b' XOR a.name = 'c' XOR a.name = 'd' RETURN a
+  -> at 1:72 cypher: not supported yet: a WHERE of more than 16 alternatives (jaala#388): this WHERE expands to more than 16 alternatives
+
+MATCH (a:Package) WHERE a.name IN ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q'] RETURN a
+  -> at 1:32 cypher: not supported yet: a WHERE of more than 16 alternatives (jaala#388): this WHERE expands to more than 16 alternatives
+
+## refused plainly
+
+MATCH (a:Package) RETURN a.name SKIP 1
+  -> at 1:19 cypher: SKIP needs an ORDER BY here, so a page continues from a stable order
+
+MATCH (a:Package) RETURN a.name ORDER BY a.license
+  -> at 1:42 cypher: ORDER BY has to name a column RETURN writes (add it to RETURN, or order by its alias)
+
+SHOW INDEXES
+  -> at 1:1 cypher: SHOW is a command for the database, not a query: only a query compiles
+
+SHOW DATABASES YIELD name
+  -> at 1:1 cypher: SHOW is a command for the database, not a query: only a query compiles
+
+CREATE INDEX package_name FOR (a:Package) ON (a.name)
+  -> at 1:1 cypher: CREATE is a command for the database, not a query: only a query compiles
+
+CREATE CONSTRAINT FOR (a:Package) REQUIRE a.name IS UNIQUE
+  -> at 1:1 cypher: CREATE is a command for the database, not a query: only a query compiles
+
+DROP INDEX package_name
+  -> at 1:1 cypher: DROP is a command for the database, not a query: only a query compiles
+
+GRANT TRAVERSE ON GRAPH * TO reader
+  -> at 1:1 cypher: GRANT is a command for the database, not a query: only a query compiles
+
+EXPLAIN MATCH (a:Package) RETURN a
+  -> at 1:1 cypher: EXPLAIN plans the query without answering it: leave EXPLAIN out
+
+MATCH (a:Package) FINISH
+  -> at 1:19 cypher: FINISH answers nothing: end the query with RETURN
+
+MATCH (a:Package) WHERE a.license = null RETURN a
+  -> at 1:37 cypher: null never equals anything: write IS NULL or IS NOT NULL
+
+MATCH (a:Package) RETURN true
+  -> at 1:26 cypher: jaala has no booleans: compare a property with the value the graph stores
+
+MATCH (a:Package) RETURN a LIMIT 0
+  -> at 1:34 cypher: LIMIT 0 answers nothing: leave the query out
+
