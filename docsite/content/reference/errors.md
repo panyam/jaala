@@ -895,6 +895,18 @@ Two members serve one relation with different arities, labels or types. The engi
 
 `Federation.Timed` was called on a federation none of whose members is a timed source, so it has no versions to serve.
 
+`query: change set: …`
+
+`ns.Changes.Check` was given a change set naming a relation the vocabulary doesn't hold. The rest of the message is the unknown-name error a query would get, with its did-you-mean.
+
+`query: change set: … is a derived relation, and only a base relation's facts change`
+
+A change set adds or removes facts of a derived relation. Its facts follow from its rules, so a change goes to the base relations they read.
+
+`query: change set: … takes … args, and a fact to … has …`
+
+A fact a change set adds or removes has a different number of values than its relation's arity.
+
 `query: … is the engine's own, which a query calls whatever the vocabulary holds: register yours under another name`
 
 `graph.closure` and `graph.paths` are answered by the engine before the vocabulary is asked, so a predicate registered under either name would never be called.

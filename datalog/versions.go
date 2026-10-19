@@ -269,6 +269,19 @@ type Diff struct {
 	Added, Removed []ns.Tuple
 }
 
+// Changes is d as a change set on rel (ns.Changes): applied to rel's facts in the first version, it
+// gives the second's.
+func (d Diff) Changes(rel string) ns.Changes {
+	var c ns.Changes
+	for _, t := range d.Removed {
+		c.Remove(rel, t)
+	}
+	for _, t := range d.Added {
+		c.Add(rel, t)
+	}
+	return c
+}
+
 // Diff is how rel's facts changed from version from to version to of the Base's ns.TimedSource (#179).
 // A fact is its values, read as the engine reads them (as rel's declared types, units folded), so a
 // fact whose citations changed and nothing else is in neither list. Each list is in the order the
