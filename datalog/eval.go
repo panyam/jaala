@@ -901,6 +901,10 @@ func deferComparisons(lits []Literal, reg *ns.Vocabulary) []Literal {
 			case ok && !bi.IsGenerator():
 				// A filter waits for its arguments as a comparison does (#215).
 				return !slices.Contains(boundFlags(l.Pos, bound), false)
+			case ok && isWalk(l.Pos.Relation) && !bi.Satisfied(boundFlags(l.Pos, bound)):
+				// An engine walk waits for its mode and bounds, which every mode reads (#407): Naive
+				// called it where written and erred on a body the planned evaluator answered.
+				return false
 			case ok:
 				// A generator waits as an expression does for what binds a number it reads (#244).
 				return !awaitsBinder(numbersRead(l, bi), rest, bound, reg)

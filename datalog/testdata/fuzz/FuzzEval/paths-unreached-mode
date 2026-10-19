@@ -1,0 +1,2 @@
+go test fuzz v1
+string("00(\"\",00) :-graph.paths(\"edge\", ?00, \"00\", \"simple\",00,?p2,0), edge(?p2, ?00);00= \"\" =>?00")
