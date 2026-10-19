@@ -480,3 +480,24 @@ func TestNoStepsReachOnlyANodeTheRelationHolds(t *testing.T) {
 		}
 	}
 }
+
+// A walk whose bounds a later relation binds runs once they are, in Naive too, which called
+// it where written and erred on a body the planned evaluator answered (#407).
+func TestAWalkWaitsForItsBoundsWrittenAfterIt(t *testing.T) {
+	for q, want := range map[string]string{
+		`r(?a, ?h) :- graph.closure("edge", ?a, "c", 0, ?m, ?h), weight(?a, ?m); r(?a, ?x) => ?a, ?x`:         "b 1, c 0",
+		`r(?a, ?p) :- graph.paths("edge", ?a, "c", "simple", 0, ?m, ?p), weight(?a, ?m); r(?a, ?x) => ?a, ?x`: `b ["b","c"], c ["c"]`,
+	} {
+		rows, err := both(mustParse(t, q), baseFor(std(graph())))
+		if err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+		var got []string
+		for _, r := range rows {
+			got = append(got, r.Bind["a"].S+" "+r.Bind["x"].S)
+		}
+		if strings.Join(got, ", ") != want {
+			t.Errorf("%s:\n got  %s\n want %s", q, strings.Join(got, ", "), want)
+		}
+	}
+}

@@ -1021,7 +1021,9 @@ GOARCH=wasm go test ./ns` (#417 ran `ns` that way).
   do, is never held. Naive doesn't plan: it calls a generator where it is
   written, mode or not, with the unbound inputs `Bound: false`, so a generator must refuse what it
   can't run without (`str.distance` errors like a filter, #77) rather than read the zero value; a
-  `both()` test of a generator-first body catches it as Naive answering differently. A filter is
+  `both()` test of a generator-first body catches it as Naive answering differently. An engine walk
+  (closure, paths) is the exception: `deferComparisons` holds it until its mode and bounds are bound
+  (#407), since Naive erring on a bound written after the call failed a body the plan answered. A filter is
   refused the same way when nothing in its body binds an argument (`checkFilters`, #215, after
   `checkRules` so a redefinition reports first), and `deferComparisons` holds one until its arguments
   are bound, so Naive answers a filter written before its binder. Relations tied on bound arguments (at least one) put a derived call bound only by constants or a
