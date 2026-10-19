@@ -907,6 +907,18 @@ A change set adds or removes facts of a derived relation. Its facts follow from 
 
 A fact a change set adds or removes has a different number of values than its relation's arity.
 
+`query: commit: version … is not one the source serves`
+
+`TimedMemSource.Commit` was asked to commit over a version the source doesn't serve.
+
+`query: commit: version … is one the source serves already`
+
+A commit adds a new version, so the version it names mustn't be one the source holds already.
+
+`query: commit: the source declares no relation …`
+
+A committed change set names a relation the source doesn't declare.
+
 `query: … is the engine's own, which a query calls whatever the vocabulary holds: register yours under another name`
 
 `graph.closure` and `graph.paths` are answered by the engine before the vocabulary is asked, so a predicate registered under either name would never be called.

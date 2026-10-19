@@ -1016,6 +1016,9 @@ func (c genCase) check() (genOutcome, string) {
 	if diff := agreeStreamed(q, b, want, werr, c.opts()); diff != "" {
 		return genDisagreed, diff
 	}
+	if diff := agreeOverlaid(q, b, want, werr, c.opts()); diff != "" {
+		return genDisagreed, diff
+	}
 	if diff := agreeAt(q, b, c.opts(), len(text)); diff != "" {
 		return genDisagreed, diff
 	}
@@ -1675,6 +1678,7 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 	lookedUpPrograms, federatedPrograms, batchedPrograms, pushedPrograms, partitionedPrograms, walkedPrograms, unitAnswers, mixedAnswers, foldedAnswers = 0, 0, 0, 0, 0, 0, 0, 0, 0
 	pagedPrograms, summarizedPrograms, batchPushedPrograms, stepWalkedPrograms, streamedPrograms, partitionedBatchPrograms, alonePushedPrograms = 0, 0, 0, 0, 0, 0, 0
 	atPrograms, atStoredPrograms, acrossPrograms, acrossAggregates, acrossLookedPrograms = 0, 0, 0, 0, 0
+	overlaidPushed, overlaidBatched, overlaidLookedUp = 0, 0, 0
 	withUnits := 0
 	for seed := first; seed < first+int64(seeds); seed++ {
 		rnd := rand.New(rand.NewSource(seed))
@@ -1781,6 +1785,10 @@ func TestGeneratedProgramsAgree(t *testing.T) {
 	}
 	if streamedPrograms == 0 {
 		t.Errorf("control: no program's goal streamed a relation into its answer")
+	}
+	t.Logf("sessions: %d programs pushed to the store beneath one, %d batched, %d looked up a relation it touched", overlaidPushed, overlaidBatched, overlaidLookedUp)
+	if overlaidPushed == 0 || overlaidBatched == 0 || overlaidLookedUp == 0 {
+		t.Errorf("control: over a session, %d programs pushed to the store, %d batched and %d looked up a relation the session touched", overlaidPushed, overlaidBatched, overlaidLookedUp)
 	}
 	t.Logf("versions: %d programs answered differently between versions, %d asked a version's store", atPrograms, atStoredPrograms)
 	t.Logf("across: %d programs answered rows holding in some versions only, %d of them aggregating, %d looked a store up", acrossPrograms, acrossAggregates, acrossLookedPrograms)
