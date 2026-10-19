@@ -53,7 +53,7 @@ func (c *call) query(ctx core.ToolContext, in queryInput) (core.ToolResult, erro
 	if !in.bare {
 		extra = append(extra, datalog.Witnesses())
 	}
-	if in.Sample > 0 {
+	if in.Sample > 0 || c.p.Hint != nil {
 		r = &datalog.Report{}
 		extra = append(extra, datalog.Explain(r))
 	}
@@ -62,7 +62,7 @@ func (c *call) query(ctx core.ToolContext, in queryInput) (core.ToolResult, erro
 		return c.refuse(in.Program, err), nil
 	}
 	a := page(in.Program, tab, offset, c.limit(in.Limit))
-	a.Why = whyEmpty(tab.Len(), r, func(err error) string { return nl.Explain(in.Program, err) })
+	a.Why = c.whyEmpty(ctx, tab.Len(), r, func(err error) string { return nl.Explain(in.Program, err) })
 	return c.answer(a, in.JSON)
 }
 
@@ -364,7 +364,13 @@ func (c *call) explain(ctx core.ToolContext, in explainInput) (core.ToolResult, 
 	if err != nil {
 		return c.refuse(in.Program, err), nil
 	}
-	return core.TextResult(rowCount(len(rows)) + "\n" + r.String()), nil
+	text := rowCount(len(rows)) + "\n" + r.String()
+	if len(rows) == 0 && r.Empty != nil && c.p.Hint != nil {
+		if hint := c.p.Hint(ctx, r.Empty); hint != "" {
+			text = strings.TrimRight(text, "\n") + "\n" + strings.TrimRight(hint, "\n") + "\n"
+		}
+	}
+	return core.TextResult(text), nil
 }
 
 const askDesc = `Ask a question about %s in plain language: the server writes a Datalog program (or, with language cypher, a Cypher query), checks and runs it, and answers with the program, its rows and each try it took. mode picks the models: local (the small one alone), frontier (the large one alone) or both (the small one, then the large one when it fails). Prefer query when you can write the program.`

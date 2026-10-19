@@ -96,8 +96,14 @@ type EmptyReport struct {
 	// probeBudget when it has none) or one that failed. The probe counts toward neither Work nor
 	// Base.Work. A whole read from a Source that doesn't stream isn't charged to a budget, so a derived
 	// atom whose rules read one is read whole.
-	Alone   *bool          `json:"alone,omitempty"`
-	Because []*EmptyReport `json:"because,omitempty"`
+	Alone *bool `json:"alone,omitempty"`
+	// Relation and Args are the literal's atom as written, when it is one: the relation it reads and
+	// each argument's constant, nil for a variable or an expression. A host says what the data holds
+	// where the atom matched nothing from them (nl.Pack.Hint), without parsing Literal. Both are empty
+	// for a comparison or a `not`.
+	Relation string         `json:"relation,omitempty"`
+	Args     []*ns.Value    `json:"args,omitempty"`
+	Because  []*EmptyReport `json:"because,omitempty"`
 }
 
 // A ColdReport is an Eval's cost with nothing kept from earlier queries: no derived relation reused
@@ -432,6 +438,11 @@ func (e *explainer) empty(br *BodyReport, seen map[string]bool) *EmptyReport {
 			return er
 		}
 		e.culprits[er] = atom
+		er.Relation = ExplainName(atom.Relation)
+		er.Args = make([]*ns.Value, len(atom.Args))
+		for i, a := range atom.Args {
+			er.Args[i] = a.Const
+		}
 		read := atom.Relation
 		rel := explainRelation(read)
 		var bodies []*BodyReport

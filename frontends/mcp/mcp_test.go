@@ -302,3 +302,25 @@ func TestNewRefusesABrokenPack(t *testing.T) {
 		t.Errorf("control: %v", err)
 	}
 }
+
+// A pack's Hint follows an empty answer from query, cypher and explain, so an agent sees what the data
+// holds where its program matched nothing, with no sample asked. control: an answer with rows has none.
+func TestAnEmptyAnswerCarriesThePacksHint(t *testing.T) {
+	hinted := pack
+	hinted.Hint = func(_ context.Context, why *datalog.EmptyReport) string {
+		if why.Relation == "" {
+			return ""
+		}
+		return fmt.Sprintf("hint: %s has no %q here", why.Relation, why.Args[len(why.Args)-1].S)
+	}
+	c := dial(t, hinted, mcp.Options{})
+	program := `road("a", ?x), road(?x, "zz") => ?x`
+	for _, tool := range []string{"query", "explain"} {
+		if text := c.ToolCall(tool, map[string]any{"program": program}); !strings.Contains(text, `hint: road has no "zz" here`) || !strings.Contains(text, "matched nothing") {
+			t.Errorf("%s:\n%s", tool, text)
+		}
+	}
+	if text := c.ToolCall("query", map[string]any{"program": `road("a", ?x) => ?x`}); strings.Contains(text, "hint:") {
+		t.Errorf("control: an answer with rows:\n%s", text)
+	}
+}
