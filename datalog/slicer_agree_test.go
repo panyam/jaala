@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/panyam/jaala/internal/corpus"
 )
 
 // The tokenizer (#167) holds the parser it replaced (slicer_test.go) to its answers: whatever the
@@ -169,7 +171,7 @@ func TestATypoGetsTheSlicersMessage(t *testing.T) {
 	refused, failed := 0, 0
 	for seed := int64(1); seed <= 300 && failed < 5; seed++ {
 		rnd := rand.New(rand.NewSource(seed))
-		text := newGenerator(rnd, genGraph(rnd)).program().String()
+		text := corpus.New(rnd, corpus.Graph(rnd)).Program().String()
 		for range 60 {
 			b := []byte(text)
 			i := rnd.Intn(len(b))

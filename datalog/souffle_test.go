@@ -14,6 +14,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/panyam/jaala/internal/corpus"
 	"github.com/panyam/jaala/ns"
 )
 
@@ -1139,13 +1140,13 @@ type souffleCase struct {
 // prepareSouffle parses and translates c, and runs it through Naive. It returns a reason instead for a
 // program Naive refuses or can't finish within genBudget, or the translator doesn't cover.
 func prepareSouffle(c genCase, prefix string) (souffleCase, string, error) {
-	q, err := Parse(c.prog.String())
+	q, err := Parse(c.Prog.String())
 	if err != nil {
 		return souffleCase{}, "", err
 	}
-	src := c.facts.source()
+	src := c.Facts.Source()
 	b := baseFor(folding(src))
-	opts := c.opts()
+	opts := caseOpts(c)
 	rows, err := (Naive{}).Eval(bg, q, b, append(opts, Budget(genBudget))...)
 	var over *BudgetExceeded
 	if errors.As(err, &over) {
@@ -1155,7 +1156,7 @@ func prepareSouffle(c genCase, prefix string) (souffleCase, string, error) {
 		return souffleCase{}, "Naive refuses it", nil // the corpus checks the evaluators refuse alike
 	}
 	bind := map[Var][]ns.Value{}
-	for v, names := range c.prog.goal.bind {
+	for v, names := range c.Prog.Bind() {
 		bind[Var(v)] = []ns.Value{}
 		for _, n := range names {
 			bind[Var(v)] = append(bind[Var(v)], ns.S(n))
@@ -1179,7 +1180,7 @@ func souffleDiff(bin string, sc souffleCase) (string, error) {
 		return "", err
 	}
 	defer os.RemoveAll(dir)
-	if err := writeSouffleFacts(dir, sc.tr.prefix, sc.c.facts.source()); err != nil {
+	if err := writeSouffleFacts(dir, sc.tr.prefix, sc.c.Facts.Source()); err != nil {
 		return "", err
 	}
 	rows, err := runSouffle(bin, dir, []souffleTranslation{sc.tr})
@@ -1197,7 +1198,7 @@ func compareSouffle(sc souffleCase, rows []Row) string {
 	if anyRows(sc.tr.q) && len(sc.naive) == min(sc.tr.q.Limit, len(got)) && subsetOf(sc.naive, got) {
 		return "" // a limit without an order by answers any of the rows (#194)
 	}
-	return fmt.Sprintf("Soufflé answers differently from Naive on %s\n naive:   %v\n souffle: %v\n translation:\n%s", sc.c.prog, sc.naive, got, sc.tr.text)
+	return fmt.Sprintf("Soufflé answers differently from Naive on %s\n naive:   %v\n souffle: %v\n translation:\n%s", sc.c.Prog, sc.naive, got, sc.tr.text)
 }
 
 func subsetOf(some, all []string) bool {
@@ -1235,7 +1236,7 @@ func compareSeeds(t *testing.T, bin string, first int64, n int) souffleRun {
 		}
 		sc, why, err := prepareSouffle(c, fmt.Sprintf("p%d_", seed))
 		if err != nil {
-			t.Fatalf("seed %d: %v\n%s", seed, err, c.prog)
+			t.Fatalf("seed %d: %v\n%s", seed, err, c.Prog)
 		}
 		if why != "" {
 			run.skipped[why]++
@@ -1276,7 +1277,7 @@ func compareSeeds(t *testing.T, bin string, first int64, n int) souffleRun {
 			trs := make([]souffleTranslation, len(outs))
 			for i, o := range outs {
 				trs[i] = o.sc.tr
-				if err := writeSouffleFacts(dir, o.sc.tr.prefix, o.sc.c.facts.source()); err != nil {
+				if err := writeSouffleFacts(dir, o.sc.tr.prefix, o.sc.c.Facts.Source()); err != nil {
 					outs[i].refused = err
 				}
 			}
@@ -1297,15 +1298,15 @@ func compareSeeds(t *testing.T, bin string, first int64, n int) souffleRun {
 		for _, o := range outs {
 			switch {
 			case o.refused != nil:
-				run.refused = append(run.refused, fmt.Sprintf("%s: %v", o.sc.c.prog, o.refused))
+				run.refused = append(run.refused, fmt.Sprintf("%s: %v", o.sc.c.Prog, o.refused))
 			case o.diff == "":
-				for _, s := range o.sc.c.prog.shapes {
+				for _, s := range o.sc.c.Prog.Shapes() {
 					run.compared[s]++
 				}
 				run.compared["program"]++
 			default:
 				prefix := o.sc.tr.prefix
-				small, d := shrinkWhile(o.sc.c, o.diff, func(s genCase) (bool, string) {
+				small, d := corpus.Shrink(o.sc.c, o.diff, func(s genCase) (bool, string) {
 					ssc, why, err := prepareSouffle(s, prefix)
 					if err != nil || why != "" {
 						return false, ""
@@ -1392,17 +1393,17 @@ func TestSouffleCatchesAWrongTranslation(t *testing.T) {
 // are compared by their text.
 func corpusCase(seed int64) (genCase, bool) {
 	rnd := rand.New(rand.NewSource(seed))
-	facts := genGraph(rnd)
-	g := newGenerator(rnd, facts)
-	mixed := facts.mixedUnits()
+	facts := corpus.Graph(rnd)
+	g := corpus.New(rnd, facts)
+	mixed := facts.MixedUnits()
 	switch {
 	case mixed:
-		facts.units = nil
-	case facts.prefixed():
+		facts = facts.WithoutUnits()
+	case facts.Prefixed():
 		// Soufflé reads the numbers as written, so it gets them in V, as the Base folds them (#205).
-		facts.units = slices.Repeat([]string{"V"}, len(facts.units))
+		facts = facts.InUnit("V")
 	}
-	return genCase{prog: g.program(), facts: facts}, mixed
+	return genCase{Prog: g.Program(), Facts: facts}, mixed
 }
 
 // The translation, checked without Soufflé so CI's main job covers it: a rule, negation and a
