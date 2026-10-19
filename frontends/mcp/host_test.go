@@ -91,7 +91,7 @@ func schemas(t *testing.T, c *testutil.TestClient) map[string]inputSchema {
 func TestHostArgumentsAreFlatOnEveryTool(t *testing.T) {
 	var seen []prepared
 	c := dialWith(t, mcp.Options{Model: &scripted{name: "small"}}, func(v *ns.Vocabulary) mcp.Extension[trip] { return tripHost(t, v, &seen) })
-	own := map[string]string{"query": "program", "schema": "path", "explain": "program", "ask": "question"}
+	own := map[string]string{"query": "program", "schema": "path", "explain": "program", "ask": "question", "look": "name", "values": "target"}
 	got := schemas(t, c)
 	if len(got) != len(own) {
 		t.Fatalf("tools %v", got)

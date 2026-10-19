@@ -4,10 +4,12 @@
 // module of its own, like frontends/nlmodels, so mcpkit's dependencies never reach jaala's core;
 // transport and sessions are mcpkit's.
 //
-// New builds the server with four tools: query (a program in, rows with the facts they were derived
-// from out), schema (the vocabulary card, a module's or relation's members and docs, and the pack's
-// data card), ask (plain language through nl.Translate, when a model is configured) and explain
-// (where a program's work went, and why its answer is empty). A host registers its own tools on the
+// New builds the server with its tools: query (a program in, rows with the facts they were derived
+// from out, or with sample a try on a few rows), schema (the vocabulary card, a module's or
+// relation's members and docs, and the pack's data card), explain (where a program's work went, and
+// why its answer is empty), look, values and find (nl.Translate's actions, #393; find only with the
+// pack's Grounder), ask (plain language through nl.Translate, when a model is configured) and cypher
+// (with the pack's graph). A host registers its own tools on the
 // server New returns, and writes answers its own way through Pack.Format. NewWith adds a host's own
 // arguments to every tool, and a hook that decides per call what they mean (#357).
 package mcp
@@ -95,6 +97,9 @@ type Answer struct {
 	Offset, Len int
 	// Next continues the answer from the row after the page, "" when the page is its end.
 	Next string
+	// Why says, for a call with a sample that answered no rows, which part matched nothing, in the
+	// language the call was written in; "" otherwise.
+	Why string
 }
 
 // An Extension adds a host's own arguments, the fields of A, to every jaala tool (#357), such as
@@ -176,11 +181,17 @@ func NewWith[A any](v *ns.Vocabulary, p Pack, o Options, x Extension[A]) (*serve
 	schema, serr := tool(t, x, host, "schema", fmt.Sprintf(schemaDesc, topic), (*call).schema)
 	explain, eerr := tool(t, x, host, "explain", explainDesc, (*call).explain)
 	ask, aerr := tool(t, x, host, "ask", fmt.Sprintf(askDesc, topic), (*call).ask)
-	if err := errors.Join(qerr, serr, eerr, aerr); err != nil {
+	look, lerr := tool(t, x, host, "look", fmt.Sprintf(lookDesc, topic), (*call).look)
+	values, verr := tool(t, x, host, "values", fmt.Sprintf(valuesDesc, topic), (*call).values)
+	find, ferr := tool(t, x, host, "find", fmt.Sprintf(findDesc, topic), (*call).find)
+	if err := errors.Join(qerr, serr, eerr, aerr, lerr, verr, ferr); err != nil {
 		return nil, err
 	}
 	srv := server.NewServer(core.Implementation{Name: name, Version: version}, server.WithInstructions(text))
-	srv.Register(query, schema, explain)
+	srv.Register(query, schema, explain, look, values)
+	if p.Grounder != nil {
+		srv.Register(find)
+	}
 	if o.Model != nil {
 		srv.Register(ask)
 	}
@@ -279,7 +290,12 @@ func instructions(p Pack, ask bool) string {
 	if p.Cypher != nil {
 		b.WriteString("\nOr ask in Cypher with the cypher tool: MATCH, WHERE and RETURN over this graph, and it answers with the program it ran. " + p.Cypher.Describe() + "\n")
 	}
-	b.WriteString("\nThe explain tool says where a program's work went, and why its answer is empty.")
+	b.WriteString("\nBefore guessing a value, look describes a relation and values shows what one of its arguments holds")
+	if p.Grounder != nil {
+		b.WriteString(", and find turns a name into the ids it may stand for")
+	}
+	b.WriteString(". To try a program, call query with sample: it runs on a few rows and says which part matched nothing.")
+	b.WriteString(" The explain tool says where a program's work went, and why its answer is empty.")
 	if ask {
 		b.WriteString(" The ask tool takes a question in plain language and writes the program itself.")
 		if p.Cypher != nil {

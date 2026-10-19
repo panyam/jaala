@@ -45,7 +45,7 @@ func Example_mcpInstructions() {
 	//
 	// Or ask in Cypher with the cypher tool: MATCH, WHERE and RETURN over this graph, and it answers with the program it ran. Node labels: Package {license, name}. Relationship types: IMPORTS.
 	//
-	// The explain tool says where a program's work went, and why its answer is empty.
+	// Before guessing a value, look describes a relation and values shows what one of its arguments holds. To try a program, call query with sample: it runs on a few rows and says which part matched nothing. The explain tool says where a program's work went, and why its answer is empty.
 	//
 	// For questions about the packages of a Go service and what each imports, use the deps MCP server before searching files: it answers exactly from its graph. Call its schema tool, then query, or cypher to ask in Cypher.
 }
