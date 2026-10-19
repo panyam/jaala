@@ -48,7 +48,7 @@ func (c *call) cypher(ctx core.ToolContext, in cypherInput) (core.ToolResult, er
 		extra = append(extra, datalog.Witnesses())
 	}
 	var r *datalog.Report
-	if in.Sample > 0 {
+	if in.Sample > 0 || c.p.Hint != nil {
 		r = &datalog.Report{}
 		extra = append(extra, datalog.Explain(r))
 	}
@@ -71,7 +71,7 @@ func (c *call) cypher(ctx core.ToolContext, in cypherInput) (core.ToolResult, er
 	}
 	a := page(p.Text, tab, offset, c.limit(in.Limit))
 	a.Cypher = in.Query
-	a.Why = whyEmpty(tab.Len(), r, func(err error) string { return cypher.Explain(in.Query, p, err) })
+	a.Why = c.whyEmpty(ctx, tab.Len(), r, func(err error) string { return cypher.Explain(in.Query, p, err) })
 	if len(p.Columns) == len(a.Columns) {
 		a.Columns = p.Columns
 	}

@@ -3,6 +3,7 @@ package mcp_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -342,5 +343,21 @@ func TestAskTranslatesIntoCypher(t *testing.T) {
 		if _, err := mcp.New(v, broken, mcp.Options{Base: base}); err == nil {
 			t.Errorf("New took a pack asking in %q with examples %v", broken.AskLanguage, broken.CypherExamples)
 		}
+	}
+}
+
+// A pack's Hint follows an empty Cypher answer too, under the culprit placed in the query.
+func TestAnEmptyCypherAnswerCarriesThePacksHint(t *testing.T) {
+	p := codePack(codeGraph("Func"))
+	p.Hint = func(_ context.Context, why *datalog.EmptyReport) string {
+		if why.Relation != "attr" || why.Args[2] == nil {
+			return ""
+		}
+		return fmt.Sprintf("hint: no node has %s %q", why.Args[1].S, why.Args[2].S)
+	}
+	c := dialCode(t, p, mcp.Options{})
+	text := c.ToolCall("cypher", map[string]any{"query": `MATCH (a:Func)-[:CALLS]->(b:Func {id: 'f:nope'}) RETURN a`})
+	if !strings.Contains(text, "no rows") || !strings.Contains(text, `hint: no node has id "f:nope"`) {
+		t.Errorf("cypher:\n%s", text)
 	}
 }

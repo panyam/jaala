@@ -411,13 +411,27 @@ var errEmpty = errors.New("the program answered no rows")
 // errors.As finds it in a Try's Err.
 type EmptyAnswer struct {
 	Why *datalog.EmptyReport // nil when every literal passed something on
+	// Hint is the Pack's Hint for Why: what the data holds where it matched nothing, "" for none.
+	Hint string
 }
 
 func (e *EmptyAnswer) Error() string {
 	if e.Why == nil {
 		return errEmpty.Error()
 	}
-	return errEmpty.Error() + ":\n" + e.Why.String()
+	s := errEmpty.Error() + ":\n" + e.Why.String()
+	if e.Hint != "" {
+		s += "\n" + strings.TrimRight(e.Hint, "\n")
+	}
+	return s
+}
+
+// hintFor is p's Hint for why, "" when there is no pack, no hint or nothing to explain.
+func hintFor(ctx context.Context, p *Pack, why *datalog.EmptyReport) string {
+	if p == nil || p.Hint == nil || why == nil {
+		return ""
+	}
+	return p.Hint(ctx, why)
 }
 
 // Is makes an EmptyAnswer the empty answer Translate moves to the fallback on.
@@ -502,7 +516,7 @@ func check(ctx context.Context, try Try, v *ns.Vocabulary, o Options, limit int)
 		return refuse(err, kindOf(err, KindEval))
 	}
 	if len(rows) == 0 {
-		return refuse(&EmptyAnswer{Why: try.Report.Empty}, KindEmpty)
+		return refuse(&EmptyAnswer{Why: try.Report.Empty, Hint: hintFor(ctx, o.Pack, try.Report.Empty)}, KindEmpty)
 	}
 	prog.Rows = rows
 	return judged(ctx, try, prog, o)

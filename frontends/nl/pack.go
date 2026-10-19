@@ -35,6 +35,13 @@ type Pack struct {
 	// for what makes an answer suspect in this domain, such as every value absent or far more rows
 	// than the question could mean. p.Rows is nil when Translate has no Base.
 	Check func(ctx context.Context, p Program) error
+	// Hint, when set, says what the data holds where an empty answer lost its last binding: given
+	// why (never nil), the values its culprit's constants could have meant, in the host's terms ("no
+	// node kind entity; the kinds are package, func, type"). jaala names the call that matched nothing
+	// and whether it matches alone; only the host knows its data's spellings (#343). Translate adds
+	// the hint to an empty draft's feedback, and frontends/mcp to an empty answer of query, cypher and
+	// explain. "" adds nothing. It runs once per empty answer, so it should cost a few lookups.
+	Hint func(ctx context.Context, why *datalog.EmptyReport) string
 }
 
 // An Example is a question with the program that answers it, which the model reads before it writes

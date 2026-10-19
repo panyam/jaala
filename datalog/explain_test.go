@@ -368,3 +368,17 @@ func TestExplainMarksTheLiteralTheBudgetStoppedIn(t *testing.T) {
 		t.Errorf("control: without a budget, stopped in %v", got)
 	}
 }
+
+// An empty answer's culprit names its atom, the relation and each argument's constant as written (nil
+// for a variable), so a host can say what the data holds there without parsing Literal. control: a
+// comparison's culprit has no atom.
+func TestEmptyReportNamesItsAtom(t *testing.T) {
+	r := explained(t, SemiNaive{}, `edge("a", ?x), edge(?x, "zz") => ?x`, baseFor(std(graph())))
+	if e := r.Empty; e == nil || e.Relation != "edge" || len(e.Args) != 2 || e.Args[0] != nil || e.Args[1] == nil || e.Args[1].S != "zz" {
+		t.Errorf("empty %+v", r.Empty)
+	}
+	r = explained(t, SemiNaive{WrittenOrder: true}, `edge(?a, ?b), ?b = "q" => ?a`, baseFor(std(graph())))
+	if e := r.Empty; e == nil || e.Relation != "" || e.Args != nil {
+		t.Errorf("control: a comparison's empty %+v", r.Empty)
+	}
+}

@@ -358,3 +358,31 @@ func TestTranslateHandsTheModelTheVocabularysGrammar(t *testing.T) {
 		t.Fatal("control: the default and goal-only grammars can't be told apart")
 	}
 }
+
+// A pack's Hint says what the data holds where an empty draft lost its last binding, and the model is
+// told it beside jaala's own explanation. control: a pack with no Hint adds nothing.
+func TestTranslateAddsThePacksHintToAnEmptyAnswer(t *testing.T) {
+	v := vocabulary(t)
+	b := graphBase(t, v)
+	var got *datalog.EmptyReport
+	pack := &nl.Pack{Hint: func(_ context.Context, why *datalog.EmptyReport) string {
+		got = why
+		return `no node "zz"; nodes are "a" to "c"`
+	}}
+	m := model("small", `edge("a", ?x), edge(?x, "zz") => ?x`, `edge("a", ?x), edge(?x, "c") => ?x`)
+	_, tr, err := nl.Translate(context.Background(), "what leads from a to zz?", v, nil, m, nl.Options{Base: b, Pack: pack})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if turns := m.asked[1].Turns; len(turns) != 3 || !strings.Contains(turns[2].Text, `edge(?x, "zz") matched nothing`) || !strings.Contains(turns[2].Text, `no node "zz"; nodes are "a" to "c"`) {
+		t.Errorf("second prompt's turns %+v; want the hint in the feedback", turns)
+	}
+	var empty *nl.EmptyAnswer
+	if !errors.As(tr.Tries[0].Err, &empty) || empty.Hint != `no node "zz"; nodes are "a" to "c"` || got == nil || got.Relation != "edge" {
+		t.Errorf("first try's err %v, hint asked with %+v", tr.Tries[0].Err, got)
+	}
+	m = model("small", `edge("a", ?x), edge(?x, "zz") => ?x`, `edge("a", ?x), edge(?x, "c") => ?x`)
+	if _, _, err := nl.Translate(context.Background(), "q", v, nil, m, nl.Options{Base: b, Pack: &nl.Pack{}}); err != nil || strings.Contains(m.asked[1].Turns[2].Text, "no node") {
+		t.Errorf("control: %v, %+v", err, m.asked[1].Turns)
+	}
+}

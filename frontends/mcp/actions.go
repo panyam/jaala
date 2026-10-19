@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -117,11 +118,16 @@ func sampled(q datalog.Query, sample int) datalog.Query {
 	return q
 }
 
-// whyEmpty is, for a call that answered nothing and was explained into r (a sampled one), why: the
-// literal that matched nothing, as nl.Explain writes an empty answer for a model, and "" otherwise.
-func whyEmpty(rows int, r *datalog.Report, explain func(error) string) string {
+// whyEmpty is, for a call that answered nothing and was explained into r (a sampled one, or any when
+// the pack has a Hint), why: the literal that matched nothing, as nl.Explain writes an empty answer
+// for a model, with the pack's hint, and "" otherwise.
+func (c *call) whyEmpty(ctx context.Context, rows int, r *datalog.Report, explain func(error) string) string {
 	if rows > 0 || r == nil {
 		return ""
 	}
-	return strings.TrimRight(explain(&nl.EmptyAnswer{Why: r.Empty}), "\n") + "\n"
+	e := &nl.EmptyAnswer{Why: r.Empty}
+	if c.p.Hint != nil && r.Empty != nil {
+		e.Hint = c.p.Hint(ctx, r.Empty)
+	}
+	return strings.TrimRight(explain(e), "\n") + "\n"
 }
