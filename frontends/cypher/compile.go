@@ -191,6 +191,9 @@ func chooseMarks(text string, g Graph, params map[string]ns.Value) ([3]byte, boo
 	if g.Props != nil {
 		all.WriteString(g.Props.Relation)
 	}
+	for k, p := range g.Derived {
+		add(p.Fixed, nil, k, p.Relation)
+	}
 	for k, v := range params {
 		all.WriteString(k + v.S + v.BaseUnit)
 	}
@@ -592,7 +595,8 @@ func (c *compiler) nodeRef(r varRef) (*nodeVar, *Error) {
 }
 
 // resolveProp finds where n's property lives: a column of one of n's labels' relations (label), n's
-// key itself (identity), or the Props relation (kv). An unlabeled node takes the one label holding
+// key itself (identity), or a relation of facts about the node, the property's Derived one or the
+// Props relation (kv). An unlabeled node takes the one label holding
 // the property, and becomes a node of it.
 func (c *compiler) resolveProp(n *nodeVar, r propRef) (label string, identity, kv bool, err *Error) {
 	for _, l := range n.labels {
@@ -601,7 +605,7 @@ func (c *compiler) resolveProp(n *nodeVar, r propRef) (label string, identity, k
 			return l, i == nd.Key, false, nil
 		}
 	}
-	if c.g.Props != nil {
+	if _, ok := c.g.Derived[r.key]; ok || c.g.Props != nil {
 		return "", false, true, nil
 	}
 	if len(n.labels) == 0 {
@@ -668,7 +672,7 @@ func (c *compiler) prop(r propRef) (frag, *Error) {
 	return frag{"?" + s.jv}, nil
 }
 
-// kvRead reads n's property key through the Props relation, once per scope: a property read inside
+// kvRead reads n's property key through its relation (kvAtom), once per scope: a property read inside
 // one side of an OR is read only there, so a node without it still passes the other side.
 func (c *compiler) kvRead(n *nodeVar, key string) string {
 	if c.kv == nil {
@@ -686,11 +690,36 @@ func (c *compiler) kvRead(n *nodeVar, key string) string {
 	jv := c.fresh(n.jv + "_" + key)
 	c.name(jv, n.name+"."+key)
 	m[k] = jv
-	*c.scope = append(*c.scope, c.kvAtom(n, quote(key), "?"+jv))
+	*c.scope = append(*c.scope, c.kvAtom(n, key, "?"+jv))
 	return jv
 }
 
+// kvAtom is the fact holding n's property key with value val: an atom over the key's Derived
+// relation, or over Props with the key written in.
 func (c *compiler) kvAtom(n *nodeVar, key string, val any) frag {
+	if d, ok := c.g.Derived[key]; ok {
+		ar, _ := arity(c.v, d.Relation)
+		args := make([]any, 0, 2*ar+2)
+		args = append(args, d.Relation+"(")
+		for i := 0; i < ar; i++ {
+			if i > 0 {
+				args = append(args, ", ")
+			}
+			k, fixed := d.Fixed[i]
+			switch {
+			case i == d.Node:
+				args = append(args, keyArg{n})
+			case i == d.Value:
+				args = append(args, val)
+			case fixed:
+				args = append(args, quote(k))
+			default:
+				args = append(args, "_")
+			}
+		}
+		return append(frag(args), ")")
+	}
+	key = quote(key)
 	p := c.g.Props
 	ar, _ := arity(c.v, p.Relation)
 	args := make([]any, 0, 2*ar+2)
@@ -1024,7 +1053,7 @@ var textFuncs = map[string]struct {
 }
 
 // isText reports whether e is text a + joins rather than adds: a string, a string function, a join,
-// or a property its relation's schema types as text.
+// or a property its relation's schema (or a Derived predicate's Types) types as text.
 func (c *compiler) isText(e expr) bool {
 	switch e := e.(type) {
 	case strLit:
@@ -1047,6 +1076,10 @@ func (c *compiler) isText(e expr) bool {
 				}
 				return false
 			}
+		}
+		if d, ok := c.g.Derived[e.key]; ok {
+			types := argTypes(c.v, d.Relation)
+			return d.Value < len(types) && types[d.Value].Type == ns.TypeString
 		}
 	}
 	return false
@@ -1143,9 +1176,9 @@ func (c *compiler) condition(e expr, neg bool) (frag, *Error) {
 		} else if kv {
 			n.anchor = n.anchor || null
 			if null {
-				return append(frag{"not "}, c.kvAtom(n, quote(r.key), "_")...), nil
+				return append(frag{"not "}, c.kvAtom(n, r.key, "_")...), nil
 			}
-			return c.kvAtom(n, quote(r.key), "_"), nil
+			return c.kvAtom(n, r.key, "_"), nil
 		}
 		v, err := c.prop(r)
 		if err != nil {

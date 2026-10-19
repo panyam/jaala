@@ -220,3 +220,62 @@ func Example_cypherStore() {
 	// Func Test CALLS COVERS
 	// "t:main" | "f:parse" | "reads the input"
 }
+
+// A property the host computes rather than stores, here a node's short name
+// from its id, is read through a relation of its own: Derived names it, and
+// each read is an atom over it, so the predicate answers by name or by node.
+func Example_cypherDerived() {
+	src := ns.NewMemSource().
+		Declare("node", "id", "kind").
+		Declare("edge", "from", "kind", "to")
+	src.Add("node", ns.Tuple{Vals: []ns.Value{ns.S("f:main"), ns.S("func")}})
+	src.Add("node", ns.Tuple{Vals: []ns.Value{ns.S("f:parse"), ns.S("func")}})
+	src.Add("edge", ns.Tuple{Vals: []ns.Value{ns.S("f:main"), ns.S("calls"), ns.S("f:parse")}})
+	v := ns.MustVocabulary(src)
+	short := func(id string) string { return id[strings.Index(id, ":")+1:] }
+	err := v.AddPredicate("name.of", ns.Builtin{
+		Arity: 2,
+		Modes: [][]bool{{true, false}, {false, true}},
+		Gen: func(_ context.Context, _ ns.Source, args []ns.Arg, emit func([]ns.Value, []string) error) error {
+			if args[0].Bound {
+				return emit([]ns.Value{args[0].Value, ns.S(short(args[0].Value.S))}, nil)
+			}
+			// By name: a real host asks its name index.
+			for _, id := range []string{"f:main", "f:parse"} {
+				if short(id) == args[1].Value.S {
+					if err := emit([]ns.Value{ns.S(id), args[1].Value}, nil); err != nil {
+						return err
+					}
+				}
+			}
+			return nil
+		},
+	})
+	if err != nil {
+		panic(err)
+	}
+	b := datalog.MustBase(v, src)
+
+	store := cypher.Store{Node: "node", Edge: "edge",
+		Derived: map[string]cypher.PropSource{"name": {Relation: "name.of", Node: 0, Value: 1}}}
+	g := store.Graph([]string{"func"}, []string{"calls"})
+	p, err := cypher.Compile(v, g, `MATCH (f:Func {name: 'parse'})<-[:CALLS]-(g) RETURN g, g.name`)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(p.Text)
+	rows, err := datalog.SemiNaive{}.Eval(context.Background(), p.Query, b)
+	if err != nil {
+		panic(err)
+	}
+	for _, r := range rows {
+		var vals []string
+		for _, c := range p.Query.Columns() {
+			vals = append(vals, show(r.Bind[c]))
+		}
+		fmt.Println(strings.Join(vals, " | "))
+	}
+	// Output:
+	// node(?f, "func"), edge(?g, "calls", ?f), name.of(?f, "parse"), name.of(?g, ?g_name) => ?g, ?g_name
+	// "f:main" | "main"
+}

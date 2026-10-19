@@ -25,8 +25,11 @@ func FuzzCompile(f *testing.F) {
 		f.Add(s)
 	}
 	v, _ := guide.Deps(f)
+	g := depsGraph
+	g.Derived = map[string]cypher.PropSource{"loud": {Relation: "str.upper", Node: 0, Value: 1}}
+	f.Add(`MATCH (a)-[:IMPORTS]->(b {loud: 'API'}) WHERE a.loud STARTS WITH 'A' OR b.loud IS NULL RETURN a.loud + '!'`)
 	f.Fuzz(func(t *testing.T, text string) {
-		p, err := cypher.Compile(v, depsGraph, text)
+		p, err := cypher.Compile(v, g, text)
 		if err != nil {
 			var ce *cypher.Error
 			if !errors.As(err, &ce) {

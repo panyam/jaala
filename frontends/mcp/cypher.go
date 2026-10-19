@@ -97,7 +97,8 @@ func pageOffset(token string) (int, error) {
 }
 
 // graphText says what a Cypher query can name: each label with its properties, each relationship type
-// with its own, and that any other node property is read from the property relation.
+// with its own, the properties the host computes for any node, and that any other node property is
+// read from the property relation.
 func graphText(g cypher.Graph) string {
 	var labels, types []string
 	for _, n := range g.Nodes {
@@ -107,13 +108,16 @@ func graphText(g cypher.Graph) string {
 		types = append(types, e.Type+propsText(e.Props))
 	}
 	text := fmt.Sprintf("Node labels: %s. Relationship types: %s.", strings.Join(labels, ", "), strings.Join(types, ", "))
+	if len(g.Derived) > 0 {
+		text += " Any node may have" + propsText(g.Derived) + ", which the host computes."
+	}
 	if g.Props != nil {
 		text += " A node's other properties are any key its " + g.Props.Relation + " facts name."
 	}
 	return text
 }
 
-func propsText(props map[string]int) string {
+func propsText[V any](props map[string]V) string {
 	if len(props) == 0 {
 		return ""
 	}

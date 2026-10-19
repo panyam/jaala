@@ -375,7 +375,7 @@ func (c *compiler) compileStage(in *stageIn, s stage, where expr) (projected, *E
 			case !kvRead:
 				eqs = append(eqs, pending{n: n, s: c.slotFor(n, label, r.key), key: r.key, val: vf, at: startOf(b)})
 			default:
-				c.shared = append(c.shared, at(startOf(b), c.kvAtom(n, quote(r.key), vf)))
+				c.shared = append(c.shared, at(startOf(b), c.kvAtom(n, r.key, vf)))
 			}
 			continue
 		}
