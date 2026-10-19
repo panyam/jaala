@@ -919,6 +919,26 @@ A commit adds a new version, so the version it names mustn't be one the source h
 
 A committed change set names a relation the source doesn't declare.
 
+`query: change set: not a change set's JSON: …`
+
+Decoding a change set (`json.Unmarshal` into an `ns.Changes`) was given text that isn't one: not JSON, the wrong shape, or a field the format doesn't write.
+
+`query: change set: format … isn't one this version reads (it reads …)`
+
+The change set was written in a format this jaala doesn't read, or names none. A session from a newer writer fails rather than reading as something else.
+
+`query: change set: op … names no relation`
+
+An operation in a change set's JSON has no `rel`.
+
+`query: change set: op … is …, not "add" or "remove"`
+
+An operation in a change set's JSON is neither an addition nor a removal.
+
+`query: change set: op …'s value … isn't one a change set writes: …`
+
+A value in a change set's JSON isn't one of the forms the format writes: a string, a number, null, or an object of `num`, `unit` and `text`.
+
 `query: … is the engine's own, which a query calls whatever the vocabulary holds: register yours under another name`
 
 `graph.closure` and `graph.paths` are answered by the engine before the vocabulary is asked, so a predicate registered under either name would never be called.

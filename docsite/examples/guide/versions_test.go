@@ -2,6 +2,7 @@ package guide_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 
@@ -97,6 +98,25 @@ func Example_session() {
 	// changes: 1 added, 1 removed
 	// revision 2 [api log]
 	// revision 3 [api util]
+}
+
+// A session travels as JSON: a browser keeps it beside its snapshot, and a
+// server reads it through an overlay of its own store. Base names the
+// revision it was made over, so a server can tell when that has moved.
+func Example_sessionWire() {
+	var edit ns.Changes
+	edit.Remove("imports", ns.Tuple{Vals: []ns.Value{ns.S("api"), ns.S("log")}}).
+		Add("imports", ns.Tuple{Vals: []ns.Value{ns.S("api"), ns.S("util")}, Cites: []string{"session:1"}})
+	data, _ := json.Marshal(ns.Session{Base: "2", Changes: edit})
+	fmt.Println(string(data))
+	var back ns.Session
+	if err := json.Unmarshal(data, &back); err != nil {
+		panic(err)
+	}
+	fmt.Println(back.Base, len(back.Changes.Added("imports")), "added")
+	// Output:
+	// {"base":"2","changes":{"format":1,"ops":[{"rel":"imports","op":"remove","vals":["api","log"]},{"rel":"imports","op":"add","vals":["api","util"],"cites":["session:1"]}]}}
+	// 2 1 added
 }
 
 func depsOf(rows []datalog.Row) []string {

@@ -291,7 +291,10 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   caches per edit. `TimedMemSource.Commit` is the reference commit and is `Versioned` for it; a fact
   added with an open range has the new version taken out when the commit drops it. The corpus runs
   every program over a session undoing edits to its facts (`agreeOverlaid`, over a pushing and a
-  batching store, with a control per path).
+  batching store, with a control per path). A change set's JSON (`ns/wire.go`, #417) replays to an
+  identical set, overlay `Version` included; its values are a superset of a list's JSON (#283) with
+  an object form for a unit, a non-canonical spelling and NaN, and `ns.Session` carries the host's
+  base version. Compiled statements (#404) travel as change sets, never as text.
 - **A `Federation` is a Source over several (`ns/federation.go`, #211), so it lives in `ns`, beside
   `MemSource`.** A relation is the union of its members'; a lookup goes only to the members whose
   `Holds` allows the bound values. The engine asks `ns.LookupRelations` per relation (`lookable`),
