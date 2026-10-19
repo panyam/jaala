@@ -170,7 +170,8 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   after a label's column and before `Props`; `Store.Derived` carries it. The text goes through `datalog.Parse`, so `Validate`, `Locate`
   and `Explain` read it unchanged. A node is its key; an equality every row holds is written into
   the atom (`pkg("app", _)`) unless something else reads the value, which keeps a variable and a
-  comparison (`settle`), so a planner sees constants. A frag's node keys are rendered last for
+  comparison (`settle`), so a planner sees constants; an alternative's (an IN's, an OR's) equality of a
+  node's key to text goes into its own rule's atoms and head the same way (`keysFixed`, #392). A frag's node keys are rendered last for
   that reason, and kept as a frag (`subst`): rendered early, a `$param` key in a rule escaped the
   refusal and matched everything (#352's second PR caught it). An OR becomes a `cypher_match` rule
   per alternative, a WHERE pattern or `EXISTS { }` a `cypher_exists` rule over the nodes it shares
@@ -872,7 +873,10 @@ go list -deps ./... | grep '\.' | grep -v '^github.com/panyam/jaala' | grep -v '
   `both()` test of a generator-first body catches it as Naive answering differently. A filter is
   refused the same way when nothing in its body binds an argument (`checkFilters`, #215, after
   `checkRules` so a redefinition reports first), and `deferComparisons` holds one until its arguments
-  are bound, so Naive answers a filter written before its binder. Relations tied on bound arguments (at least one) go by
+  are bound, so Naive answers a filter written before its binder. Relations tied on bound arguments (at least one) put a derived call bound only by constants or a
+  one-value equality first (`seeded`, #392: demand then walks back from the constant, where after
+  `node(?t, "Func")` it was asked once per function) when the other would bind one of its variables
+  and reads more than a tuple (`bindsFor`), and go by
   `fanOut`, the base relation's tuples per call from its index (#139): `part(?r, "capacitor")`
   scans every capacitor, `pin(?r, ?a)` with `?a` bound reads one net. It reads the Source at plan
   time, and a failed read is reported after the rewrite (`evalRun.readErr`). A body the demand rewrite guarded (a magic,
