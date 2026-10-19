@@ -351,7 +351,14 @@ func (c *compiler) compileStage(in *stageIn, s stage, where expr) (projected, *E
 				if err := c.declareRel(r); err != nil {
 					return projected{}, err
 				}
-				ns[i].endpoint, ns[i+1].endpoint = true, true
+				// A relationship binds its ends, but one inside an OPTIONAL MATCH binds only the ends that
+				// match declared: a node an earlier MATCH declared still needs its own atom outside
+				// the braces (FuzzCompile found MATCH (a) OPTIONAL MATCH ()--(a) with none).
+				for _, n := range ns[i : i+2] {
+					if part == nil || n.opt == len(c.opts) {
+						n.endpoint = true
+					}
+				}
 				at := relAt{r: r, from: ns[i], to: ns[i+1]}
 				if part != nil {
 					at.opt = len(c.opts)
