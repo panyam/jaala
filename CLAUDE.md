@@ -1071,8 +1071,9 @@ When several branches are in flight (parallel agents), run their selfchecks one 
 timings only on an otherwise idle machine; never `pkill -f selfcheck.sh`, which kills every run on
 the machine (#220's agent did). A branch rebased onto a moved `main` gets its selfcheck again, and
 so does `main` when two PRs branched from one base merge together (#305 and #306 did). Another
-session may be running one too: wait on it (`while pgrep -f "/bin/sh ./selfcheck.sh"; do sleep 20;
-done` before your own, in the same background command) rather than starting alongside.
+session may be running one too: `selfcheck.sh` waits for it on its own (a lock directory under
+`~/.cache/jaala`, `JAALA_SELFCHECK_LOCK`). The `pgrep` loop it replaced matched its own shell and
+waited forever.
 
 Pushing a branch can get a PR opened for it under the owner's account (#168 was), titled and
 bodied from the commit. Check `gh pr list --head <branch>` before `gh pr create`, and edit that PR

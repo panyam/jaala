@@ -7,13 +7,42 @@
 # JAALA_CYPHER_FUZZ_TIME the Cypher compiler's.
 set -u
 cd "$(dirname "$0")"
+
+# One selfcheck at a time on the machine, whichever checkout or session starts it: two at once each
+# run past the corpus's timeout under the load. The lock is a directory holding its run's pid, and a
+# run that died leaves one whose pid is gone, which the next run takes over. A shell loop around
+# pgrep did this before and waited forever: its own command line matched the pattern.
+lock=${JAALA_SELFCHECK_LOCK:-${XDG_CACHE_HOME:-$HOME/.cache}/jaala/selfcheck.lock}
+mkdir -p "$(dirname "$lock")"
+waiting=no
+while ! mkdir "$lock" 2>/dev/null; do
+	holder=$(cat "$lock/pid" 2>/dev/null)
+	# A lock with no pid a minute after it was made belongs to a run that died before writing one.
+	if { [ -n "$holder" ] && ! kill -0 "$holder" 2>/dev/null; } ||
+		{ [ -z "$holder" ] && [ -n "$(find "$lock" -maxdepth 0 -mmin +1 2>/dev/null)" ]; }; then
+		rm -rf "$lock"
+		continue
+	fi
+	[ $waiting = no ] && echo "== waiting for the selfcheck running as pid ${holder:-?} ($lock)"
+	waiting=yes
+	sleep 20
+done
+echo $$ >"$lock/pid"
+
 seeds=${JAALA_GEN_SEEDS:-5000}
 fuzztime=${JAALA_FUZZ_TIME:-30s}
 # The Cypher compiler gets longer: #352's second PR took five 10-minute runs to come back clean, four
 # of them finding a bug, and 30 seconds found none of the four.
 cypherfuzztime=${JAALA_CYPHER_FUZZ_TIME:-2m}
 out=$(mktemp)
-trap 'rm -f "$out"' EXIT
+llama_pid=
+cleanup() {
+	[ -n "$llama_pid" ] && kill "$llama_pid" 2>/dev/null
+	rm -f "$out" "$out.llama"
+	rm -rf "$lock"
+}
+trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
 status=0
 
 echo "== generated programs: $seeds seeds"
@@ -90,7 +119,6 @@ if command -v llama-server >/dev/null 2>&1 && [ -f "$model" ]; then
 	port=$((18000 + $$ % 1000))
 	llama-server -m "$model" --host 127.0.0.1 --port "$port" --chat-template chatml >"$out.llama" 2>&1 &
 	llama_pid=$!
-	trap 'kill $llama_pid 2>/dev/null; rm -f "$out" "$out.llama"' EXIT
 	up=no
 	for _ in $(seq 1 60); do
 		if curl -fs "http://127.0.0.1:$port/health" >/dev/null 2>&1; then up=yes; break; fi
