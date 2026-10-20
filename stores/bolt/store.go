@@ -13,7 +13,8 @@ import (
 	"github.com/panyam/jaala/ns"
 )
 
-// nodeLabel is the label every node the store writes carries, beside its relations' labels, so a
+// nodeLabel is the label every node the store writes carries (with its namespace, if it has one),
+// beside its relations' labels, so a
 // node is found by its key whichever relation named it, and one index (on its id) serves them all.
 const nodeLabel = "JaalaNode"
 
@@ -21,6 +22,12 @@ const nodeLabel = "JaalaNode"
 type Options struct {
 	// Database is the database sessions open, "" for the server's default.
 	Database string
+	// Namespace keeps this store's graph apart from others on the same server: its nodes carry
+	// JaalaNode_<namespace> rather than JaalaNode, with an index of their own, and every query starts
+	// from that label, so two namespaces never see each other's facts. Letters, digits and _ only;
+	// "" is the shared JaalaNode. Several worktrees, test runs or a host's graphs (one per design,
+	// one per repo) can then share one server.
+	Namespace string
 	// LookupsOnly turns pushdown off: the store answers lookups, batches and whole reads, and refuses
 	// every conjunction and summary, so the engine joins, counts and pages itself. Answers are the
 	// same either way; it is for comparing what a question ships, and for a server misbehaving.
@@ -39,6 +46,7 @@ type Options struct {
 type Store struct {
 	driver      neo4j.DriverWithContext
 	db          string
+	base        string // the node label, namespaced
 	lookupsOnly bool
 	server      string
 	rels        map[string]*relation
@@ -56,6 +64,7 @@ type relation struct {
 	props  *cypher.PropRelation
 	// labelled is every property a label's relation keeps, for the Props relation to skip.
 	labelled []string
+	base     string // the store's node label
 }
 
 func (r *relation) labelledProps() []string { return r.labelled }
@@ -66,7 +75,11 @@ func (r *relation) labelledProps() []string { return r.labelled }
 // reserves (`id`, or one starting with `_`). It creates the index on every node's id if the server
 // lacks it. g's Derived properties are the host's to compute and aren't served.
 func New(ctx context.Context, driver neo4j.DriverWithContext, g cypher.Graph, schemas map[string]ns.Schema, opts Options) (*Store, error) {
-	s := &Store{driver: driver, db: opts.Database, lookupsOnly: opts.LookupsOnly, rels: map[string]*relation{}}
+	base, err := baseLabel(opts.Namespace)
+	if err != nil {
+		return nil, err
+	}
+	s := &Store{driver: driver, db: opts.Database, base: base, lookupsOnly: opts.LookupsOnly, rels: map[string]*relation{}}
 	rel := func(name string) (*relation, error) {
 		if r, ok := s.rels[name]; ok {
 			return r, nil
@@ -75,7 +88,7 @@ func New(ctx context.Context, driver neo4j.DriverWithContext, g cypher.Graph, sc
 		if !ok {
 			return nil, fmt.Errorf("bolt: the graph lays out %q, which has no schema", name)
 		}
-		r := &relation{name: name, schema: sc}
+		r := &relation{name: name, schema: sc, base: base}
 		s.rels[name] = r
 		s.order = append(s.order, name)
 		return r, nil
@@ -185,6 +198,19 @@ func (r *relation) placed(what string, fixed map[int]string, props map[string]in
 	return nil
 }
 
+// baseLabel is the node label for a namespace: JaalaNode, or JaalaNode_<namespace>.
+func baseLabel(namespace string) (string, error) {
+	if namespace == "" {
+		return nodeLabel, nil
+	}
+	for _, c := range namespace {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_') {
+			return "", fmt.Errorf("bolt: namespace %q holds %q; use letters, digits and _", namespace, c)
+		}
+	}
+	return nodeLabel + "_" + namespace, nil
+}
+
 func reserved(p string) error {
 	if p == "id" || strings.HasPrefix(p, "_") || p == "" {
 		return fmt.Errorf("bolt: property %q is the store's own; name it otherwise", p)
@@ -208,9 +234,9 @@ func (r *relation) textual(i int) bool {
 }
 
 func (s *Store) index(ctx context.Context) error {
-	q := "CREATE INDEX jaala_node_id IF NOT EXISTS FOR (n:" + nodeLabel + ") ON (n.id)"
+	q := "CREATE INDEX " + strings.ToLower(s.base) + "_id IF NOT EXISTS FOR (n:" + s.base + ") ON (n.id)"
 	if s.memgraph() {
-		q = "CREATE INDEX ON :" + nodeLabel + "(id)"
+		q = "CREATE INDEX ON :" + s.base + "(id)"
 	}
 	// An auto-commit run, since Memgraph refuses an index inside an explicit transaction.
 	sess := s.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: s.db, AccessMode: neo4j.AccessModeWrite})

@@ -105,7 +105,7 @@ func (s *Store) walkQuery(types []string, forward bool, depth int) string {
 		if depth > 0 {
 			bound = " .." + strconv.Itoa(depth-1)
 		}
-		reach = "MATCH (s:" + nodeLabel + ") WHERE s.id IN $start"
+		reach = "MATCH (s:" + s.base + ") WHERE s.id IN $start"
 		if depth != 1 {
 			reach += " OPTIONAL MATCH (s)" + step(rel+" *BFS"+bound) + "(n)" +
 				" WITH collect(DISTINCT s) + collect(DISTINCT n) AS ns UNWIND ns AS n WITH DISTINCT n"
@@ -117,7 +117,7 @@ func (s *Store) walkQuery(types []string, forward bool, depth int) string {
 		if depth > 0 {
 			hops += strconv.Itoa(depth - 1)
 		}
-		reach = "MATCH (s:" + nodeLabel + ") WHERE s.id IN $start MATCH (s)" + step(rel+hops) + "(n) WITH DISTINCT n"
+		reach = "MATCH (s:" + s.base + ") WHERE s.id IN $start MATCH (s)" + step(rel+hops) + "(n) WITH DISTINCT n"
 	}
 	ends := "n.id AS f, m.id AS t"
 	if !forward {

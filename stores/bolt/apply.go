@@ -269,16 +269,16 @@ func nulls(ps []string, extra ...string) map[string]any {
 
 // statements write a match's rows: an addition's check and its write, or a removal.
 func (m match) statements(r *relation, add bool) []write {
-	n := "(x:" + nodeLabel + " {id: r.id})"
+	n := "(x:" + r.base + " {id: r.id})"
 	switch {
 	case m.node != nil:
 		l := quote(m.node.Label)
 		k := "x." + quote("_key:"+m.node.Label)
 		if !add {
-			return []write{{query: "UNWIND $rows AS r MATCH (x:" + nodeLabel + ":" + l + " {id: r.id}) WHERE " + k + " = r.key REMOVE x:" + l + " SET x += r.nulls"}}
+			return []write{{query: "UNWIND $rows AS r MATCH (x:" + r.base + ":" + l + " {id: r.id}) WHERE " + k + " = r.key REMOVE x:" + l + " SET x += r.nulls"}}
 		}
 		return []write{
-			{query: "UNWIND $rows AS r MATCH (x:" + nodeLabel + ":" + l + " {id: r.id}) WHERE " + k + " <> r.key RETURN r.id AS id LIMIT 1",
+			{query: "UNWIND $rows AS r MATCH (x:" + r.base + ":" + l + " {id: r.id}) WHERE " + k + " <> r.key RETURN r.id AS id LIMIT 1",
 				check: func(id string) error {
 					return fmt.Errorf("bolt: %s already holds a fact for %s, and the store keeps one per key", r.name, id)
 				}},
@@ -287,9 +287,9 @@ func (m match) statements(r *relation, add bool) []write {
 	case m.edge != nil:
 		t := quote(m.edge.Type)
 		if !add {
-			return []write{{query: "UNWIND $rows AS r MATCH (a:" + nodeLabel + " {id: r.from})-[e:" + t + " {_key: r.key}]->(b:" + nodeLabel + " {id: r.to}) DELETE e"}}
+			return []write{{query: "UNWIND $rows AS r MATCH (a:" + r.base + " {id: r.from})-[e:" + t + " {_key: r.key}]->(b:" + r.base + " {id: r.to}) DELETE e"}}
 		}
-		return []write{{query: "UNWIND $rows AS r MERGE (a:" + nodeLabel + " {id: r.from}) MERGE (b:" + nodeLabel + " {id: r.to}) MERGE (a)-[e:" + t + " {_key: r.key}]->(b) SET e += r.props, a._ord = r.ford, b._ord = r.tord"}}
+		return []write{{query: "UNWIND $rows AS r MERGE (a:" + r.base + " {id: r.from}) MERGE (b:" + r.base + " {id: r.to}) MERGE (a)-[e:" + t + " {_key: r.key}]->(b) SET e += r.props, a._ord = r.ford, b._ord = r.tord"}}
 	}
 	if !add {
 		return []write{{query: "UNWIND $rows AS r MATCH " + n + " WHERE properties(x)['_key.' + r.k] = r.key SET x += r.nulls"}}

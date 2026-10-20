@@ -1,0 +1,24 @@
+# The graph servers stores/bolt's tests, the exercise and selfcheck run against (#435): one pair
+# every worktree shares, each run keeping to a namespace of its own. make servers-up starts it and
+# make servers-down removes it; scripts/bolt-servers.sh uses it whenever it's up. The images are CI's
+# bolt job's. No volumes: every run clears its namespace first, so nothing is worth keeping.
+name: jaala-bolt
+services:
+  neo4j:
+    image: neo4j:5.26
+    environment:
+      NEO4J_AUTH: none
+    ports:
+      - "127.0.0.1:17687:7687"
+    healthcheck:
+      test: ["CMD", "cypher-shell", "-a", "bolt://localhost:7687", "RETURN 1"]
+      interval: 2s
+      retries: 60
+  memgraph:
+    image: memgraph/memgraph:3.6.0
+    ports:
+      - "127.0.0.1:17688:7687"
+    healthcheck:
+      test: ["CMD-SHELL", "echo 'RETURN 1;' | mgconsole"]
+      interval: 2s
+      retries: 60

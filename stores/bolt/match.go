@@ -133,13 +133,13 @@ func (m match) query(r *relation, filters map[int]filter, batched bool) (string,
 	switch {
 	case m.node != nil:
 		n := m.node
-		q := prefix + "MATCH (x:" + nodeLabel + ":" + quote(n.Label) + ")" + where(all) + " RETURN " + ret + "x.id AS id, properties(x) AS p"
+		q := prefix + "MATCH (x:" + r.base + ":" + quote(n.Label) + ")" + where(all) + " RETURN " + ret + "x.id AS id, properties(x) AS p"
 		return q, params, func(rec *neo4j.Record) (ns.Tuple, error) {
 			return nodeTuple(r, n, recString(rec, "id"), recProps(rec))
 		}
 	case m.edge != nil:
 		e := m.edge
-		q := prefix + "MATCH (a:" + nodeLabel + ")-[e:" + quote(e.Type) + "]->(b:" + nodeLabel + ")" + where(all) +
+		q := prefix + "MATCH (a:" + r.base + ")-[e:" + quote(e.Type) + "]->(b:" + r.base + ")" + where(all) +
 			" RETURN " + ret + "a.id AS from, b.id AS to, properties(e) AS p"
 		return q, params, func(rec *neo4j.Record) (ns.Tuple, error) {
 			return edgeTuple(r, e, recString(rec, "from"), recString(rec, "to"), recProps(rec))
@@ -153,7 +153,7 @@ func (m match) query(r *relation, filters map[int]filter, batched bool) (string,
 	if kw != "" {
 		kw = " AND" + kw[len(" WHERE"):]
 	}
-	q := prefix + "MATCH (x:" + nodeLabel + ")" + where(onNode) + " UNWIND keys(x) AS k WITH " + vars(batched) + "x, k" +
+	q := prefix + "MATCH (x:" + r.base + ")" + where(onNode) + " UNWIND keys(x) AS k WITH " + vars(batched) + "x, k" +
 		" WHERE k <> 'id' AND NOT k STARTS WITH '_' AND NOT k IN $labelled" + kw +
 		" RETURN " + ret + "x.id AS id, k AS k, properties(x) AS p"
 	return q, params, func(rec *neo4j.Record) (ns.Tuple, error) {

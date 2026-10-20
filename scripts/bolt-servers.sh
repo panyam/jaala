@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Runs a command against the graph servers stores/bolt's tests read (#411), each named by a bolt://
 # URL in JAALA_BOLT_NEO4J or JAALA_BOLT_MEMGRAPH. STORES picks which (default neo4j,memgraph). A
-# server already running, natively or in Docker, is used as its URL says; one STORES lists with no
-# URL is started in a Docker container on a free port and removed after (KEEP=1 keeps it). A server
-# not chosen is unset, so the tests skip it.
+# server already running, natively or in Docker, is used as its URL says; with no URL, the shared
+# pair make servers-up starts (#435) is used when it's up, and otherwise the server is started in a
+# Docker container on a free port and removed after (KEEP=1 keeps it). Each run's tests keep to a
+# namespace of their own, so runs from several worktrees share the pair safely. A server not chosen
+# is unset, so the tests skip it.
 #
 #   scripts/bolt-servers.sh <command...>
 #
@@ -45,6 +47,12 @@ for s in neo4j memgraph; do
 	fi
 	if ! docker info >/dev/null 2>&1; then
 		missing+=("$s: no $var and no Docker to start one")
+		continue
+	fi
+	if shared=$(docker compose -f "$(dirname "$0")/../stores/bolt/compose.yml" port "$s" 7687 2>/dev/null) && [ -n "$shared" ]; then
+		export "$var=bolt://$shared"
+		echo "== $s from the shared pair at ${!var}"
+		chosen=$((chosen + 1))
 		continue
 	fi
 	name=jaala-bolt-$s-$$

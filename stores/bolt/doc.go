@@ -12,7 +12,9 @@
 //   - The graph's Props relation (attr(id, key, value)) is a node's other properties.
 //
 // Every node carries the label JaalaNode beside its own, so one index on its id finds it whichever
-// relation named it. Two relations keying on one value describe one node, as the Cypher compiler
+// relation named it. With Options.Namespace it is JaalaNode_<namespace> instead (#435), so several
+// stores, a host's designs or repos, or several test runs, share one server without seeing each
+// other's facts. Two relations keying on one value describe one node, as the Cypher compiler
 // reads them.
 //
 // A value keeps its kind: text as a string, a number as a number with its unit and, when the number
