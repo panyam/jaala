@@ -1,0 +1,45 @@
+== prefix
+# The relations a fact can be added to or removed from:
+# imports(from, to)  A package importing another.
+# owner(pkg, person)  Who owns a package.
+# pkg(name, license: one of "MIT", "Apache-2.0", "BSD-3-Clause")  A package and its license.
+
+# Write the facts the text states, one per line, using only the relations above:
+#   + relation("value", ...) from "the words of the text that state it"
+# for a fact the text states, and
+#   - relation("value", ...) from "the words of the text that say so"
+# for one it says no longer holds. Values are "quoted" text or numbers. After from, quote the
+# text's own words exactly as they appear. Reply with the lines alone, or nothing if the text
+# states no fact.
+
+# What the data is about:
+# Go packages, what they import, their licenses and owners.
+
+# Examples:
+# util is BSD licensed (BSD-3-Clause) and imports nothing.
++ pkg("util", "BSD-3-Clause") from "util is BSD licensed (BSD-3-Clause)"
+
+== license
+text: log imports util, and log is released under the Apache 2.0 license.
+tries: [type ]
+feedback 1:
+line 2: query: pkg's "license" argument cannot be "Apache 2.0", did you mean "Apache-2.0"? (it holds one of: MIT, Apache-2.0, BSD-3-Clause)
+  + pkg("log", "Apache 2.0") from "released under the Apache 2.0 license"
+               ^
+fix: did you mean "Apache-2.0"?
+
+Write all the lines again, fixed.
+changes:
++ imports("log", "util") [text:0-16]
++ pkg("log", "Apache-2.0") [text:29-66]
+== owner
+text: Bob owns app now; alice handed it over last week.
+tries: []
+changes:
+- owner("app", "alice")
++ owner("app", "bob") [text:0-16]
+== removed
+text: As of this release app no longer imports api.
+tries: []
+changes:
+- imports("app", "api")
