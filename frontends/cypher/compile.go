@@ -1306,7 +1306,7 @@ func (c *compiler) value(e expr) (frag, *Error) {
 		case "%", "^":
 			return nil, gapFunctions.at(e.pos, "%s", e.op)
 		}
-		return nil, errAt(e.pos, "%s is a test, not a value", e.op)
+		return nil, errAt(e.pos, "%s is a test, not a value: test it in WHERE (MATCH ... WHERE x %s ... RETURN ...) to keep the rows it holds for", e.op, e.op)
 	case call:
 		if fn, ok := textFuncs[strings.ToLower(e.name)]; ok {
 			if len(e.args) != fn.args {
@@ -1396,7 +1396,7 @@ func (c *compiler) value(e expr) (frag, *Error) {
 	case unsupported:
 		return nil, e.err
 	}
-	return nil, errAt(e.at(), "a test can't be a value here")
+	return nil, errAt(e.at(), "a test can't be a value here: test it in WHERE (MATCH ... WHERE ... RETURN ...) to keep the rows it holds for")
 }
 
 // pathFuncs are Cypher's functions of a path, which stdlib's path.* compute from the path's value
@@ -1474,10 +1474,7 @@ func (c *compiler) term(e expr) (frag, *Error) {
 	if fn, ok := e.(call); ok && strings.EqualFold(fn.name, "type") && len(f) == 1 {
 		// a relationship of one type has it as a constant, which only an atom binds (#441)
 		if s, ok := f[0].(string); ok && strings.HasPrefix(s, `"`) {
-			jv := c.fresh("_type")
-			l := ns.ListText([]ns.Value{ns.S(strings.Trim(s, `"`))})
-			*c.scope = append(*c.scope, frag{"list.member(" + quote(strings.ReplaceAll(l, `"`, `\"`)) + ", _, ?" + jv + ")"})
-			return frag{"?" + jv}, nil
+			return c.constColumn(ns.S(strings.Trim(s, `"`)), "_type"), nil
 		}
 	}
 	switch e.(type) {
@@ -2111,8 +2108,22 @@ func (c *compiler) column(it returnItem) (column, *Error) {
 	case paramRef:
 		return col, errAt(it.e.at(), "RETURN of a parameter: its value is the one the host binds")
 	}
-	if _, list := it.e.(listLit); isConst(it.e) || list {
-		return col, errAt(it.e.at(), "RETURN of a constant: jaala's columns are variables")
+	if _, list := it.e.(listLit); list {
+		return col, errAt(it.e.at(), "RETURN of a list written in the query: jaala's columns are variables, and a list constant can't be bound to one")
+	}
+	if isConst(it.e) {
+		// A constant column binds through a one-value list, since only an atom binds a constant (#454):
+		// it repeats on every row, groups under an aggregate, and gives no row over no match.
+		f, err := c.value(it.e)
+		if err != nil {
+			return col, err
+		}
+		v, ok := constValue(f)
+		if !ok {
+			return col, errAt(it.e.at(), "RETURN of a constant jaala can't bind as a column")
+		}
+		col.text = c.constColumn(v, "_k")
+		return col, nil
 	}
 	f, err := c.term(it.e)
 	if err != nil {
@@ -2120,6 +2131,33 @@ func (c *compiler) column(it returnItem) (column, *Error) {
 	}
 	col.text = f
 	return col, nil
+}
+
+// constColumn binds v to a fresh variable through list.member of a one-value list, since only an
+// atom binds a constant: a column that is a constant (#454), or a one-type relationship's type (#441).
+func (c *compiler) constColumn(v ns.Value, name string) frag {
+	jv := c.fresh(name)
+	l := ns.ListText([]ns.Value{v})
+	*c.scope = append(*c.scope, frag{"list.member(" + quote(strings.ReplaceAll(l, `"`, `\"`)) + ", _, ?" + jv + ")"})
+	return frag{"?" + jv}
+}
+
+// constValue is the value a constant's program text writes: a quoted string or a number.
+func constValue(f frag) (ns.Value, bool) {
+	if len(f) != 1 {
+		return ns.Value{}, false
+	}
+	s, ok := f[0].(string)
+	if !ok {
+		return ns.Value{}, false
+	}
+	if strings.HasPrefix(s, `"`) && strings.HasSuffix(s, `"`) && len(s) >= 2 {
+		return ns.S(s[1 : len(s)-1]), true
+	}
+	if n, err := strconv.ParseFloat(s, 64); err == nil {
+		return ns.N(n), true
+	}
+	return ns.Value{}, false
 }
 
 // optionalNode is the node e names when an OPTIONAL MATCH declared it, nil otherwise.
