@@ -242,7 +242,8 @@ GOARCH=wasm go test ./ns` (#417 ran `ns` that way).
   compile). It clears the whole server, since a label MATCH sees every namespace, so it runs only with
   `JAALA_BOLT_EXCLUSIVE` (CI's job, 100 seeds; selfcheck's own step, `EXCLUSIVE=1`, 1000). A shrink
   drops whole nodes or edges, never one property, or it recreates the Props-as-match difference.
-  `knownCypherDisagreements` holds the open ones with a repro and seed (#438, #439, min/max over text).
+  `knownCypherDisagreements` holds the open ones with a repro and seed (#438, min/max over text);
+  #439's entry went when #440 fixed it, which `TestKnownCypherDisagreementsStillDisagree` asked for.
 - **`frontends/cypher` compiles Cypher to jaala text over a host's `Graph`** (#352, mission #356):
   `Node` and `Edge` name the relation holding a label or a type, its key or endpoints, `Fixed`
   constants (Declaire's `node(id, "Function")`) and property columns, `Props` a key-value
