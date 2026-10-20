@@ -392,8 +392,9 @@ func TestGapsAreRefusedByName(t *testing.T) {
 		gap    int
 		at     string // the text the error's position starts at
 	}{
-		{`MATCH (a)-[r:IMPORTS]->(b) RETURN r, a`, 279, "r, a"},
-		{`MATCH (a)-[r:IMPORTS]->(b) RETURN type(r)`, 279, "type(r)"},
+		{`MATCH (a:Package) WHERE EXISTS { (a)-[r:IMPORTS]->(b) } RETURN a`, 445, "-[r"},
+		{`MATCH p = (a)-[r:IMPORTS]->(b) RETURN p`, 445, "-[r"},
+		{`MATCH (a)-[r:IMPORTS]->(b) WITH r RETURN type(r)`, 445, "r)"},
 		{`MATCH p = (a)-[:IMPORTS]->(b)-[:IMPORTS]->(c) RETURN p`, 398, "p ="},
 		{`MATCH p = ALL SHORTEST (a)-[:IMPORTS]->+(b) RETURN p`, 398, "p ="},
 		{`MATCH p = allShortestPaths((a)-[:IMPORTS*]->(b)) RETURN p`, 398, "p ="},

@@ -574,6 +574,21 @@ func (c *compiler) declareLabels(h hasLabel) *Error {
 	return nil
 }
 
+// A relVar is a relationship variable (#441). jv is the variable its atom binds the edge's fact to
+// (edge(?a, ?b) as ?r), "" when a type it reads is derived, whose relationships are no facts. Its
+// literal sets typ, its type, and its ends: start and end nodes when they are the pattern's, or
+// variables a helper binds when it reads several types or either direction.
+type relVar struct {
+	name           string
+	pos            Pos
+	jv             string
+	es             []Edge
+	typ            frag
+	start, end     *nodeVar
+	startJV, endJV string
+	written        bool
+}
+
 func (c *compiler) declareRel(r relPat) *Error {
 	if r.v == "" {
 		return nil
@@ -581,8 +596,52 @@ func (c *compiler) declareRel(r relPat) *Error {
 	if _, ok := c.nodes[r.v]; ok {
 		return errAt(r.pos, "%s names a node, not a relationship", r.v)
 	}
-	c.rels[r.v] = r.pos
+	if c.rels[r.v] != nil || c.values[r.v] != "" {
+		return errAt(r.pos, "%s is already bound", r.v)
+	}
+	rv := &relVar{name: r.v, pos: r.pos}
+	c.rels[r.v] = rv
+	c.rorder = append(c.rorder, r.v)
+	if r.varLen {
+		return nil // relLiteral refuses it (#398)
+	}
+	es, _, err := c.edges(r)
+	if err != nil {
+		return err
+	}
+	rv.es = es
+	for _, e := range es {
+		if en, err := c.v.Lookup(e.Relation); err != nil || en.Kind != ns.EntryBase {
+			return nil // a derived type's relationships have no facts to bind
+		}
+	}
+	rv.jv = c.fresh(r.v)
+	c.name(rv.jv, r.v)
 	return nil
+}
+
+// relRef is the relationship variable r names, refusing one a WITH carried, which arrives as its
+// fact's id alone.
+func (c *compiler) relRef(r varRef, fn string) (*relVar, *Error) {
+	if rv := c.rels[r.name]; rv != nil {
+		return rv, nil
+	}
+	if c.values[r.name] != "" {
+		return nil, gapRelVars.at(r.pos, "%s(%s) after a WITH carried %s, which hands on its id alone", fn, r.name, r.name)
+	}
+	return nil, errAt(r.pos, "%s() reads a relationship variable a MATCH binds, and %s isn't one", fn, r.name)
+}
+
+// relFact is r's fact as a value, refused for a derived type, whose relationships have none.
+func (c *compiler) relFact(rv *relVar, at Pos, what string) (frag, *Error) {
+	if rv.jv == "" {
+		var types []string
+		for _, e := range rv.es {
+			types = append(types, e.Type)
+		}
+		return nil, errAt(at, "%s reads %s's id, and %s is derived, so its relationships have none", what, rv.name, strings.Join(types, "|"))
+	}
+	return frag{"?" + rv.jv}, nil
 }
 
 // oneOf is what an unknown name could have been: the closest of names when got is a plausible typo
@@ -613,7 +672,7 @@ func (c *compiler) nodeRef(r varRef) (*nodeVar, *Error) {
 		return nil, errAt(r.pos, "%s is a value, not a node", r.name)
 	}
 	if _, ok := c.rels[r.name]; ok {
-		return nil, gapEdgeVars.at(r.pos, "%s is a relationship: return or compare its endpoints instead", r.name)
+		return nil, errAt(r.pos, "%s is a relationship, not a node: read startNode(%s) or endNode(%s)", r.name, r.name, r.name)
 	}
 	return nil, errAt(r.pos, "unknown variable %s: a MATCH has to bind it", r.name)
 }
@@ -673,6 +732,9 @@ func (c *compiler) slotFor(n *nodeVar, label, key string) *slot {
 
 // prop is a property read as a value: the variable holding it.
 func (c *compiler) prop(r propRef) (frag, *Error) {
+	if rv := c.rels[r.v]; rv != nil {
+		return c.relProp(rv, r)
+	}
 	n, err := c.nodeRef(varRef{pos: r.pos, name: r.v})
 	if err != nil {
 		return nil, err
@@ -873,6 +935,9 @@ func (c *compiler) relLiteral(r relPat, from, to *nodeVar) (frag, *Error) {
 	if r.dir == -1 {
 		src, dst = dst, src
 	}
+	if rv := c.rels[r.v]; rv != nil && r.v != "" && !r.varLen && r.path == "" {
+		return c.relVarLiteral(rv, r, es, argss, from, to), nil
+	}
 	if !r.varLen && r.path == "" && len(es) == 1 && r.dir != 0 {
 		return edgeAtom(es[0], argss[0], src, dst), nil
 	}
@@ -956,6 +1021,182 @@ func (c *compiler) relLiteral(r relPat, from, to *nodeVar) (frag, *Error) {
 	return frag{fmt.Sprintf("graph.closure(%q, ", walked), src, ", ", dst, fmt.Sprintf(", %d, %d, _)", lo, upTo)}, nil
 }
 
+// relVarLiteral is the literal matching a relationship variable's relationship (#441), binding its
+// fact when it has one: the type's atom when r reads one type one way, its type a constant and its
+// ends the pattern's, and otherwise a helper with a rule per type and direction, binding the type and
+// the ends too, since an undirected match's start is whichever end the fact leads from.
+func (c *compiler) relVarLiteral(rv *relVar, r relPat, es []Edge, argss [][]any, from, to *nodeVar) frag {
+	rv.written = true
+	as := func(f frag) frag {
+		if rv.jv == "" {
+			return f
+		}
+		return append(f, " as ?"+rv.jv)
+	}
+	start, end := from, to
+	if r.dir == -1 {
+		start, end = to, from
+	}
+	if len(es) == 1 && r.dir != 0 {
+		rv.typ, rv.start, rv.end = frag{quote(es[0].Type)}, start, end
+		return as(edgeAtom(es[0], argss[0], keyArg{start}, keyArg{end}))
+	}
+	name := c.helper("rel")
+	fact := ""
+	if rv.jv != "" {
+		fact = ", ?r"
+	}
+	for i, e := range es {
+		t := quote(e.Type)
+		c.addRule(rule{head: frag{name + "(?x, ?y" + fact + ", " + t + ", ?x, ?y)"}, body: []frag{as2(edgeAtom(e, argss[i], "?x", "?y"), fact)}})
+		if r.dir == 0 {
+			c.addRule(rule{head: frag{name + "(?x, ?y" + fact + ", " + t + ", ?y, ?x)"}, body: []frag{as2(edgeAtom(e, argss[i], "?y", "?x"), fact)}})
+		}
+	}
+	tv, sv, ev := c.fresh(rv.jvOr()+"_type"), c.fresh(rv.jvOr()+"_start"), c.fresh(rv.jvOr()+"_end")
+	rv.typ, rv.startJV, rv.endJV = frag{"?" + tv}, sv, ev
+	f := frag{name + "(", keyArg{start}, ", ", keyArg{end}}
+	if rv.jv != "" {
+		f = append(f, ", ?"+rv.jv)
+	}
+	return append(f, ", ?"+tv+", ?"+sv+", ?"+ev+")")
+}
+
+// as2 binds a helper rule's atom's fact to ?r when the rule's head carries it.
+func as2(f frag, fact string) frag {
+	if fact == "" {
+		return f
+	}
+	return append(f, " as ?r")
+}
+
+func (rv *relVar) jvOr() string {
+	if rv.jv != "" {
+		return rv.jv
+	}
+	return sanitize(rv.name)
+}
+
+// relEnd is r's start or end node as a value.
+func (c *compiler) relEnd(rv *relVar, start bool) frag {
+	n, jv := rv.end, rv.endJV
+	if start {
+		n, jv = rv.start, rv.startJV
+	}
+	if n != nil {
+		markValued(n)
+		return frag{keyVal{n}}
+	}
+	return frag{"?" + jv}
+}
+
+// relProp is r.key as a value (#441): a column of r's type's relation, or else the graph's Props
+// relation keyed by r's fact, read once per scope as a node's property is. A type without the
+// property holds no match, so each type that has it is an alternative of a helper's.
+func (c *compiler) relProp(rv *relVar, p propRef) (frag, *Error) {
+	if _, err := c.relFact(rv, p.pos, rv.name+"."+p.key); err != nil {
+		return nil, err
+	}
+	if c.kv == nil {
+		c.kv = map[*[]frag]map[string]string{}
+	}
+	m := c.kv[c.scope]
+	if m == nil {
+		m = map[string]string{}
+		c.kv[c.scope] = m
+	}
+	k := "\x00rel" + rv.name + "\x00" + p.key
+	if jv, ok := m[k]; ok {
+		return frag{"?" + jv}, nil
+	}
+	var alts []frag
+	for _, e := range rv.es {
+		i, ok := e.Props[p.key]
+		if !ok {
+			continue
+		}
+		ar, _ := arity(c.v, e.Relation)
+		f := frag{e.Relation + "("}
+		for j := 0; j < ar; j++ {
+			if j > 0 {
+				f = append(f, ", ")
+			}
+			k, fixed := e.Fixed[j]
+			switch {
+			case j == i:
+				f = append(f, "?v")
+			case fixed:
+				f = append(f, quote(k))
+			default:
+				f = append(f, "_")
+			}
+		}
+		alts = append(alts, append(f, ") as ?r"))
+	}
+	if len(alts) < len(rv.es) && c.g.Props != nil {
+		pr := c.g.Props
+		ar, _ := arity(c.v, pr.Relation)
+		f := frag{pr.Relation + "("}
+		for j := 0; j < ar; j++ {
+			if j > 0 {
+				f = append(f, ", ")
+			}
+			switch j {
+			case pr.Node:
+				f = append(f, "?r")
+			case pr.Key:
+				f = append(f, quote(p.key))
+			case pr.Value:
+				f = append(f, "?v")
+			default:
+				f = append(f, "_")
+			}
+		}
+		alts = append(alts, append(f, ")"))
+	}
+	if len(alts) == 0 {
+		var types, known []string
+		for _, e := range rv.es {
+			types = append(types, e.Type)
+			known = append(known, sortedKeys(e.Props)...)
+		}
+		return nil, errAt(p.pos, "no property %s on %s:%s%s", p.key, rv.name, strings.Join(types, "|"), oneOf("properties", p.key, known))
+	}
+	jv := c.fresh(rv.jv + "_" + p.key)
+	c.name(jv, rv.name+"."+p.key)
+	m[k] = jv
+	if len(alts) == 1 {
+		f := renameVars(alts[0], map[string]string{"?r": "?" + rv.jv, "?v": "?" + jv})
+		*c.scope = append(*c.scope, f)
+		return frag{"?" + jv}, nil
+	}
+	name := c.helper("rprop")
+	for _, a := range alts {
+		c.addRule(rule{head: frag{name + "(?r, ?v)"}, body: []frag{a}})
+	}
+	*c.scope = append(*c.scope, frag{name + "(?" + rv.jv + ", ?" + jv + ")"})
+	return frag{"?" + jv}, nil
+}
+
+// renameVars is f with each string piece's variables in to renamed, whole names only.
+func renameVars(f frag, to map[string]string) frag {
+	out := make(frag, len(f))
+	for i, p := range f {
+		s, ok := p.(string)
+		if !ok {
+			out[i] = p
+			continue
+		}
+		out[i] = varRe.ReplaceAllStringFunc(s, func(v string) string {
+			if r, ok := to[v]; ok {
+				return r
+			}
+			return v
+		})
+	}
+	return out
+}
+
 // value is e as an operand of a comparison: a constant, a parameter, a variable or arithmetic over
 // at least one variable or parameter, since jaala computes only from what a body binds.
 func (c *compiler) value(e expr) (frag, *Error) {
@@ -993,6 +1234,9 @@ func (c *compiler) value(e expr) (frag, *Error) {
 	case varRef:
 		if jv := c.values[e.name]; jv != "" {
 			return frag{"?" + jv}, nil
+		}
+		if rv := c.rels[e.name]; rv != nil {
+			return c.relFact(rv, e.pos, e.name)
 		}
 		n, err := c.nodeRef(e)
 		if err != nil {
@@ -1063,7 +1307,28 @@ func (c *compiler) value(e expr) (frag, *Error) {
 				}
 			}
 		case "type", "startnode", "endnode":
-			return nil, gapEdgeVars.at(e.pos, "%s()", e.name)
+			var v varRef
+			ok := len(e.args) == 1
+			if ok {
+				v, ok = e.args[0].(varRef)
+			}
+			if !ok {
+				return nil, errAt(e.pos, "%s() reads a relationship variable", e.name)
+			}
+			rv, err := c.relRef(v, e.name)
+			if err != nil {
+				return nil, err
+			}
+			if !rv.written {
+				return nil, errAt(e.pos, "%s(%s) reads a relationship of variable length, which has no one type or ends: bind the path and read relationships(p)", e.name, v.name)
+			}
+			switch strings.ToLower(e.name) {
+			case "type":
+				return rv.typ, nil
+			case "startnode":
+				return c.relEnd(rv, true), nil
+			}
+			return c.relEnd(rv, false), nil
 		case "length", "nodes", "relationships":
 			if p, ok := c.pathArg(e); ok {
 				return frag{pathFuncs[strings.ToLower(e.name)] + "(?" + p + ")"}, nil
@@ -1177,6 +1442,15 @@ func (c *compiler) term(e expr) (frag, *Error) {
 	}
 	if isVar(f) || isConst(e) {
 		return f, nil
+	}
+	if fn, ok := e.(call); ok && strings.EqualFold(fn.name, "type") && len(f) == 1 {
+		// a relationship of one type has it as a constant, which only an atom binds (#441)
+		if s, ok := f[0].(string); ok && strings.HasPrefix(s, `"`) {
+			jv := c.fresh("_type")
+			l := ns.ListText([]ns.Value{ns.S(strings.Trim(s, `"`))})
+			*c.scope = append(*c.scope, frag{"list.member(" + quote(strings.ReplaceAll(l, `"`, `\"`)) + ", _, ?" + jv + ")"})
+			return frag{"?" + jv}, nil
+		}
 	}
 	switch e.(type) {
 	case binary, minus, call:
@@ -1462,7 +1736,7 @@ func (c *compiler) subBody(pats []pattern, where expr, allowNew bool) (bodies []
 		}
 		for i, r := range p.rels {
 			if r.v != "" {
-				return nil, nil, nil, gapEdgeVars.at(r.pos, "a relationship variable in a subquery")
+				return nil, nil, nil, gapRelVars.at(r.pos, "a relationship variable in a subquery")
 			}
 			ns[i].endpoint, ns[i+1].endpoint = true, true
 			f, err := c.relLiteral(r, ns[i], ns[i+1])

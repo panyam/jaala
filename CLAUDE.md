@@ -261,7 +261,10 @@ GOARCH=wasm go test ./ns` (#417 ran `ns` that way).
   body aggregate (so a node with no match counts 0), an `OPTIONAL MATCH` an `optional { }` holding
   its nodes' label atoms, relationships and WHERE (`optPart`, `into`, `closeOptionals`, #282), a
   property RETURN reads through Props on one of its nodes, or a value computed from it, in braces of
-  its own, and `count(b)` over its node a `sum` of a `?_seen` its braces bind; Cypher's null rules
+  its own, and `count(b)` over its node a `sum` of a `?_seen` its braces bind; a relationship variable (#441,
+  `relVar`) binds its edge's fact (`as ?r`) unless a type it reads is derived, and an undirected or
+  several-type one goes through a `cypher_rel` helper binding its type and ends, a one-type `type(r)`
+  column being bound by `list.member` of a one-value list, since only an atom binds a constant; Cypher's null rules
   are written into the program: `guards` adds `not absent(...)` to `=` (both sides), `<>` and text
   tests over a `nullable` operand (a label's column, an optional node or its property, a carried
   value, a node a WITH carried from an optional, `nodeVar.absent`), and `IS NULL` reads a variable

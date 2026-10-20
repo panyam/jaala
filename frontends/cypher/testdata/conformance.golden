@@ -150,7 +150,7 @@ MATCH (a:Package) RETURN replace(a.name, 'a', 'b'), split(a.name, 'p')[0], toLow
   -> pkg(?a, _), ?_c = str.replace(?a, "a", "b"), ?_c1 = str.split(?a, "p", 0), ?_c2 = str.lower(?a) => ?_c, ?_c1, ?_c2
 
 MATCH (a)-[r:IMPORTS]->(b) RETURN r
-  -> at 1:35 cypher: not supported yet: binding a relationship to a variable (jaala#279): r is a relationship: return or compare its endpoints instead
+  -> imports(?a, ?b) as ?r => ?r
 
 MATCH p = (a)-[:IMPORTS]->(b) RETURN p
   -> graph.paths("imports", ?a, ?b, "trail", 1, 1, ?p) => ?p

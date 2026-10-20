@@ -34,7 +34,7 @@ func errAt(p Pos, format string, args ...any) *Error {
 
 // The gaps a refusal names, from epic #278 and the issues beside it.
 var (
-	gapEdgeVars  = gap{279, "binding a relationship to a variable"}
+	gapRelVars   = gap{445, "this relationship variable"}
 	gapPaths     = gap{398, "these paths as values"}
 	gapOptional  = gap{400, "this OPTIONAL MATCH"}
 	gapLists     = gap{405, "these lists and maps"}

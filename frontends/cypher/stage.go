@@ -42,7 +42,8 @@ type compiler struct {
 	n      int
 	nodes  map[string]*nodeVar
 	order  []*nodeVar
-	rels   map[string]Pos    // relationship variables, which nothing may read (#279)
+	rels   map[string]*relVar // relationship variables (#441)
+	rorder []string
 	values map[string]string // value variables (a WITH's or a YIELD's) to their jaala variable
 	vorder []string
 	shared []frag     // literals every disjunct holds
@@ -65,7 +66,7 @@ type optPart struct {
 }
 
 func (w *world) stage() *compiler {
-	return &compiler{world: w, used: map[string]bool{}, nodes: map[string]*nodeVar{}, rels: map[string]Pos{},
+	return &compiler{world: w, used: map[string]bool{}, nodes: map[string]*nodeVar{}, rels: map[string]*relVar{},
 		values: map[string]string{}}
 }
 
@@ -235,6 +236,11 @@ func (c *compiler) starItems(pos Pos) []returnItem {
 	for _, n := range c.order {
 		if !strings.HasPrefix(n.name, "\x00") {
 			items = append(items, returnItem{e: varRef{pos: pos, name: n.name}, text: n.name})
+		}
+	}
+	for _, r := range c.rorder {
+		if c.rels[r].jv != "" {
+			items = append(items, returnItem{e: varRef{pos: pos, name: r}, text: r})
 		}
 	}
 	for _, v := range c.vorder {
@@ -438,7 +444,11 @@ func (c *compiler) compileStage(in *stageIn, s stage, where expr) (projected, *E
 			rest = append(rest, e)
 			continue
 		}
-		if r, ok := ref.(varRef); ok && c.values[r.name] != "" {
+		if r, ok := ref.(varRef); ok && (c.values[r.name] != "" || c.rels[r.name] != nil) {
+			rest = append(rest, e)
+			continue
+		}
+		if r, ok := ref.(propRef); ok && c.rels[r.v] != nil {
 			rest = append(rest, e)
 			continue
 		}
@@ -618,7 +628,7 @@ func (c *compiler) declarePath(pat *pattern) *Error {
 	}
 	r := &pat.rels[0]
 	if r.v != "" {
-		return gapEdgeVars.at(r.pos, "a relationship variable on a path variable's relationship: read relationships(%s)", pat.path)
+		return gapRelVars.at(r.pos, "a relationship variable on a path variable's relationship: read relationships(%s)", pat.path)
 	}
 	r.path, r.selector, r.edges = pat.path, pat.selector, c.edgePaths[pat.path]
 	c.addValue(pat.path)
