@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/panyam/jaala/datalog"
@@ -165,6 +166,145 @@ func TestAnOrKeepsEveryBindingOfTheMatch(t *testing.T) {
 		}
 		if got := fmt.Sprint(rows); got != c.want {
 			t.Errorf("%s = %s, want %s\n%s", c.query, got, c.want, p.Text)
+		}
+	}
+}
+
+// calledBase is codeBase's shape with an id on every relationship: main calls parse twice (two call
+// sites, c1 and c2), parse calls lex, a.go contains main, and a.go imports b.go on a line held in
+// imports' third column. c1's site is a property held as attr(c1, "site", ...), keyed by its id.
+func calledBase(t *testing.T) (*datalog.Base, cypher.Graph) {
+	t.Helper()
+	src := ns.NewMemSource().
+		DeclareSchema("node", ns.Schema{Arity: 2, Labels: []string{"id", "kind"}}).
+		DeclareSchema("edge", ns.Schema{Arity: 3, Labels: []string{"from", "kind", "to"}}).
+		DeclareSchema("imports", ns.Schema{Arity: 3, Labels: []string{"from", "to", "line"}}).
+		DeclareSchema("attr", ns.Schema{Arity: 3, Labels: []string{"id", "key", "value"}})
+	add := func(rel, id string, vals ...string) {
+		tu := ns.Tuple{ID: id}
+		for _, v := range vals {
+			tu.Vals = append(tu.Vals, ns.S(v))
+		}
+		src.Add(rel, tu)
+	}
+	for _, f := range []string{"f:main", "f:parse", "f:lex"} {
+		add("node", "", f, "Function")
+		add("attr", "", f, "name", f[2:])
+	}
+	for _, f := range []string{"file:a.go", "file:b.go"} {
+		add("node", "", f, "File")
+		add("attr", "", f, "name", f[5:])
+	}
+	add("edge", "c1", "f:main", "CALLS", "f:parse")
+	add("edge", "c2", "f:main", "CALLS", "f:parse")
+	add("edge", "c3", "f:parse", "CALLS", "f:lex")
+	add("edge", "k1", "file:a.go", "CONTAINS", "f:main")
+	add("imports", "i1", "file:a.go", "file:b.go", "7")
+	add("attr", "", "c1", "site", "a.go:3")
+	v, err := ns.NewVocabulary(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stdlib.Register(v); err != nil {
+		t.Fatal(err)
+	}
+	b, err := datalog.NewBase(v, src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b, cypher.Graph{
+		Nodes: []cypher.Node{
+			{Label: "Function", Relation: "node", Key: 0, Fixed: map[int]string{1: "Function"}},
+			{Label: "File", Relation: "node", Key: 0, Fixed: map[int]string{1: "File"}},
+		},
+		Edges: []cypher.Edge{
+			{Type: "CALLS", Relation: "edge", From: 0, To: 2, Fixed: map[int]string{1: "CALLS"}},
+			{Type: "CONTAINS", Relation: "edge", From: 0, To: 2, Fixed: map[int]string{1: "CONTAINS"}},
+			{Type: "IMPORTS", Relation: "imports", From: 0, To: 1, Props: map[string]int{"line": 2}},
+		},
+		Props: &cypher.PropRelation{Relation: "attr", Node: 0, Key: 1, Value: 2},
+	}
+}
+
+// A relationship variable binds its edge's fact (#441, Declaire's x10b asked type(r)): RETURN r
+// answers its id, type(r) its type, startNode and endNode its ends whichever way the pattern reads
+// it, r.prop a column of its type or Props keyed by its id, and count(r) counts main's two calls of
+// parse. control: RETURN f, g with the relationship unnamed answers main and parse once, as doc.go
+// says a program's distinct rows do, and naming r answers a row per call.
+func TestARelationshipVariableIsItsFact(t *testing.T) {
+	b, g := calledBase(t)
+	for _, c := range []struct{ query, want string }{
+		{`MATCH (f:Function)-[r:CALLS]->(g) RETURN type(r) AS t`, "[[CALLS]]"},
+		{`MATCH (f:Function)-[r:CALLS]->(g) RETURN r ORDER BY r`, "[[c1] [c2] [c3]]"},
+		{`MATCH (f:Function)-[r:CALLS]->(g) RETURN count(r) AS n`, "[[3]]"},
+		{`MATCH (f:Function)-[:CALLS]->(g) RETURN f, g ORDER BY f`, "[[f:main f:parse] [f:parse f:lex]]"},
+		{`MATCH (f:Function)-[r:CALLS]->(g) RETURN f, g, r ORDER BY r`, "[[f:main f:parse c1] [f:main f:parse c2] [f:parse f:lex c3]]"},
+		{`MATCH (a)<-[r:CALLS]-(b) WHERE a.name = 'lex' RETURN startNode(r) AS s, endNode(r) AS e`, "[[f:parse f:lex]]"},
+		{`MATCH (a)-[r]-(b) WHERE a.name = 'parse' RETURN type(r) AS t, startNode(r) AS s, endNode(r) AS e, r ORDER BY r`,
+			"[[CALLS f:main f:parse c1] [CALLS f:main f:parse c2] [CALLS f:parse f:lex c3]]"},
+		{`MATCH (a)-[r:CALLS|CONTAINS]->(b) WHERE b.name = 'main' RETURN type(r) AS t, r`, "[[CONTAINS k1]]"},
+		{`MATCH ()-[r:CALLS]->() RETURN r.site AS s`, "[[a.go:3]]"},
+		{`MATCH ()-[r:CALLS]->() WHERE r.site = 'a.go:3' RETURN r`, "[[c1]]"},
+		{`MATCH ()-[r:IMPORTS]->() RETURN r.line AS l, r`, "[[7 i1]]"},
+		{`MATCH (a)-[r]->(b) WHERE type(r) = 'IMPORTS' RETURN a.name AS n`, "[[a.go]]"},
+		{`MATCH ()-[r:CALLS]->() WHERE r.site IS NULL RETURN r ORDER BY r`, "[[c2] [c3]]"},
+		{`MATCH ()-[r:CALLS]->() WHERE r.site IS NOT NULL RETURN r`, "[[c1]]"},
+	} {
+		p, err := cypher.Compile(b.Vocabulary(), g, c.query)
+		if err != nil {
+			t.Errorf("%s: %v", c.query, err)
+			continue
+		}
+		rows, err := rowsOf(t, p, b)
+		if err != nil {
+			t.Errorf("%s: %v", c.query, err)
+			continue
+		}
+		if got := fmt.Sprint(rows); got != c.want {
+			t.Errorf("%s = %s, want %s\n%s", c.query, got, c.want, p.Text)
+		}
+	}
+}
+
+// A type the vocabulary derives has no facts, so reading its relationship's id or property is refused
+// by name, while its type and ends, which need no fact, still answer. control: the guide's base type
+// IMPORTS answers RETURN r.
+func TestADerivedTypesRelationshipHasNoId(t *testing.T) {
+	v, b := guide.Deps(t)
+	for _, q := range []string{`MATCH (a)-[r:DEPENDS_ON]->(b) RETURN r`, `MATCH (a)-[r:DEPENDS_ON]->(b) RETURN count(r)`} {
+		if _, err := cypher.Compile(v, depsGraph, q); err == nil || !strings.Contains(err.Error(), "DEPENDS_ON is derived") {
+			t.Errorf("%s: %v, want a refusal naming DEPENDS_ON as derived", q, err)
+		}
+	}
+	for _, c := range []struct{ query, want string }{
+		{`MATCH (a)-[r:DEPENDS_ON]->(b) WHERE a.name = 'app' RETURN DISTINCT type(r) AS t`, "[[DEPENDS_ON]]"},
+		{`MATCH (a)-[r:IMPORTS]->(b) WHERE a.name = 'app' RETURN startNode(r) AS s, count(r) AS n`, "[[app 1]]"},
+	} {
+		p, err := cypher.Compile(v, depsGraph, c.query)
+		if err != nil {
+			t.Errorf("%s: %v", c.query, err)
+			continue
+		}
+		rows, err := rowsOf(t, p, b)
+		if err != nil || fmt.Sprint(rows) != c.want {
+			t.Errorf("%s = %v, %v; want %s\n%s", c.query, rows, err, c.want, p.Text)
+		}
+	}
+}
+
+// A relationship an OPTIONAL MATCH binds may be null, and its fact binds only inside the braces, so
+// reading it is refused naming #400 rather than answering f:lex a type it has no relationship of.
+func TestAnOptionalRelationshipVariableIsRefusedWhenRead(t *testing.T) {
+	b, g := calledBase(t)
+	for _, q := range []string{
+		`MATCH (a:Function) OPTIONAL MATCH (a)-[r:CALLS]->(b) RETURN a, r`,
+		`MATCH (a:Function) OPTIONAL MATCH (a)-[r:CALLS]->(b) RETURN a, type(r)`,
+		`MATCH (a:Function) OPTIONAL MATCH (a)-[r:CALLS]->(b) RETURN a, r.site`,
+	} {
+		_, err := cypher.Compile(b.Vocabulary(), g, q)
+		var ce *cypher.Error
+		if !asError(err, &ce) || ce.Gap != 400 {
+			t.Errorf("%s: %v, want a refusal naming #400", q, err)
 		}
 	}
 }

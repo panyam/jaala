@@ -126,6 +126,24 @@ func TestABoundFactsAttributesJoinOnItsID(t *testing.T) {
 	}
 }
 
+// A bound fact anchors a negation (#441: Cypher's r.prop IS NULL is a negated attribute of r's fact),
+// in the goal and in a rule. control: a negation over a variable nothing positive binds is still
+// refused.
+func TestABoundFactAnchorsANegation(t *testing.T) {
+	b := baseFor(std(routes()))
+	got := factRows(answerOn(t, b, `road(?a, ?b) as ?r, not road_attr(?r, "toll", _) => ?r`), "r")
+	if want := []string{"r4", `road("d", "a")`}; !slices.Equal(got, want) {
+		t.Errorf("roads without a toll %q, want %q (r4, then d to a's engine-named fact)", got, want)
+	}
+	got = factRows(answerOn(t, b, `free(?r) :- road(_, _) as ?r, not road_attr(?r, "toll", "yes"); free(?r) => ?r`), "r")
+	if want := []string{"r2", "r3", "r4", `road("d", "a")`}; !slices.Equal(got, want) {
+		t.Errorf("roads without a toll of yes %q, want %q", got, want)
+	}
+	if _, err := both(mustParse(t, `road(?a, ?b) as ?r, not road_attr(?s, "toll", _) => ?r`), b); err == nil || !strings.Contains(err.Error(), "shares no variable") {
+		t.Errorf("control: %v, want the negation over ?s refused", err)
+	}
+}
+
 // A witness shows a bound fact as the relation the program names, its id beside its values.
 func TestABoundFactsWitnessCarriesItsID(t *testing.T) {
 	rows := answerOn(t, baseFor(std(routes())), `road("b", ?c) as ?r => ?r`, Witnesses())

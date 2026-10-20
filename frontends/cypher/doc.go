@@ -37,8 +37,9 @@
 // Where its answers differ from a Cypher engine's, it says so here rather than guess:
 //
 //   - The rows are distinct, as a program's answer is: RETURN without DISTINCT answers each row
-//     once, and count(x) counts distinct bindings of the match, not paths. Cypher's duplicate rows
-//     need a relationship as a value (#279).
+//     once, and count(x) counts distinct bindings of the match, not paths. Two relationships between
+//     one pair of nodes are two bindings only when a relationship variable names them, which binds
+//     each edge's fact (#441), and only over a type the host stores as facts.
 //   - A property read through the graph's Props relation, or a Derived one, is a match: a node without
 //     it has no row, where Cypher would answer null, unless an OPTIONAL MATCH declared the node, whose
 //     property RETURN reads is read optionally (#400).
@@ -61,8 +62,14 @@
 //   - collect's list is sorted in jaala's answer order, not in match order, so it doesn't depend on
 //     the order rows arrive in; lists compare and order by their text (#405).
 //
-// The rest it refuses with an *Error naming the issue that would let it: a relationship variable
-// read anywhere (#279), a path variable over more than one relationship, ALL SHORTEST and SHORTEST k
+// A relationship variable, [r:T], binds the edge's fact (#441): RETURN r answers its id, type(r) its
+// type, startNode(r) and endNode(r) its ends, and r.prop a column of its type or Props keyed by its
+// id, r.prop IS NULL testing that none does. A type the vocabulary derives has no facts, so its id and
+// properties are refused, and so is reading one an OPTIONAL MATCH binds, which may be null (#400).
+//
+// The rest it refuses with an *Error naming the issue that would let it: a relationship variable in
+// a subquery, on a path variable's relationship, or read with type, startNode, endNode or a property
+// after a WITH carried it (#445), a path variable over more than one relationship, ALL SHORTEST and SHORTEST k
 // paths as values, shortestPath as a value outside p = (...), and quantified path patterns (#398), an OPTIONAL MATCH before any MATCH, with an OR in its WHERE or
 // adding a label to an earlier node (#400), maps, comprehensions and lists of more than constants (#405), functions beyond the aggregates
 // above (#284), writes (#287), USE and LOAD CSV (#289), CALL { } subqueries, an ORDER BY, SKIP or

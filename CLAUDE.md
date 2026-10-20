@@ -262,7 +262,10 @@ GOARCH=wasm go test ./ns` (#417 ran `ns` that way).
   body aggregate (so a node with no match counts 0), an `OPTIONAL MATCH` an `optional { }` holding
   its nodes' label atoms, relationships and WHERE (`optPart`, `into`, `closeOptionals`, #282), a
   property RETURN reads through Props on one of its nodes, or a value computed from it, in braces of
-  its own, and `count(b)` over its node a `sum` of a `?_seen` its braces bind; Cypher's null rules
+  its own, and `count(b)` over its node a `sum` of a `?_seen` its braces bind; a relationship variable (#441,
+  `relVar`) binds its edge's fact (`as ?r`) unless a type it reads is derived, and an undirected or
+  several-type one goes through a `cypher_rel` helper binding its type and ends, a one-type `type(r)`
+  column being bound by `list.member` of a one-value list, since only an atom binds a constant; Cypher's null rules
   are written into the program: `guards` adds `not absent(...)` to `=` (both sides), `<>` and text
   tests over a `nullable` operand (a label's column, an optional node or its property, a carried
   value, a node a WITH carried from an optional, `nodeVar.absent`), and `IS NULL` reads a variable
@@ -505,7 +508,9 @@ GOARCH=wasm go test ./ns` (#417 ran `ns` that way).
   `lookup`/`prefetch` ask the store `edge`'s own call (`lookedUpAtom`), so the cache keys are
   `edge`'s. It is never pushed, walked, summarized or streamed (`isFact`), and `withoutOrphans` and
   explain's naming must not take its NUL for a rewrite's relation (the corpus found the first under
-  Witnesses). A leaf shows it as `edge` with `Witness.Fact`. `Atom.Fact` is set only by the parser:
+  Witnesses). A leaf shows it as `edge` with `Witness.Fact`. A bound fact anchors a negation
+  (`positiveVars` reads `Atom.Fact`, #441: the written-program checks run before `lowerFacts` makes
+  it an argument). `Atom.Fact` is set only by the parser:
   `bindGoal`'s and `Link`'s atom copies must keep it, or `as` vanishes silently. The corpus binds an
   edge's fact now and then from a stream of its own (`generator.facts`, `bound fact`), every third
   generated edge left without an id, and Soufflé reads `edge_fact`. nl's grammar writes `as ?v`

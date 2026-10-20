@@ -1488,7 +1488,8 @@ func defaultSelect(goal Body) []Term {
 	return out
 }
 
-// positiveVars returns the variables bound by positive atoms (including reaches), first-seen.
+// positiveVars returns the variables bound by positive atoms (including reaches), first-seen, and
+// the fact an atom's `as` binds, which the program as written carries beside its arguments (#441).
 func positiveVars(goal Body) []Var {
 	seen := map[Var]bool{}
 	var out []Var
@@ -1496,7 +1497,7 @@ func positiveVars(goal Body) []Var {
 		if lit.Pos == nil {
 			continue
 		}
-		for _, a := range lit.Pos.Args {
+		for _, a := range append(slices.Clone(lit.Pos.Args), Term{Var: lit.Pos.Fact}) {
 			if a.Var != "" && a.Var != "_" && !seen[a.Var] {
 				seen[a.Var] = true
 				out = append(out, a.Var)

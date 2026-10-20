@@ -459,3 +459,24 @@ func TestKnownCypherDisagreementsStillDisagree(t *testing.T) {
 		}
 	}
 }
+
+// A relationship variable's type, ends and count answer as Neo4j's do (#441), over the
+// differential's graphs: its fact's id is the store's, so RETURN r itself isn't compared. control:
+// every query is compared, none refused by either side.
+func TestARelationshipVariableAgreesWithNeo4j(t *testing.T) {
+	sv := exclusive(t)
+	queries := []string{
+		"MATCH (a)-[r]->(b) RETURN type(r) AS c0, count(r) AS c1",
+		"MATCH (a)-[r]-(b) WHERE startNode(r) = a RETURN a.name AS c0, b.name AS c1, type(r) AS c2",
+		"MATCH (a)<-[r]-(b) WHERE endNode(r) = a RETURN a.name AS c0, count(*) AS c1",
+		"MATCH (a)-[r:CALLS]->(b)-[:IMPORTS*1..2]->(c) RETURN type(r) AS c0, c.name AS c1",
+	}
+	for seed := int64(1); seed <= 5; seed++ {
+		g, src := diffGraph(seed)
+		for _, text := range queries {
+			if out, diff := cypherCase(t, sv, g, src, text); out != diffAgreed {
+				t.Errorf("seed %d: %s: %v %s", seed, text, out, diff)
+			}
+		}
+	}
+}
