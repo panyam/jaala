@@ -631,7 +631,7 @@ func (c *compiler) relRef(r varRef, fn string) (*relVar, *Error) {
 		return rv, nil
 	}
 	if c.values[r.name] != "" {
-		return nil, gapRelVars.at(r.pos, "%s(%s) after a WITH carried %s, which hands on its id alone", fn, r.name, r.name)
+		return nil, errAt(r.pos, "%s() reads a relationship, and %s is a value a WITH carried", fn, r.name)
 	}
 	return nil, errAt(r.pos, "%s() reads a relationship variable a MATCH binds, and %s isn't one", fn, r.name)
 }
@@ -1023,7 +1023,13 @@ func (c *compiler) relLiteral(r relPat, from, to *nodeVar) (frag, *Error) {
 		if r.selector == "shortest" {
 			mode = "shortest"
 		}
-		return frag{fmt.Sprintf("graph.paths(%q, ", walked), src, ", ", dst, fmt.Sprintf(", %q, %d, %d, ?%s)", mode, lo, upTo, c.values[r.path])}, nil
+		paths := frag{fmt.Sprintf("graph.paths(%q, ", walked), src, ", ", dst, fmt.Sprintf(", %q, %d, %d, ?%s)", mode, lo, upTo, c.values[r.path])}
+		if rv := c.rels[r.v]; rv != nil && r.v != "" && !r.varLen {
+			// p = (a)-[r:T]->(b) binds r's fact beside the path (#445): one path per pair of nodes,
+			// as a path is its nodes, and a row per relationship between them.
+			return append(append(c.relVarLiteral(rv, r, es, argss, from, to), ", "), paths...), nil
+		}
+		return paths, nil
 	}
 	return frag{fmt.Sprintf("graph.closure(%q, ", walked), src, ", ", dst, fmt.Sprintf(", %d, %d, _)", lo, upTo)}, nil
 }
@@ -1665,7 +1671,7 @@ func (c *compiler) condition(e expr, neg bool) (frag, *Error) {
 // patternTest is a pattern in WHERE, or EXISTS { }: a helper relation over the nodes it shares with
 // the MATCH, a rule for each alternative its WHERE has, called (or negated) on them.
 func (c *compiler) patternTest(pats []pattern, where expr, allowNew, neg bool) (frag, *Error) {
-	bodies, anchors, _, err := c.subBody(pats, where, allowNew)
+	bodies, anchors, _, _, relAnchors, err := c.subBodyRels(pats, where, allowNew)
 	if err != nil {
 		return nil, err
 	}
@@ -1680,6 +1686,12 @@ func (c *compiler) patternTest(pats []pattern, where expr, allowNew, neg bool) (
 			head, call = append(head, ", "), append(call, ", ")
 		}
 		head, call = append(head, keyArg{a}), append(call, keyArg{a.of})
+	}
+	for i, r := range relAnchors {
+		if i > 0 || len(anchors) > 0 {
+			head, call = append(head, ", "), append(call, ", ")
+		}
+		head, call = append(head, "?"+r.jv), append(call, "?"+r.jv)
 	}
 	head = append(head, ")")
 	for _, body := range bodies {
@@ -1703,9 +1715,10 @@ func (c *compiler) countSubquery(sq subquery) (frag, *Error) {
 		return nil, errAt(sq.pos, "COUNT { } over a WHERE with OR: count each alternative and add them")
 	}
 	var counted any
-	if len(inner) > 0 {
+	switch {
+	case len(inner) > 0:
 		counted = keyVal{inner[0]}
-	} else {
+	default:
 		markValued(anchors[0])
 		counted = keyVal{anchors[0]}
 	}
@@ -1716,11 +1729,23 @@ func (c *compiler) countSubquery(sq subquery) (frag, *Error) {
 
 // subBody compiles a subquery's patterns and WHERE, a body per alternative, with the nodes it shares
 // with the stage (anchors, each a stand-in for the stage's node, so reading one's column reads it
-// here) and those it introduces (inner, only with allowNew).
+// here) and those it introduces (inner, only with allowNew). A relationship variable is the subquery's
+// own when it introduces it (rels, binding its fact inside), or the stage's when the MATCH bound it
+// (relAnchors, a stand-in sharing its fact, so the pattern means that relationship) (#445).
 func (c *compiler) subBody(pats []pattern, where expr, allowNew bool) (bodies [][]frag, anchors, inner []*nodeVar, err *Error) {
+	bodies, anchors, inner, _, _, err = c.subBodyRels(pats, where, allowNew)
+	return
+}
+
+func (c *compiler) subBodyRels(pats []pattern, where expr, allowNew bool) (bodies [][]frag, anchors, inner []*nodeVar, rels, relAnchors []*relVar, err *Error) {
 	saved, savedShared, savedScope, savedOrder := c.nodes, c.shared, c.scope, c.order
+	savedRels, savedRorder := c.rels, c.rorder
 	c.nodes = map[string]*nodeVar{}
-	defer func() { c.nodes, c.shared, c.scope, c.order = saved, savedShared, savedScope, savedOrder }()
+	c.rels = map[string]*relVar{}
+	defer func() {
+		c.nodes, c.shared, c.scope, c.order = saved, savedShared, savedScope, savedOrder
+		c.rels, c.rorder = savedRels, savedRorder
+	}()
 	var body []frag
 	c.shared, c.scope = nil, &body
 	stand := map[*nodeVar]*nodeVar{}
@@ -1730,7 +1755,7 @@ func (c *compiler) subBody(pats []pattern, where expr, allowNew bool) (bodies []
 		for _, np := range p.nodes {
 			if outer, ok := saved[np.v]; ok && np.v != "" {
 				if len(np.props) > 0 {
-					return nil, nil, nil, errAt(np.pos, "write %s's properties in the MATCH, or as a WHERE inside the subquery", np.v)
+					return nil, nil, nil, nil, nil, errAt(np.pos, "write %s's properties in the MATCH, or as a WHERE inside the subquery", np.v)
 				}
 				a := stand[outer]
 				if a == nil {
@@ -1745,7 +1770,7 @@ func (c *compiler) subBody(pats []pattern, where expr, allowNew bool) (bodies []
 				}
 				for _, l := range np.labels {
 					if _, ok := c.g.node(l); !ok {
-						return nil, nil, nil, errAt(np.pos, "no label %s in this graph%s", l, oneOf("labels", l, c.g.labelNames()))
+						return nil, nil, nil, nil, nil, errAt(np.pos, "no label %s in this graph%s", l, oneOf("labels", l, c.g.labelNames()))
 					}
 					body = append(body, frag{nodeAtm{n: a, label: l}})
 				}
@@ -1753,12 +1778,12 @@ func (c *compiler) subBody(pats []pattern, where expr, allowNew bool) (bodies []
 				continue
 			}
 			if np.v != "" && !allowNew && c.nodes[np.v] == nil {
-				return nil, nil, nil, errAt(np.pos, "a pattern in WHERE can't introduce %s: a MATCH has to bind it, or write EXISTS { ... }", np.v)
+				return nil, nil, nil, nil, nil, errAt(np.pos, "a pattern in WHERE can't introduce %s: a MATCH has to bind it, or write EXISTS { ... }", np.v)
 			}
 			known := c.nodes[np.v] != nil && np.v != ""
 			n, err := c.declareNode(np, &conds)
 			if err != nil {
-				return nil, nil, nil, err
+				return nil, nil, nil, nil, nil, err
 			}
 			if !known && !containsNode(inner, n) {
 				inner = append(inner, n)
@@ -1774,25 +1799,41 @@ func (c *compiler) subBody(pats []pattern, where expr, allowNew bool) (bodies []
 		}
 		for i, r := range p.rels {
 			if r.v != "" {
-				return nil, nil, nil, gapRelVars.at(r.pos, "a relationship variable in a subquery")
+				if outer := savedRels[r.v]; outer != nil {
+					if outer.jv == "" {
+						return nil, nil, nil, nil, nil, errAt(r.pos, "%s is a relationship with no fact to share (a derived type, or a variable length)", r.v)
+					}
+					if _, ok := c.rels[r.v]; !ok {
+						a := &relVar{name: outer.name, pos: r.pos, jv: outer.jv, es: outer.es}
+						c.rels[r.v] = a
+						relAnchors = append(relAnchors, a)
+					}
+				} else if !allowNew {
+					return nil, nil, nil, nil, nil, errAt(r.pos, "a pattern in WHERE can't introduce %s: a MATCH has to bind it, or write EXISTS { ... }", r.v)
+				} else if c.rels[r.v] == nil {
+					if err := c.declareRel(r); err != nil {
+						return nil, nil, nil, nil, nil, err
+					}
+					rels = append(rels, c.rels[r.v])
+				}
 			}
 			ns[i].endpoint, ns[i+1].endpoint = true, true
 			f, err := c.relLiteral(r, ns[i], ns[i+1])
 			if err != nil {
-				return nil, nil, nil, err
+				return nil, nil, nil, nil, nil, err
 			}
 			body = append(body, f)
 		}
 	}
-	if len(anchors) == 0 {
-		return nil, nil, nil, errAt(pats[0].pos, "a pattern in WHERE has to share a variable with the MATCH")
+	if len(anchors) == 0 && len(relAnchors) == 0 {
+		return nil, nil, nil, nil, nil, errAt(pats[0].pos, "a pattern in WHERE has to share a variable with the MATCH")
 	}
 	// A node of its own that nothing else matches ranges over every node, as in a MATCH.
 	for _, n := range inner {
 		if len(n.labels) == 0 && !n.endpoint {
 			f, err := c.anyNode(n)
 			if err != nil {
-				return nil, nil, nil, err
+				return nil, nil, nil, nil, nil, err
 			}
 			body = append(body, f)
 		}
@@ -1805,7 +1846,7 @@ func (c *compiler) subBody(pats []pattern, where expr, allowNew bool) (bodies []
 			}
 		}
 		if len(body) == 0 {
-			return nil, nil, nil, errAt(pats[0].pos, "this subquery matches nothing of its own: give it a relationship or a label")
+			return nil, nil, nil, nil, nil, errAt(pats[0].pos, "this subquery matches nothing of its own: give it a relationship or a label")
 		}
 	}
 	if where != nil {
@@ -1813,7 +1854,7 @@ func (c *compiler) subBody(pats []pattern, where expr, allowNew bool) (bodies []
 	}
 	ds, err := c.dnf(conds)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 	for _, d := range ds {
 		var lits []frag
@@ -1821,13 +1862,13 @@ func (c *compiler) subBody(pats []pattern, where expr, allowNew bool) (bodies []
 		for _, cd := range d {
 			f, err := c.condition(cd.e, cd.neg)
 			if err != nil {
-				return nil, nil, nil, err
+				return nil, nil, nil, nil, nil, err
 			}
 			lits = append(lits, f)
 		}
 		bodies = append(bodies, append(append(append([]frag{}, body...), c.shared...), lits...))
 	}
-	return bodies, anchors, inner, nil
+	return bodies, anchors, inner, rels, relAnchors, nil
 }
 
 func hasRels(pats []pattern) bool {

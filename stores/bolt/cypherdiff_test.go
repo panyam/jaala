@@ -149,6 +149,9 @@ func (g cypherGen) query() string {
 		fmt.Fprintf(&b, "MATCH (a%s)", g.label())
 		vars = []string{"a"}
 	case 1:
+		if g.chance(0.5) {
+			return g.relVarQuery()
+		}
 		fmt.Fprintf(&b, "MATCH (a%s)-[%s]->(b%s)", g.label(), g.rel(), g.label())
 		vars = []string{"a", "b"}
 	case 2:
@@ -220,6 +223,37 @@ func (g cypherGen) columns(vars []string, optional string, aggregate, propsOnly 
 		cols[i] += fmt.Sprintf(" AS c%d", i)
 	}
 	return cols
+}
+
+// relVarQuery binds a relationship variable (#441, #445) and reads it: its type and ends in the
+// RETURN, its count, or the same after a WITH carried it, or an EXISTS over a relationship of its own
+// or over r again. Never r itself: Neo4j answers a relationship, jaala its fact's name.
+func (g cypherGen) relVarQuery() string {
+	pat := fmt.Sprintf("MATCH (a%s)-[r%s]->(b%s)", g.label(), g.pick(":CALLS", ":IMPORTS", ""), g.label())
+	if g.chance(0.2) {
+		pat = fmt.Sprintf("MATCH (a%s)-[r%s]-(b%s)", g.label(), g.pick(":CALLS", ""), g.label())
+	}
+	switch g.rnd.Intn(4) {
+	case 0:
+		pat += fmt.Sprintf(" WHERE EXISTS { (b)-[q%s]->(x) WHERE x.size > %d }", g.rel(), g.rnd.Intn(4))
+	case 1:
+		pat += fmt.Sprintf(" WHERE %sEXISTS { (a)-[r]->(b) WHERE b.size > %d }", g.pick("", "NOT "), g.rnd.Intn(4))
+	}
+	reads := []string{"type(r)", "startNode(r)", "endNode(r)", "a.name", "b.size"}
+	var cols []string
+	for range 1 + g.rnd.Intn(2) {
+		cols = append(cols, g.pick(reads...))
+	}
+	if g.chance(0.3) {
+		cols = append(cols, "count(r)")
+	}
+	for i := range cols {
+		cols[i] += fmt.Sprintf(" AS c%d", i)
+	}
+	if g.chance(0.4) {
+		return pat + " WITH r, a, b RETURN " + strings.Join(cols, ", ")
+	}
+	return pat + " RETURN " + strings.Join(cols, ", ")
 }
 
 func (g cypherGen) simple(v string) string {
@@ -402,7 +436,7 @@ func TestCypherAgreesWithNeo4j(t *testing.T) {
 	}
 	counts := map[diffOutcome]int{}
 	known := map[int]int{}
-	failed := 0
+	failed, relVars, carriedRels := 0, 0, 0
 	for seed := first; seed < first+int64(seeds); seed++ {
 		g, src := diffGraph(seed)
 		gen := cypherGen{rand.New(rand.NewSource(seed))}
@@ -432,6 +466,12 @@ func TestCypherAgreesWithNeo4j(t *testing.T) {
 				}
 			}
 			counts[out]++
+			if out == diffAgreed && strings.Contains(text, "[r") {
+				relVars++
+				if strings.Contains(text, "WITH r") {
+					carriedRels++
+				}
+			}
 		}
 	}
 	var ks []string
@@ -444,6 +484,10 @@ func TestCypherAgreesWithNeo4j(t *testing.T) {
 		seeds, counts[diffAgreed], counts[diffRefused], counts[diffServerRefused], counts[diffShape], strings.Join(ks, ", "))
 	if total := seeds * 20; counts[diffAgreed] < total/2 {
 		t.Errorf("control: only %d of %d queries were compared", counts[diffAgreed], total)
+	}
+	t.Logf("relationship variables compared: %d, carried through a WITH: %d", relVars, carriedRels)
+	if seeds >= 20 && (relVars == 0 || carriedRels == 0) {
+		t.Errorf("control: %d queries binding a relationship variable compared, %d carrying one through a WITH", relVars, carriedRels)
 	}
 }
 
