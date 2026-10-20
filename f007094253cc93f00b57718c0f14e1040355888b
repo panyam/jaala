@@ -10,3 +10,16 @@ log: /Users/sri/.cache/jaala/selfcheck/f007094-20261019T231523Z.log
 == neo4j started in jaala-bolt-neo4j-60099 at bolt://127.0.0.1:60822
 == memgraph started in jaala-bolt-memgraph-60099 at bolt://127.0.0.1:60824
 == llama.cpp keeps a model to nl's grammar
+
+selfcheck: pass
+ran: 20261019T231830Z, 48m19s on Darwin arm64, go1.27.2
+seeds: 5000, fuzz: 30s, cypher fuzz: 2m, stores: neo4j,memgraph
+log: /Users/sri/.cache/jaala/selfcheck/f007094-20261019T231830Z.log
+== generated programs: 5000 seeds
+== work against baselines
+== fuzzed query text: 30s per target, the Cypher compiler 2m
+== Soufflé differential: 5000 seeds
+== graph servers: stores/bolt over neo4j,memgraph, 1000 seeds
+== neo4j started in jaala-bolt-neo4j-26784 at bolt://127.0.0.1:63138
+== memgraph started in jaala-bolt-memgraph-26784 at bolt://127.0.0.1:63307
+== llama.cpp keeps a model to nl's grammar
