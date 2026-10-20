@@ -53,8 +53,8 @@ github.com/stretchr/testify v1.12.1/go.mod h1:MDEgiDPPsNp5cuIrHPPCyornHKgEVbtFUm
 github.com/yosida95/uritemplate/v3 v3.0.2 h1:Ed3Oyj9yrmi9087+NczuL5BwkIc4wvTb5zIM+UJPGz4=
 github.com/yosida95/uritemplate/v3 v3.0.2/go.mod h1:ILOh0sOhIJR3+L/8afwt/kE++YT040gmv5BQTMR2HP4=
 github.com/yuin/goldmark v1.4.5/go.mod h1:rmuwmfZ0+bvzB24eSC//bk1R1Zp3hM0OXYv/G2LIilg=
-github.com/yuin/goldmark v1.7.13 h1:GPddIs617DnBLFFVJFgpo1aBfe/4xcvMc3SB5t/D0pA=
-github.com/yuin/goldmark v1.7.13/go.mod h1:ip/1k0VRfGynBgxOz0yCqHrbZXhcjxyuS66Brc7iBKg=
+github.com/yuin/goldmark v1.7.17 h1:p36OVWwRb246iHxA/U4p8OPEpOTESm4n+g+8t0EE5uA=
+github.com/yuin/goldmark v1.7.17/go.mod h1:ip/1k0VRfGynBgxOz0yCqHrbZXhcjxyuS66Brc7iBKg=
 github.com/yuin/goldmark-highlighting v0.0.0-20220208100518-594be1970594 h1:yHfZyN55+5dp1wG7wDKv8HQ044moxkyGq12KFFMFDxg=
 github.com/yuin/goldmark-highlighting v0.0.0-20220208100518-594be1970594/go.mod h1:U9ihbh+1ZN7fR5Se3daSPoz1CGF9IYtSvWwVQtnzGHU=
 go.abhg.dev/goldmark/anchor v0.2.0 h1:RQZTodRc6VHSUoQYKFlyH0pokbhk1klwUuGgDmjGp2E=

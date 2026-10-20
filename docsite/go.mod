@@ -24,7 +24,7 @@ require (
 	github.com/radovskyb/watcher v1.0.7 // indirect
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
-	github.com/yuin/goldmark v1.7.13 // indirect
+	github.com/yuin/goldmark v1.7.17 // indirect
 	github.com/yuin/goldmark-highlighting v0.0.0-20220208100518-594be1970594 // indirect
 	go.abhg.dev/goldmark/anchor v0.2.0 // indirect
 	go.yaml.in/yaml/v4 v4.0.0-rc.6 // indirect
