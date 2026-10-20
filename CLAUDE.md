@@ -532,7 +532,9 @@ GOARCH=wasm go test ./ns` (#417 ran `ns` that way).
   so the prefetch's keys are the walk's. `walk` files a value only below `MaxDepth`, and a Federation
   routes a crossing value with its steps left. The planner doesn't run an all-free walk over a looked-up
   step first (`walksStore`): that read the store whole ahead of the literal binding its start.
-  The corpus draws closures from a stream of its own (`generator.closures`),
+  The corpus draws closures from a stream of its own (`generator.closures`), and now and then walks a
+  one-atom rule over the relation instead (`generator.steps`, shape "derived step", #438: an unbound
+  walk's starts read the renamed step `\x00w:` itself, which only `stepReads` serves),
   Soufflé reads them as a depth-counting walk and a `min` (`souffleClosures`), and `agreeAcross`
   skips them. `stdlib.Hops` is the same walk over a host's step function, `?within` an input.
 - **`graph.paths("rel", ?from, ?to, mode, min, max, ?path)` is the engine's too** (`paths.go`, #280),

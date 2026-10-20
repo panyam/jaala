@@ -247,8 +247,6 @@ var knownCypherDisagreements = []struct {
 	repro string
 	seed  int64 // the graph the repro disagrees over
 }{
-	{438, "a closure with neither end bound over a derived step", regexp.MustCompile(`unknown relation "\\x00w:cypher_step`),
-		"MATCH (a)-[:CALLS*1..3]->(b) RETURN b AS c0", 1},
 	{0, "min and max reduce numbers only (doc.go)", regexp.MustCompile(`(min|max)\(\w+\.name\)`),
 		"MATCH (a) RETURN min(a.name) AS c0", 1},
 }
