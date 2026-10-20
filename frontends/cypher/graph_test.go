@@ -266,6 +266,59 @@ func TestARelationshipVariableIsItsFact(t *testing.T) {
 	}
 }
 
+// A relationship variable carries through a WITH with its fact, its ends and its type (#445), through
+// one stage or two, under an aggregate, and over several types; and a subquery binds one of its own
+// (its WHERE reads it: main's two calls of parse count one without a site, two in all) or shares the
+// MATCH's, meaning that relationship. control: EXISTS of a call with a site between a and b holds for
+// c1 alone over the MATCH's r, and for c1 and c2 over a fresh q, so sharing is what narrows it. A
+// one-relationship path binds its relationship too: main's two calls of parse are two relationships
+// and one path, as a path is its nodes.
+func TestARelationshipVariableCarriesThroughWithAndIntoSubqueries(t *testing.T) {
+	b, g := calledBase(t)
+	for _, c := range []struct{ query, want string }{
+		{`MATCH (f:Function)-[r:CALLS]->(g) WITH r RETURN type(r) AS t`, "[[CALLS]]"},
+		{`MATCH (f:Function)-[r:CALLS]->(g) WITH r RETURN startNode(r) AS s, endNode(r) AS e, r ORDER BY r`,
+			"[[f:main f:parse c1] [f:main f:parse c2] [f:parse f:lex c3]]"},
+		{`MATCH (a)-[r]-(b) WHERE a.name = 'parse' WITH r RETURN type(r) AS t, startNode(r) AS s, endNode(r) AS e, r ORDER BY r`,
+			"[[CALLS f:main f:parse c1] [CALLS f:main f:parse c2] [CALLS f:parse f:lex c3]]"},
+		{`MATCH (a)-[r:CALLS|CONTAINS]->(b) WHERE b.name = 'main' WITH r RETURN type(r) AS t, r`, "[[CONTAINS k1]]"},
+		{`MATCH ()-[r:CALLS]->() WITH r RETURN r.site AS s`, "[[a.go:3]]"},
+		{`MATCH ()-[r:IMPORTS]->() WITH r RETURN r.line AS l, endNode(r) AS e`, "[[7 file:b.go]]"},
+		{`MATCH (f)-[r:CALLS]->(g) WITH r, count(*) AS k WITH r RETURN type(r) AS t, count(r) AS n`, "[[CALLS 3]]"},
+		{`MATCH (a:Function) WHERE EXISTS { (a)-[r:CALLS]->(b) WHERE r.site = 'a.go:3' } RETURN a`, "[[f:main]]"},
+		{`MATCH (a:Function) WHERE NOT EXISTS { (a)-[r:CALLS]->() WHERE r.site IS NULL } RETURN a ORDER BY a`, "[[f:lex]]"},
+		{`MATCH (a:Function) RETURN a, COUNT { (a)-[r:CALLS]->() WHERE r.site IS NULL } AS n ORDER BY a`, "[[f:lex 0] [f:main 1] [f:parse 1]]"},
+		{`MATCH (a:Function) RETURN a, COUNT { (a)-[r:CALLS]->() } AS n ORDER BY a`, "[[f:lex 0] [f:main 2] [f:parse 1]]"},
+		{`MATCH (a)-[r:CALLS]->(b) WHERE EXISTS { ()-[r]->(:Function {name: 'lex'}) } RETURN r`, "[[c3]]"},
+		{`MATCH (a)-[r:CALLS]->(b) WHERE NOT EXISTS { (a)-[r]->(:Function {name: 'parse'}) } RETURN r`, "[[c3]]"},
+		{`MATCH (a)-[r:CALLS]->(b) WHERE EXISTS { (a)-[r]->(b) WHERE r.site IS NOT NULL } RETURN r ORDER BY r`, "[[c1]]"},
+		{`MATCH (a)-[r:CALLS]->(b) WHERE EXISTS { (a)-[q:CALLS]->(b) WHERE q.site IS NOT NULL } RETURN r ORDER BY r`, "[[c1] [c2]]"},
+		{`MATCH p = (a)-[r:CALLS]->(b) WHERE a.name = 'main' RETURN r, length(p) AS n ORDER BY r`, "[[c1 1] [c2 1]]"},
+		{`MATCH p = (a)-[r:CALLS]->(b) RETURN count(r) AS n, count(DISTINCT p) AS ps`, "[[3 2]]"},
+	} {
+		p, err := cypher.Compile(b.Vocabulary(), g, c.query)
+		if err != nil {
+			t.Errorf("%s: %v", c.query, err)
+			continue
+		}
+		rows, err := rowsOf(t, p, b)
+		if err != nil {
+			t.Errorf("%s: %v\n%s", c.query, err, p.Text)
+			continue
+		}
+		if got := fmt.Sprint(rows); got != c.want {
+			t.Errorf("%s = %s, want %s\n%s", c.query, got, c.want, p.Text)
+		}
+	}
+	for _, q := range []string{
+		`MATCH (a)-[r:CALLS]->(b) WHERE (a)-[q:CALLS]->() RETURN a`,
+	} {
+		if _, err := cypher.Compile(b.Vocabulary(), g, q); err == nil || !strings.Contains(err.Error(), "can't introduce q") {
+			t.Errorf("%s: %v, want a refusal: a pattern in WHERE can't introduce q", q, err)
+		}
+	}
+}
+
 // A type the vocabulary derives has no facts, so reading its relationship's id or property is refused
 // by name, while its type and ends, which need no fact, still answer. control: the guide's base type
 // IMPORTS answers RETURN r.

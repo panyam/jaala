@@ -265,7 +265,14 @@ GOARCH=wasm go test ./ns` (#417 ran `ns` that way).
   its own, and `count(b)` over its node a `sum` of a `?_seen` its braces bind; a relationship variable (#441,
   `relVar`) binds its edge's fact (`as ?r`) unless a type it reads is derived, and an undirected or
   several-type one goes through a `cypher_rel` helper binding its type and ends, a one-type `type(r)`
-  column being bound by `list.member` of a one-value list, since only an atom binds a constant; Cypher's null rules
+  column being bound by `list.member` of a one-value list, since only an atom binds a constant. A WITH
+  carries one (#445) as its fact plus hidden columns after the WITH's own (`carried.part`: its ends
+  and, for a helper-bound one, its type), so the next stage's `relVar` reads them; a subquery declares
+  its own in a scoped `c.rels`, and one the MATCH bound is a stand-in sharing its fact, passed to the
+  `cypher_exists` rule as an argument (COUNT's braces share it by name); `p = (a)-[r:T]->(b)` writes
+  r's atom beside `graph.paths`. COUNT counts bindings, not distinct keys, so it needed no change, and
+  counting `?r` itself is refused by the engine (the aggregate must read a variable an atom binds,
+  and `as ?r` lowers later). Cypher's null rules
   are written into the program: `guards` adds `not absent(...)` to `=` (both sides), `<>` and text
   tests over a `nullable` operand (a label's column, an optional node or its property, a carried
   value, a node a WITH carried from an optional, `nodeVar.absent`), and `IS NULL` reads a variable

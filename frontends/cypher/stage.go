@@ -70,13 +70,20 @@ func (w *world) stage() *compiler {
 		values: map[string]string{}}
 }
 
-// carried is a variable a WITH hands on: a node, with the labels it has, or a value; absent says an
-// OPTIONAL MATCH bound the node, so it may be absent in the next stage too.
+// carried is a variable a WITH hands on: a node, with the labels it has, a relationship, with its
+// types, or a value; absent says an OPTIONAL MATCH bound the node, so it may be absent in the next
+// stage too. A relationship hands on its fact as its column and, in hidden columns after the WITH's
+// own, its two ends and, when it may have more than one, its type (#445), so type, startNode and
+// endNode read them in the next stage; part names which of those a hidden column is, of the
+// relationship owner.
 type carried struct {
 	name   string
 	node   bool
 	labels []string
 	absent bool
+	rel    *relVar // the relationship as the stage before had it
+	part   string  // "start", "end" or "type": a hidden column of owner's
+	owner  string
 }
 
 type stageIn struct {
@@ -193,6 +200,11 @@ func (w *world) query(q query) (projected, *Error) {
 			}
 			head = append(head, col.text)
 		}
+		for _, it := range items {
+			if it.part != "" {
+				head = append(head, ", ", c.hidden(it))
+			}
+		}
 		w.rules = append(w.rules, rule{head: append(head, ")"), body: out.lits})
 		in, where = &stageIn{rel: name, items: items}, s.proj.where
 	}
@@ -225,10 +237,34 @@ func (c *compiler) carry(r returnClause) ([]carried, *Error) {
 			if n, ok := c.nodes[v.name]; ok {
 				cr.node, cr.labels, cr.absent = true, append([]string(nil), n.labels...), n.opt > 0 || n.absent
 			}
+			if rv := c.rels[v.name]; rv != nil && rv.jv != "" && rv.written {
+				cr.rel = rv
+			}
 		}
 		out = append(out, cr)
 	}
+	for _, cr := range slices.Clone(out) {
+		if cr.rel == nil {
+			continue
+		}
+		out = append(out, carried{name: "\x00start:" + cr.name, part: "start", owner: cr.name, rel: cr.rel},
+			carried{name: "\x00end:" + cr.name, part: "end", owner: cr.name, rel: cr.rel})
+		if cr.rel.start == nil {
+			out = append(out, carried{name: "\x00type:" + cr.name, part: "type", owner: cr.name, rel: cr.rel})
+		}
+	}
 	return out, nil
+}
+
+// hidden is a carried relationship's hidden column as the stage before writes it.
+func (c *compiler) hidden(cr carried) frag {
+	switch cr.part {
+	case "start":
+		return c.relEnd(cr.rel, true)
+	case "end":
+		return c.relEnd(cr.rel, false)
+	}
+	return cr.rel.typ
 }
 
 func (c *compiler) starItems(pos Pos) []returnItem {
@@ -260,14 +296,39 @@ func (c *compiler) compileStage(in *stageIn, s stage, where expr) (projected, *E
 			if i > 0 {
 				atom = append(atom, ", ")
 			}
-			if it.node {
+			switch {
+			case it.node:
 				n := &nodeVar{name: it.name, jv: c.fresh(it.name), labels: it.labels, slots: map[string]*slot{},
 					endpoint: true, carried: true, absent: it.absent}
 				c.name(n.jv, it.name)
 				c.nodes[it.name] = n
 				c.order = append(c.order, n)
 				atom = append(atom, keyArg{n})
-			} else {
+			case it.part != "":
+				rv := c.rels[it.owner]
+				v := c.fresh(sanitize(it.owner) + "_" + it.part)
+				switch it.part {
+				case "start":
+					rv.startJV = v
+				case "end":
+					rv.endJV = v
+				default:
+					rv.typ = frag{"?" + v}
+				}
+				atom = append(atom, "?"+v)
+			case it.rel != nil:
+				// The relationship again, its fact the column it's carried in; its ends and type are
+				// filled from the hidden columns that follow.
+				rv := &relVar{name: it.name, pos: it.rel.pos, jv: c.fresh(it.name), opt: it.rel.opt, es: it.rel.es,
+					typ: it.rel.typ, written: true}
+				if it.rel.start == nil {
+					rv.typ = nil
+				}
+				c.name(rv.jv, it.name)
+				c.rels[it.name] = rv
+				c.rorder = append(c.rorder, it.name)
+				atom = append(atom, "?"+rv.jv)
+			default:
 				c.addValue(it.name)
 				atom = append(atom, "?"+c.values[it.name])
 			}
@@ -630,8 +691,8 @@ func (c *compiler) declarePath(pat *pattern) *Error {
 		return gapPaths.at(pat.pathPos, "%s paths as values: write shortestPath or SHORTEST 1", strings.ToUpper(pat.selector))
 	}
 	r := &pat.rels[0]
-	if r.v != "" {
-		return gapRelVars.at(r.pos, "a relationship variable on a path variable's relationship: read relationships(%s)", pat.path)
+	if r.v != "" && r.varLen {
+		return gapPaths.at(r.pos, "a variable bound to a variable-length relationship: bind the path, %s = (...), and read relationships(%s)", pat.path, pat.path)
 	}
 	r.path, r.selector, r.edges = pat.path, pat.selector, c.edgePaths[pat.path]
 	c.addValue(pat.path)
