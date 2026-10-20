@@ -3,6 +3,7 @@ package cypher_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/panyam/jaala/datalog"
@@ -140,4 +141,30 @@ func rowsOf(t *testing.T, p cypher.Program, b *datalog.Base, opts ...datalog.Opt
 		}
 	}
 	return out[0], errors.Join(errs[0])
+}
+
+// An OR's alternatives keep every binding of the match, so count(*) and collect count what a Cypher
+// engine counts (#439: the alternatives' rule kept only what RETURN read, and main's two walks, through
+// parse and through help, became one tuple). control: the same match without an OR counts 2.
+func TestAnOrKeepsEveryBindingOfTheMatch(t *testing.T) {
+	_, b, g := codeBase(t)
+	const match = `MATCH (a:Function)-[:CALLS]->(b)-[:CALLS]->(c) `
+	for _, c := range []struct{ query, want string }{
+		{match + `WHERE a.name = 'main' RETURN a.name AS n, count(*) AS k`, "[[main 2]]"},
+		{match + `WHERE c.name STARTS WITH 'l' OR a.name = 'main' RETURN a.name AS n, count(*) AS k ORDER BY n`, "[[help 1] [main 2]]"},
+		{match + `WHERE c.name STARTS WITH 'l' OR a.name = 'main' RETURN a.name AS n, collect(a.name) AS ns ORDER BY n`, `[[help ["help"]] [main ["main","main"]]]`},
+		{match + `WHERE c.name STARTS WITH 'l' OR a.name = 'main' RETURN DISTINCT a.name AS n ORDER BY n`, "[[help] [main]]"},
+	} {
+		p, err := cypher.Compile(b.Vocabulary(), g, c.query)
+		if err != nil {
+			t.Fatalf("%s: %v", c.query, err)
+		}
+		rows, err := rowsOf(t, p, b)
+		if err != nil {
+			t.Fatalf("%s: %v", c.query, err)
+		}
+		if got := fmt.Sprint(rows); got != c.want {
+			t.Errorf("%s = %s, want %s\n%s", c.query, got, c.want, p.Text)
+		}
+	}
 }

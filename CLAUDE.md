@@ -247,7 +247,8 @@ GOARCH=wasm go test ./ns` (#417 ran `ns` that way).
   node's key to text goes into its own rule's atoms and head the same way (`keysFixed`, #392). A frag's node keys are rendered last for
   that reason, and kept as a frag (`subst`): rendered early, a `$param` key in a rule escaped the
   refusal and matched everything (#352's second PR caught it). An OR becomes a `cypher_match` rule
-  per alternative, a WHERE pattern or `EXISTS { }` a `cypher_exists` rule over the nodes it shares
+  per alternative, its head every node of the match beside what RETURN reads, so `count(*)` and
+  `collect` count bindings (#439, found by #413's Neo4j differential), a WHERE pattern or `EXISTS { }` a `cypher_exists` rule over the nodes it shares
   (each a stand-in, `nodeVar.of`, so reading one's column inside reads it there), `COUNT { }` a
   body aggregate (so a node with no match counts 0), an `OPTIONAL MATCH` an `optional { }` holding
   its nodes' label atoms, relationships and WHERE (`optPart`, `into`, `closeOptionals`, #282), a
