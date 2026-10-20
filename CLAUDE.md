@@ -1047,7 +1047,10 @@ GOARCH=wasm go test ./ns` (#417 ran `ns` that way).
   lists every value, so it ranks after a relation the engine derives or holds (`readsWhole`, #293:
   Declaire's `loc.home` listed 136,181 homes ahead of `http.pattern`'s 100), and still ahead of one the
   Source looks up or the goal may stream, whose whole read goes to the store (the prefetch tests'
-  `step(?h, ?x), attr(?x, ?v)`). A variable only its all-free mode would take counts as unbound
+  `step(?h, ?x), attr(?x, ?v)`). Once something is bound, a generator sharing no variable with it
+  waits while a literal that does could run (`joinedLater`, #402: Declaire's x05 ran
+  `loc.home(?f, "oneauth")` once per `loc.home(?c, "goapplib")` before `calls(?c, ?f)`); with nothing
+  bound, constants still pick the first. A variable only its all-free mode would take counts as unbound
   (`generatorBound`, #304: agni's `net.reaches(?n, ?rn, ?h)` with only `?rn` bound walked the board
   once per TVS pin); a constant still counts, since it binds the call once. A generator also waits in `deferComparisons`, as an expression does,
   for a relation still to run that binds a variable it reads where its `Types` say number
@@ -1302,4 +1305,10 @@ rewrite to blame. Run the whole `bench/external` before and after a planner or p
 the question it targets: #297's first cut sped nothing up and tripled x04's fetched rows, which only
 the counts showed. Read `fetched`, `work` and `pushes` rather than times while anything else runs
 (a background selfcheck took v0.1.56's x04 from 14.6s to 39s); they are exact. A question failing on
-both engines and on older tags can still be jaala's: x06b was #295's deadlock, fixed by v0.1.56.
+both engines and on older tags can still be jaala's: x06b was #295's deadlock, fixed by v0.1.56. A
+before/after needs no patched copy when Explain isn't wanted: build `./cmd/declaire` from Declaire's
+checkout twice, with `GOWORK` naming a scratch `go.work` that `use`s Declaire and a jaala checkout
+plus its four `frontends/` modules (`main`'s, then the branch's worktree). Its bench cache
+(`~/Library/Caches/declaire/bench`) is warm, and `-repos` narrows a run. bench/external's programs
+aren't always the form agents write (x05's isn't, #402), so measure that form as a scratch question
+beside a copy of `workspace.txtpb`.
