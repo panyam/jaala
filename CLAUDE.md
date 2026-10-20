@@ -48,8 +48,10 @@ Its `scan` job runs `make lint seccheck secrets` (staticcheck, gosec, gitleaks o
 after agni's), over the root and every module in `SUB_MODS_TO_TAG` through `scripts/scan.sh`, each
 tool pinned in the Makefile and run by `go run`. A gosec finding is fixed or annotated `// #nosec
 G<n> -- <why>` on its line (the corpus's seeded `math/rand` is, in `corpus.stream`), and a frozen file
-takes `//lint:ignore` rather than an edit. gosec runs under each module's own `go` directive: under an
-older Go it loaded nothing in `frontends/mcp` (1.26.9) and still said 0 issues. `make vulncheck` runs
+takes `//lint:ignore` rather than an edit. Every tool runs under each module's own `go` directive (setup-go
+sets `GOTOOLCHAIN=local` from v6, and staticcheck then refused `frontends/mcp`'s 1.26.9); under an
+older Go gosec loaded nothing there and still said 0 issues. A module whose run failed fetching from
+the proxy is retried once. `make vulncheck` runs
 weekly and on each tag (`vulncheck.yml`, which files a P1 issue on failure), not per PR; `make audit`
 runs all four. `SECURITY.md` is the reporting policy:
 
