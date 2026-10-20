@@ -1,0 +1,14 @@
+selfcheck: pass
+ran: 20261020T185217Z, 20m56s on Darwin arm64, go1.27.2
+seeds: 5000, fuzz: 30s, cypher fuzz: 2m, stores: neo4j,memgraph
+log: /Users/sri/.cache/jaala/selfcheck/d15c542-20261020T185217Z.log
+== generated programs: 5000 seeds
+== work against baselines
+== fuzzed query text: 30s per target, the Cypher compiler 2m
+== Soufflé differential: 5000 seeds
+== graph servers: stores/bolt over neo4j,memgraph, 1000 seeds
+== neo4j from the shared pair at bolt://127.0.0.1:17687
+== memgraph from the shared pair at bolt://127.0.0.1:17688
+== Cypher against Neo4j: 1000 seeds
+== neo4j started in jaala-bolt-neo4j-13803 at bolt://127.0.0.1:60126
+== llama.cpp keeps a model to nl's grammar
