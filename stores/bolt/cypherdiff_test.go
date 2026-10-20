@@ -469,6 +469,7 @@ func TestARelationshipVariableAgreesWithNeo4j(t *testing.T) {
 		"MATCH (a)-[r]->(b) RETURN type(r) AS c0, count(r) AS c1",
 		"MATCH (a)-[r]-(b) WHERE startNode(r) = a RETURN a.name AS c0, b.name AS c1, type(r) AS c2",
 		"MATCH (a)<-[r]-(b) WHERE endNode(r) = a RETURN a.name AS c0, count(*) AS c1",
+		"MATCH (a)-[r:CALLS]->(b)-[:IMPORTS*1..2]->(c) RETURN type(r) AS c0, c.name AS c1",
 	}
 	for seed := int64(1); seed <= 5; seed++ {
 		g, src := diffGraph(seed)
