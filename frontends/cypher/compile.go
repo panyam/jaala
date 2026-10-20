@@ -582,6 +582,7 @@ type relVar struct {
 	name           string
 	pos            Pos
 	jv             string
+	opt            bool // an OPTIONAL MATCH binds it, so it may be null (#400)
 	es             []Edge
 	typ            frag
 	start, end     *nodeVar
@@ -624,6 +625,9 @@ func (c *compiler) declareRel(r relPat) *Error {
 // fact's id alone.
 func (c *compiler) relRef(r varRef, fn string) (*relVar, *Error) {
 	if rv := c.rels[r.name]; rv != nil {
+		if rv.opt {
+			return nil, gapOptional.at(r.pos, "%s(%s), a relationship an OPTIONAL MATCH binds, which may be null", fn, r.name)
+		}
 		return rv, nil
 	}
 	if c.values[r.name] != "" {
@@ -634,6 +638,9 @@ func (c *compiler) relRef(r varRef, fn string) (*relVar, *Error) {
 
 // relFact is r's fact as a value, refused for a derived type, whose relationships have none.
 func (c *compiler) relFact(rv *relVar, at Pos, what string) (frag, *Error) {
+	if rv.opt {
+		return nil, gapOptional.at(at, "%s reads %s, a relationship an OPTIONAL MATCH binds, which may be null", what, rv.name)
+	}
 	if rv.jv == "" {
 		var types []string
 		for _, e := range rv.es {
@@ -1109,6 +1116,34 @@ func (c *compiler) relProp(rv *relVar, p propRef) (frag, *Error) {
 	if jv, ok := m[k]; ok {
 		return frag{"?" + jv}, nil
 	}
+	alts, err := c.relPropAlts(rv, p)
+	if err != nil {
+		return nil, err
+	}
+	jv := c.fresh(rv.jv + "_" + p.key)
+	c.name(jv, rv.name+"."+p.key)
+	m[k] = jv
+	if len(alts) == 1 {
+		f := renameVars(alts[0], map[string]string{"?r": "?" + rv.jv, "?v": "?" + jv})
+		*c.scope = append(*c.scope, f)
+		return frag{"?" + jv}, nil
+	}
+	*c.scope = append(*c.scope, frag{c.relPropHelper(alts) + "(?" + rv.jv + ", ?" + jv + ")"})
+	return frag{"?" + jv}, nil
+}
+
+// relPropHelper is a helper relation of (fact, value) with a rule per alternative.
+func (c *compiler) relPropHelper(alts []frag) string {
+	name := c.helper("rprop")
+	for _, a := range alts {
+		c.addRule(rule{head: frag{name + "(?r, ?v)"}, body: []frag{a}})
+	}
+	return name
+}
+
+// relPropAlts are the atoms holding r's property key, over ?r, r's fact, and ?v, its value: a column
+// of each type that has it, then the Props relation keyed by the fact for the types that don't.
+func (c *compiler) relPropAlts(rv *relVar, p propRef) ([]frag, *Error) {
 	var alts []frag
 	for _, e := range rv.es {
 		i, ok := e.Props[p.key]
@@ -1162,20 +1197,7 @@ func (c *compiler) relProp(rv *relVar, p propRef) (frag, *Error) {
 		}
 		return nil, errAt(p.pos, "no property %s on %s:%s%s", p.key, rv.name, strings.Join(types, "|"), oneOf("properties", p.key, known))
 	}
-	jv := c.fresh(rv.jv + "_" + p.key)
-	c.name(jv, rv.name+"."+p.key)
-	m[k] = jv
-	if len(alts) == 1 {
-		f := renameVars(alts[0], map[string]string{"?r": "?" + rv.jv, "?v": "?" + jv})
-		*c.scope = append(*c.scope, f)
-		return frag{"?" + jv}, nil
-	}
-	name := c.helper("rprop")
-	for _, a := range alts {
-		c.addRule(rule{head: frag{name + "(?r, ?v)"}, body: []frag{a}})
-	}
-	*c.scope = append(*c.scope, frag{name + "(?" + rv.jv + ", ?" + jv + ")"})
-	return frag{"?" + jv}, nil
+	return alts, nil
 }
 
 // renameVars is f with each string piece's variables in to renamed, whole names only.
@@ -1558,6 +1580,22 @@ func (c *compiler) condition(e expr, neg bool) (frag, *Error) {
 		r, ok := e.e.(propRef)
 		if !ok {
 			return nil, errAt(e.pos, "IS NULL tests a property or a variable")
+		}
+		if rv := c.rels[r.v]; rv != nil {
+			// a relationship's property is null where no alternative holds it for its fact (#441)
+			f, err := c.relFact(rv, r.pos, r.v+"."+r.key)
+			if err != nil {
+				return nil, err
+			}
+			alts, err := c.relPropAlts(rv, r)
+			if err != nil {
+				return nil, err
+			}
+			call := frag{c.relPropHelper(alts) + "(", f[0], ", _)"}
+			if null {
+				return append(frag{"not "}, call...), nil
+			}
+			return call, nil
 		}
 		n, err := c.nodeRef(varRef{pos: r.pos, name: r.v})
 		if err != nil {

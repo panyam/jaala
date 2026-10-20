@@ -247,6 +247,8 @@ func TestARelationshipVariableIsItsFact(t *testing.T) {
 		{`MATCH ()-[r:CALLS]->() WHERE r.site = 'a.go:3' RETURN r`, "[[c1]]"},
 		{`MATCH ()-[r:IMPORTS]->() RETURN r.line AS l, r`, "[[7 i1]]"},
 		{`MATCH (a)-[r]->(b) WHERE type(r) = 'IMPORTS' RETURN a.name AS n`, "[[a.go]]"},
+		{`MATCH ()-[r:CALLS]->() WHERE r.site IS NULL RETURN r ORDER BY r`, "[[c2] [c3]]"},
+		{`MATCH ()-[r:CALLS]->() WHERE r.site IS NOT NULL RETURN r`, "[[c1]]"},
 	} {
 		p, err := cypher.Compile(b.Vocabulary(), g, c.query)
 		if err != nil {
@@ -286,6 +288,23 @@ func TestADerivedTypesRelationshipHasNoId(t *testing.T) {
 		rows, err := rowsOf(t, p, b)
 		if err != nil || fmt.Sprint(rows) != c.want {
 			t.Errorf("%s = %v, %v; want %s\n%s", c.query, rows, err, c.want, p.Text)
+		}
+	}
+}
+
+// A relationship an OPTIONAL MATCH binds may be null, and its fact binds only inside the braces, so
+// reading it is refused naming #400 rather than answering f:lex a type it has no relationship of.
+func TestAnOptionalRelationshipVariableIsRefusedWhenRead(t *testing.T) {
+	b, g := calledBase(t)
+	for _, q := range []string{
+		`MATCH (a:Function) OPTIONAL MATCH (a)-[r:CALLS]->(b) RETURN a, r`,
+		`MATCH (a:Function) OPTIONAL MATCH (a)-[r:CALLS]->(b) RETURN a, type(r)`,
+		`MATCH (a:Function) OPTIONAL MATCH (a)-[r:CALLS]->(b) RETURN a, r.site`,
+	} {
+		_, err := cypher.Compile(b.Vocabulary(), g, q)
+		var ce *cypher.Error
+		if !asError(err, &ce) || ce.Gap != 400 {
+			t.Errorf("%s: %v, want a refusal naming #400", q, err)
 		}
 	}
 }

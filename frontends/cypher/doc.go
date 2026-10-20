@@ -64,7 +64,8 @@
 //
 // A relationship variable, [r:T], binds the edge's fact (#441): RETURN r answers its id, type(r) its
 // type, startNode(r) and endNode(r) its ends, and r.prop a column of its type or Props keyed by its
-// id. A type the vocabulary derives has no facts, so its id and properties are refused.
+// id, r.prop IS NULL testing that none does. A type the vocabulary derives has no facts, so its id and
+// properties are refused, and so is reading one an OPTIONAL MATCH binds, which may be null (#400).
 //
 // The rest it refuses with an *Error naming the issue that would let it: a relationship variable in
 // a subquery, on a path variable's relationship, or read with type, startNode, endNode or a property

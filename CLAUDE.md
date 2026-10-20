@@ -507,7 +507,9 @@ GOARCH=wasm go test ./ns` (#417 ran `ns` that way).
   `lookup`/`prefetch` ask the store `edge`'s own call (`lookedUpAtom`), so the cache keys are
   `edge`'s. It is never pushed, walked, summarized or streamed (`isFact`), and `withoutOrphans` and
   explain's naming must not take its NUL for a rewrite's relation (the corpus found the first under
-  Witnesses). A leaf shows it as `edge` with `Witness.Fact`. `Atom.Fact` is set only by the parser:
+  Witnesses). A leaf shows it as `edge` with `Witness.Fact`. A bound fact anchors a negation
+  (`positiveVars` reads `Atom.Fact`, #441: the written-program checks run before `lowerFacts` makes
+  it an argument). `Atom.Fact` is set only by the parser:
   `bindGoal`'s and `Link`'s atom copies must keep it, or `as` vanishes silently. The corpus binds an
   edge's fact now and then from a stream of its own (`generator.facts`, `bound fact`), every third
   generated edge left without an id, and Soufflé reads `edge_fact`. nl's grammar writes `as ?v`

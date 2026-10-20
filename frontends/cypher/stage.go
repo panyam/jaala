@@ -372,6 +372,9 @@ func (c *compiler) compileStage(in *stageIn, s stage, where expr) (projected, *E
 				if err := c.declareRel(r); err != nil {
 					return projected{}, err
 				}
+				if rv := c.rels[r.v]; rv != nil && part != nil {
+					rv.opt, rv.jv = true, "" // its fact would bind only inside the braces
+				}
 				// A relationship binds its ends, but one inside an OPTIONAL MATCH binds only the ends that
 				// match declared: a node an earlier MATCH declared still needs its own atom outside
 				// the braces (FuzzCompile found MATCH (a) OPTIONAL MATCH ()--(a) with none).
