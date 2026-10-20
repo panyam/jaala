@@ -247,10 +247,6 @@ var knownCypherDisagreements = []struct {
 	repro string
 	seed  int64 // the graph the repro disagrees over
 }{
-	{438, "a closure with neither end bound over a derived step", regexp.MustCompile(`unknown relation "\\x00w:cypher_step`),
-		"MATCH (a)-[:CALLS*1..3]->(b) RETURN b AS c0", 1},
-	{439, "an OR's rule drops the match's other variables, so an aggregate loses bindings", regexp.MustCompile(`WHERE .* OR .*(count|collect|sum|avg)\(`),
-		"MATCH (a)-[:IMPORTS]->(b)-[:IMPORTS]->(c) WHERE c.name STARTS WITH 'name' OR a.size > 0 RETURN a.name AS c0, count(*) AS c1", 96},
 	{0, "min and max reduce numbers only (doc.go)", regexp.MustCompile(`(min|max)\(\w+\.name\)`),
 		"MATCH (a) RETURN min(a.name) AS c0", 1},
 }

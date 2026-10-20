@@ -621,25 +621,31 @@ func (b *Base) stepArity(step string) int {
 }
 
 // closureStarts is every value a fact of step leads from, and with ends every value one leads to too,
-// once each, in the order the facts come.
+// once each, in the order the facts come. It reads through stepReads, so a step walkSteps walks
+// through its rules is read through them too: the renamed step itself holds nothing (#438).
 func (b *Base) closureStarts(step string, ends bool) ([]ns.Value, error) {
 	var out []ns.Value
 	seen := map[string]bool{}
-	err := b.extendAtom(&Atom{Relation: step, Args: stepArgs(b.stepArity(step), Term{Var: closureFrom}, Term{Var: closureVar})}, newBinding(), func(sb *binding) error {
-		vars := []Var{closureFrom}
-		if ends {
-			vars = append(vars, closureVar)
-		}
-		for _, v := range vars {
-			val := sb.value(v)
-			if k := valueKey(val); !seen[k] {
-				seen[k] = true
-				out = append(out, val)
+	for _, a := range b.stepReads(step, Term{Var: closureFrom}, true) {
+		err := b.extendAtom(&a, newBinding(), func(sb *binding) error {
+			vars := []Var{closureFrom}
+			if ends {
+				vars = append(vars, closureVar)
 			}
+			for _, v := range vars {
+				val := sb.value(v)
+				if k := valueKey(val); !seen[k] {
+					seen[k] = true
+					out = append(out, val)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return out, err
 		}
-		return nil
-	})
-	return out, err
+	}
+	return out, nil
 }
 
 // errOnStep stops onStep's read at the first fact.

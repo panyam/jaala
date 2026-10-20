@@ -318,6 +318,11 @@ type Generator struct {
 	// own; listRules are those rules, which program adds.
 	lists     *rand.Rand
 	listRules []genRule
+	// steps makes a closure or paths call walk a one-atom rule over its relation now and then rather
+	// than the relation (#438), the step walkSteps walks through, from a stream of its own; stepRules
+	// are those rules, which Program adds.
+	steps     *rand.Rand
+	stepRules []genRule
 }
 
 // New draws a program for facts from rnd. Arithmetic depends on the graph's units as drawn,
@@ -342,6 +347,9 @@ func New(rnd *rand.Rand, facts Facts) *Generator {
 	h = fnv.New64a()
 	fmt.Fprint(h, "lists", facts.n, facts.edges, facts.weights)
 	g.lists = rand.New(rand.NewSource(int64(h.Sum64())))
+	h = fnv.New64a()
+	fmt.Fprint(h, "steps", facts.n, facts.edges, facts.weights)
+	g.steps = rand.New(rand.NewSource(int64(h.Sum64())))
 	if facts.units == nil {
 		h := fnv.New64a()
 		fmt.Fprint(h, "arith", facts.n, facts.edges, facts.weights)
@@ -657,8 +665,22 @@ func (g *Generator) closure(b *genBody, r genRel) {
 		hops = fmt.Sprintf("?h%d", g.nclosures)
 		b.bound[genNum] = append(b.bound[genNum], hops)
 	}
-	l.rel, l.args = ClosureName, []string{strconv.Quote(r.name), l.args[0], l.args[1], strconv.Itoa(lo), strconv.Itoa(hi), hops}
+	l.rel, l.args = ClosureName, []string{strconv.Quote(g.step(r)), l.args[0], l.args[1], strconv.Itoa(lo), strconv.Itoa(hi), hops}
 	g.shapes["closure"] = true
+}
+
+// step is the relation a walk over r steps through: r, or now and then a rule renaming it, which the
+// planned evaluator walks through rather than deriving (walkSteps), so a walk from no bound end reads
+// its starts through the rule too (#438).
+func (g *Generator) step(r genRel) string {
+	if g.steps == nil || g.steps.Float64() >= 0.4 {
+		return r.name
+	}
+	name := fmt.Sprintf("st%d", len(g.stepRules)+1)
+	g.stepRules = append(g.stepRules, genRule{head: name, args: []string{"?sa", "?sb"},
+		body: []genLit{{rel: r.name, args: []string{"?sa", "?sb"}}}})
+	g.shapes["derived step"] = true
+	return name
 }
 
 // paths now and then makes the literal of two nodes just drawn a paths call over its relation (#280):
@@ -686,7 +708,7 @@ func (g *Generator) paths(b *genBody, r genRel) {
 			b.bound[genNum] = append(b.bound[genNum], n)
 		}
 	}
-	l.rel, l.args = PathsName, []string{strconv.Quote(r.name), l.args[0], l.args[1], strconv.Quote(mode), strconv.Itoa(lo), strconv.Itoa(hi), path}
+	l.rel, l.args = PathsName, []string{strconv.Quote(g.step(r)), l.args[0], l.args[1], strconv.Quote(mode), strconv.Itoa(lo), strconv.Itoa(hi), path}
 	if length != nil {
 		b.lits = append(b.lits, *length)
 	}
@@ -836,6 +858,7 @@ func (g *Generator) aggregate(b *genBody, list bool) string {
 // Program draws the program: its rules, layer by layer, then the goal.
 func (g *Generator) Program() Program {
 	g.shapes = map[string]bool{}
+	g.stepRules = nil
 	layer, prevAgg, n := 0, false, 1+g.pick(4)
 	for i := 0; i < n; i++ {
 		agg := g.chance(0.2)
@@ -879,6 +902,7 @@ func (g *Generator) Program() Program {
 	g.listRules = nil
 	p.goal = g.goal()
 	p.rules = append(p.rules, g.listRules...)
+	p.rules = append(p.rules, g.stepRules...)
 	for s := range g.shapes {
 		p.shapes = append(p.shapes, s)
 	}

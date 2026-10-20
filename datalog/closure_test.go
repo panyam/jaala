@@ -299,3 +299,29 @@ func TestClosureRunsFromItsBoundEnd(t *testing.T) {
 		t.Errorf("answers %s", col(rows, "t"))
 	}
 }
+
+// A closure or paths call with neither end bound starts from every value its step leads from, read
+// through the step's walked rules when walkSteps walks them (#438: the planned SemiNaive read the
+// renamed step itself and erred unknown relation "\x00w:s"; Cypher writes this for any variable-length
+// match from an unlabelled node). control: with ?a bound first, all three answered before.
+func TestAnUnboundClosureOverAWalkedStepStartsFromItsRules(t *testing.T) {
+	src := ns.NewMemSource().Declare("edge", "from", "kind", "to").Declare("node", "id")
+	for _, e := range [][3]string{{"a", "calls", "b"}, {"b", "calls", "c"}, {"c", "calls", "d"}, {"a", "imports", "d"}} {
+		src.Add("edge", ns.Tuple{Vals: []ns.Value{ns.S(e[0]), ns.S(e[1]), ns.S(e[2])}})
+	}
+	for _, n := range []string{"a", "b", "c", "d"} {
+		src.Add("node", ns.Tuple{Vals: []ns.Value{ns.S(n)}})
+	}
+	v := std(src)
+	const step = `s(?x, ?y) :- edge(?x, "calls", ?y); `
+	for _, c := range []struct{ goal, col, want string }{
+		{`graph.closure("s", ?a, ?b, 1, 3, _) => ?a, ?b`, "b", "b,c,c,d,d,d"},
+		{`graph.paths("s", ?a, ?b, "trail", 1, 3, ?p) => ?a, ?b, ?p`, "b", "b,c,c,d,d,d"},
+		{`node(?a), graph.closure("s", ?a, ?b, 1, 3, _) => ?a, ?b`, "b", "b,c,c,d,d,d"},
+	} {
+		rows, err := both(mustParse(t, step+c.goal), baseFor(v))
+		if err != nil || col(rows, c.col) != c.want || col(rows, "a") != "a,a,a,b,b,c" {
+			t.Errorf("%s = %v from %v, %v; want %s from a,a,a,b,b,c", c.goal, col(rows, c.col), col(rows, "a"), err, c.want)
+		}
+	}
+}

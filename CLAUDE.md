@@ -242,7 +242,8 @@ GOARCH=wasm go test ./ns` (#417 ran `ns` that way).
   compile). It clears the whole server, since a label MATCH sees every namespace, so it runs only with
   `JAALA_BOLT_EXCLUSIVE` (CI's job, 100 seeds; selfcheck's own step, `EXCLUSIVE=1`, 1000). A shrink
   drops whole nodes or edges, never one property, or it recreates the Props-as-match difference.
-  `knownCypherDisagreements` holds the open ones with a repro and seed (#438, #439, min/max over text).
+  `knownCypherDisagreements` holds the open ones with a repro and seed (#438, min/max over text);
+  #439's entry went when #440 fixed it, which `TestKnownCypherDisagreementsStillDisagree` asked for.
 - **`frontends/cypher` compiles Cypher to jaala text over a host's `Graph`** (#352, mission #356):
   `Node` and `Edge` name the relation holding a label or a type, its key or endpoints, `Fixed`
   constants (Declaire's `node(id, "Function")`) and property columns, `Props` a key-value
@@ -536,7 +537,9 @@ GOARCH=wasm go test ./ns` (#417 ran `ns` that way).
   so the prefetch's keys are the walk's. `walk` files a value only below `MaxDepth`, and a Federation
   routes a crossing value with its steps left. The planner doesn't run an all-free walk over a looked-up
   step first (`walksStore`): that read the store whole ahead of the literal binding its start.
-  The corpus draws closures from a stream of its own (`generator.closures`),
+  The corpus draws closures from a stream of its own (`generator.closures`), and now and then walks a
+  one-atom rule over the relation instead (`generator.steps`, shape "derived step", #438: an unbound
+  walk's starts read the renamed step `\x00w:` itself, which only `stepReads` serves),
   Soufflé reads them as a depth-counting walk and a `min` (`souffleClosures`), and `agreeAcross`
   skips them. `stdlib.Hops` is the same walk over a host's step function, `?within` an input.
 - **`graph.paths("rel", ?from, ?to, mode, min, max, ?path)` is the engine's too** (`paths.go`, #280),
