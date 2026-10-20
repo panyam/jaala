@@ -118,6 +118,19 @@ The pack's part goes after the card and the instructions, `About` and the exampl
 {{ includeFileText "examples/guide/pack_test.go" }}
 ```
 
+## Extracting facts from text
+
+The same loop runs the other way: `nl.Extract` turns text (a document, a chat log, a ticket thread) into the facts it states, as an `ns.Changes` the host can apply ([#414](https://github.com/panyam/jaala/issues/414)). The prefix lists the vocabulary's base relations, each with its labels, a closed domain's values and its doc, and the model replies with one fact per line:
+
+```
++ owner("app", "bob") from "Bob owns app now"
+- imports("app", "api") from "app no longer imports api"
+```
+
+`+` is a fact the text states and `-` one it says no longer holds. Each fact is read as a goal of one atom and checked by `datalog.Validate`, so its values are held to the argument's type, closed domain and units exactly as a query's constants are, and a refusal goes back with the line, a caret under the value and the engine's fix (`did you mean "Apache-2.0"?`). The words after `from` must appear in the text as written (a backslash keeps the next character, as in a value), and an added fact cites them as `text:<start>-<end>`, byte offsets into the text, so an answer over the facts explains itself back to the words. A derived relation's facts follow from its rules, so a line adding one is refused. `nl.ExtractGrammar` is the reply's GBNF, the base relations at their arities with a closed domain's values spelled out, which `Extract` sends as `Prompt.Grammar`.
+
+The engine never decides which facts are one (#183), so a pack says it: `Pack.Keys` maps a relation to the argument positions that identify its fact. Under `{"owner": {0}}`, a line adding `owner("app", "bob")` removes the `owner("app", "alice")` that `ExtractOptions.Base` holds, or that an earlier line added, in the same change set. A relation without keys only gains facts. `Pack.ExtractExamples` are texts with the lines they should give, which follow the pack's `About` and `Card`; `Pack.Validate` reads each one, and checks every key names a base relation and a position within its arity, before any model is asked. `MaxTries`, `Fallback`, a repeated draft and `Budget` work as they do for `Translate`, and the `Trace` records each try with its kind, `span` for words the text doesn't hold and `derived` for a derived relation among them.
+
 ## Serving agents
 
 The same pack makes an MCP server, so an agent asks over the vocabulary with its own tools: [Serving agents]({{.Site.PathPrefix}}/guide/mcp-server/) covers `frontends/mcp`.

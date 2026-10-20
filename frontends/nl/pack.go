@@ -42,6 +42,15 @@ type Pack struct {
 	// the hint to an empty draft's feedback, and frontends/mcp to an empty answer of query, cypher and
 	// explain. "" adds nothing. It runs once per empty answer, so it should cost a few lookups.
 	Hint func(ctx context.Context, why *datalog.EmptyReport) string
+	// Keys, for Extract, are the argument positions that identify a relation's fact (#414): an added
+	// fact holding the same values there as one the Base or an earlier line holds, with others
+	// elsewhere, replaces it, as owner("app", "bob") replaces owner("app", "alice") under {0}. A
+	// relation without keys only ever gains facts. The engine never decides which facts are one
+	// (#183), so this is the host's to say.
+	Keys map[string][]int
+	// ExtractExamples are texts with the lines Extract should write for them, which follow the pack's
+	// About and Card in Extract's prefix. Translate doesn't read them.
+	ExtractExamples []ExtractExample
 }
 
 // An Example is a question with the program that answers it, which the model reads before it writes
@@ -51,8 +60,9 @@ type Example struct {
 }
 
 // Validate checks that every example parses and checks against v, so a pack can't teach a model a
-// relation v doesn't have. The error names the first example that doesn't. Translate calls it before
-// asking any model.
+// relation v doesn't have, that every key names a base relation of v and positions within its
+// arity, and that every extraction example's lines are facts its text states. The error names the
+// first that doesn't. Translate and Extract call it before asking any model.
 func (p *Pack) Validate(v *ns.Vocabulary) error {
 	for i, e := range p.Examples {
 		q, err := datalog.Parse(e.Program)
@@ -61,6 +71,27 @@ func (p *Pack) Validate(v *ns.Vocabulary) error {
 		}
 		if err != nil {
 			return fmt.Errorf("nl: the pack's example %d (%q): %w", i+1, e.Question, err)
+		}
+	}
+	rels := make([]string, 0, len(p.Keys))
+	for rel := range p.Keys {
+		rels = append(rels, rel)
+	}
+	sort.Strings(rels)
+	for _, rel := range rels {
+		s, ok := v.Schema(rel)
+		if !ok {
+			return fmt.Errorf("nl: the pack's keys name %s, which isn't a base relation", rel)
+		}
+		for _, k := range p.Keys[rel] {
+			if k < 0 || k >= s.Arity {
+				return fmt.Errorf("nl: the pack's keys for %s name argument %d, and it takes %d", rel, k, s.Arity)
+			}
+		}
+	}
+	for i, e := range p.ExtractExamples {
+		if _, err := readDraft(context.Background(), e.Text, strings.TrimSpace(e.Lines), v, p, nil, nil); err != nil {
+			return fmt.Errorf("nl: the pack's extraction example %d: %w", i+1, err)
 		}
 	}
 	return nil
