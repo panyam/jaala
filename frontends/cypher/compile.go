@@ -577,7 +577,9 @@ func (c *compiler) declareLabels(h hasLabel) *Error {
 // A relVar is a relationship variable (#441). jv is the variable its atom binds the edge's fact to
 // (edge(?a, ?b) as ?r), "" when a type it reads is derived, whose relationships are no facts. Its
 // literal sets typ, its type, and its ends: start and end nodes when they are the pattern's, or
-// variables a helper binds when it reads several types or either direction.
+// variables a helper binds when it reads several types or either direction. One whose fact is bound
+// elsewhere (byFact: a WITH carried it, it is a path's one relationship, or a subquery's caller
+// passes it, #445) has no literal of its own, and reread reads its type and ends back from the fact.
 type relVar struct {
 	name           string
 	pos            Pos
@@ -588,6 +590,8 @@ type relVar struct {
 	start, end     *nodeVar
 	startJV, endJV string
 	written        bool
+	byFact         bool
+	used           bool // read inside a subquery, so its fact goes in the subquery's head
 }
 
 func (c *compiler) declareRel(r relPat) *Error {
@@ -621,23 +625,60 @@ func (c *compiler) declareRel(r relPat) *Error {
 	return nil
 }
 
-// relRef is the relationship variable r names, refusing one a WITH carried, which arrives as its
-// fact's id alone.
+// relRef is the relationship variable r names, its type and ends read back from its fact when
+// nothing matched it here.
 func (c *compiler) relRef(r varRef, fn string) (*relVar, *Error) {
 	if rv := c.rels[r.name]; rv != nil {
 		if rv.opt {
 			return nil, gapOptional.at(r.pos, "%s(%s), a relationship an OPTIONAL MATCH binds, which may be null", fn, r.name)
 		}
+		rv.used = true
+		if rv.byFact && !rv.written {
+			c.reread(rv)
+		}
 		return rv, nil
-	}
-	if c.values[r.name] != "" {
-		return nil, gapRelVars.at(r.pos, "%s(%s) after a WITH carried %s, which hands on its id alone", fn, r.name, r.name)
 	}
 	return nil, errAt(r.pos, "%s() reads a relationship variable a MATCH binds, and %s isn't one", fn, r.name)
 }
 
+// reread reads a relationship whose fact is bound elsewhere back from the fact (#445): its type and
+// its ends, the fact's from and to, as relVarLiteral binds them where a relationship is matched. It
+// joins the type's relation on its fact, which the engine indexes.
+func (c *compiler) reread(rv *relVar) {
+	rv.written = true
+	sv, ev := c.fresh(rv.jv+"_start"), c.fresh(rv.jv+"_end")
+	rv.startJV, rv.endJV = sv, ev
+	if len(rv.es) == 1 {
+		rv.typ = frag{quote(rv.es[0].Type)}
+		c.shared = append(c.shared, append(edgeAtom(rv.es[0], factArgs(c.v, rv.es[0]), "?"+sv, "?"+ev), " as ?"+rv.jv))
+		return
+	}
+	name := c.helper("rel")
+	for _, e := range rv.es {
+		c.addRule(rule{head: frag{name + "(?r, " + quote(e.Type) + ", ?x, ?y)"}, body: []frag{append(edgeAtom(e, factArgs(c.v, e), "?x", "?y"), " as ?r")}})
+	}
+	tv := c.fresh(rv.jv + "_type")
+	rv.typ = frag{"?" + tv}
+	c.shared = append(c.shared, frag{name + "(?" + rv.jv + ", ?" + tv + ", ?" + sv + ", ?" + ev + ")"})
+}
+
+// factArgs are an atom's arguments over e's relation matching any of its facts: the type's Fixed
+// constants, and _ elsewhere.
+func factArgs(v *ns.Vocabulary, e Edge) []any {
+	ar, _ := arity(v, e.Relation)
+	args := make([]any, ar)
+	for i := range args {
+		args[i] = "_"
+	}
+	for i, k := range e.Fixed {
+		args[i] = quote(k)
+	}
+	return args
+}
+
 // relFact is r's fact as a value, refused for a derived type, whose relationships have none.
 func (c *compiler) relFact(rv *relVar, at Pos, what string) (frag, *Error) {
+	rv.used = true
 	if rv.opt {
 		return nil, gapOptional.at(at, "%s reads %s, a relationship an OPTIONAL MATCH binds, which may be null", what, rv.name)
 	}
@@ -864,14 +905,7 @@ func (c *compiler) edges(r relPat) ([]Edge, [][]any, *Error) {
 		if !ok {
 			return nil, nil, errAt(r.pos, "no relationship type %s in this graph%s", ty, oneOf("types", ty, c.g.typeNames()))
 		}
-		ar, _ := arity(c.v, e.Relation)
-		args := make([]any, ar)
-		for i := range args {
-			args[i] = "_"
-		}
-		for i, k := range e.Fixed {
-			args[i] = quote(k)
-		}
+		args := factArgs(c.v, e)
 		held := true
 		for _, p := range r.props {
 			i, ok := e.Props[p.key]
@@ -1033,7 +1067,7 @@ func (c *compiler) relLiteral(r relPat, from, to *nodeVar) (frag, *Error) {
 // ends the pattern's, and otherwise a helper with a rule per type and direction, binding the type and
 // the ends too, since an undirected match's start is whichever end the fact leads from.
 func (c *compiler) relVarLiteral(rv *relVar, r relPat, es []Edge, argss [][]any, from, to *nodeVar) frag {
-	rv.written = true
+	rv.written, rv.used = true, true
 	as := func(f frag) frag {
 		if rv.jv == "" {
 			return f
@@ -1665,7 +1699,7 @@ func (c *compiler) condition(e expr, neg bool) (frag, *Error) {
 // patternTest is a pattern in WHERE, or EXISTS { }: a helper relation over the nodes it shares with
 // the MATCH, a rule for each alternative its WHERE has, called (or negated) on them.
 func (c *compiler) patternTest(pats []pattern, where expr, allowNew, neg bool) (frag, *Error) {
-	bodies, anchors, _, err := c.subBody(pats, where, allowNew)
+	bodies, anchors, _, rels, err := c.subBody(pats, where, allowNew)
 	if err != nil {
 		return nil, err
 	}
@@ -1681,6 +1715,9 @@ func (c *compiler) patternTest(pats []pattern, where expr, allowNew, neg bool) (
 		}
 		head, call = append(head, keyArg{a}), append(call, keyArg{a.of})
 	}
+	for _, rv := range rels {
+		head, call = append(head, ", ?"+rv.jv), append(call, ", ?"+rv.jv)
+	}
 	head = append(head, ")")
 	for _, body := range bodies {
 		c.addRule(rule{head: head, body: body})
@@ -1695,7 +1732,7 @@ func (c *compiler) patternTest(pats []pattern, where expr, allowNew, neg bool) (
 // countSubquery is COUNT { }: a body aggregate counting the pattern's matches from the nodes it shares,
 // so a node it never matches from counts 0.
 func (c *compiler) countSubquery(sq subquery) (frag, *Error) {
-	bodies, anchors, inner, err := c.subBody(sq.patterns, sq.where, true)
+	bodies, anchors, inner, _, err := c.subBody(sq.patterns, sq.where, true)
 	if err != nil {
 		return nil, err
 	}
@@ -1716,11 +1753,25 @@ func (c *compiler) countSubquery(sq subquery) (frag, *Error) {
 
 // subBody compiles a subquery's patterns and WHERE, a body per alternative, with the nodes it shares
 // with the stage (anchors, each a stand-in for the stage's node, so reading one's column reads it
-// here) and those it introduces (inner, only with allowNew).
-func (c *compiler) subBody(pats []pattern, where expr, allowNew bool) (bodies [][]frag, anchors, inner []*nodeVar, err *Error) {
+// here), those it introduces (inner, only with allowNew), and the stage's relationships it reads
+// (rels, #445), each a stand-in over the stage's fact: matched again in a pattern, or read back.
+func (c *compiler) subBody(pats []pattern, where expr, allowNew bool) (bodies [][]frag, anchors, inner []*nodeVar, rels []*relVar, err *Error) {
 	saved, savedShared, savedScope, savedOrder := c.nodes, c.shared, c.scope, c.order
+	savedRels, savedROrder := c.rels, c.rorder
 	c.nodes = map[string]*nodeVar{}
-	defer func() { c.nodes, c.shared, c.scope, c.order = saved, savedShared, savedScope, savedOrder }()
+	c.rels = map[string]*relVar{}
+	defer func() {
+		c.nodes, c.shared, c.scope, c.order = saved, savedShared, savedScope, savedOrder
+		c.rels, c.rorder = savedRels, savedROrder
+	}()
+	var stands []*relVar
+	for _, name := range savedROrder {
+		if outer := savedRels[name]; outer.jv != "" || outer.opt {
+			st := &relVar{name: name, pos: outer.pos, jv: outer.jv, opt: outer.opt, es: outer.es, byFact: true}
+			c.rels[name] = st
+			stands = append(stands, st)
+		}
+	}
 	var body []frag
 	c.shared, c.scope = nil, &body
 	stand := map[*nodeVar]*nodeVar{}
@@ -1730,7 +1781,7 @@ func (c *compiler) subBody(pats []pattern, where expr, allowNew bool) (bodies []
 		for _, np := range p.nodes {
 			if outer, ok := saved[np.v]; ok && np.v != "" {
 				if len(np.props) > 0 {
-					return nil, nil, nil, errAt(np.pos, "write %s's properties in the MATCH, or as a WHERE inside the subquery", np.v)
+					return nil, nil, nil, nil, errAt(np.pos, "write %s's properties in the MATCH, or as a WHERE inside the subquery", np.v)
 				}
 				a := stand[outer]
 				if a == nil {
@@ -1745,7 +1796,7 @@ func (c *compiler) subBody(pats []pattern, where expr, allowNew bool) (bodies []
 				}
 				for _, l := range np.labels {
 					if _, ok := c.g.node(l); !ok {
-						return nil, nil, nil, errAt(np.pos, "no label %s in this graph%s", l, oneOf("labels", l, c.g.labelNames()))
+						return nil, nil, nil, nil, errAt(np.pos, "no label %s in this graph%s", l, oneOf("labels", l, c.g.labelNames()))
 					}
 					body = append(body, frag{nodeAtm{n: a, label: l}})
 				}
@@ -1753,12 +1804,12 @@ func (c *compiler) subBody(pats []pattern, where expr, allowNew bool) (bodies []
 				continue
 			}
 			if np.v != "" && !allowNew && c.nodes[np.v] == nil {
-				return nil, nil, nil, errAt(np.pos, "a pattern in WHERE can't introduce %s: a MATCH has to bind it, or write EXISTS { ... }", np.v)
+				return nil, nil, nil, nil, errAt(np.pos, "a pattern in WHERE can't introduce %s: a MATCH has to bind it, or write EXISTS { ... }", np.v)
 			}
 			known := c.nodes[np.v] != nil && np.v != ""
 			n, err := c.declareNode(np, &conds)
 			if err != nil {
-				return nil, nil, nil, err
+				return nil, nil, nil, nil, err
 			}
 			if !known && !containsNode(inner, n) {
 				inner = append(inner, n)
@@ -1773,26 +1824,35 @@ func (c *compiler) subBody(pats []pattern, where expr, allowNew bool) (bodies []
 			ns = append(ns, n)
 		}
 		for i, r := range p.rels {
-			if r.v != "" {
-				return nil, nil, nil, gapRelVars.at(r.pos, "a relationship variable in a subquery")
+			if st := c.rels[r.v]; st != nil && r.v != "" {
+				if st.written {
+					return nil, nil, nil, nil, errAt(r.pos, "%s is already bound", r.v)
+				}
+			} else if r.v != "" {
+				if !allowNew {
+					return nil, nil, nil, nil, errAt(r.pos, "a pattern in WHERE can't introduce %s: a MATCH has to bind it, or write EXISTS { ... }", r.v)
+				}
+				if err := c.declareRel(r); err != nil {
+					return nil, nil, nil, nil, err
+				}
 			}
 			ns[i].endpoint, ns[i+1].endpoint = true, true
 			f, err := c.relLiteral(r, ns[i], ns[i+1])
 			if err != nil {
-				return nil, nil, nil, err
+				return nil, nil, nil, nil, err
 			}
 			body = append(body, f)
 		}
 	}
 	if len(anchors) == 0 {
-		return nil, nil, nil, errAt(pats[0].pos, "a pattern in WHERE has to share a variable with the MATCH")
+		return nil, nil, nil, nil, errAt(pats[0].pos, "a pattern in WHERE has to share a variable with the MATCH")
 	}
 	// A node of its own that nothing else matches ranges over every node, as in a MATCH.
 	for _, n := range inner {
 		if len(n.labels) == 0 && !n.endpoint {
 			f, err := c.anyNode(n)
 			if err != nil {
-				return nil, nil, nil, err
+				return nil, nil, nil, nil, err
 			}
 			body = append(body, f)
 		}
@@ -1805,7 +1865,7 @@ func (c *compiler) subBody(pats []pattern, where expr, allowNew bool) (bodies []
 			}
 		}
 		if len(body) == 0 {
-			return nil, nil, nil, errAt(pats[0].pos, "this subquery matches nothing of its own: give it a relationship or a label")
+			return nil, nil, nil, nil, errAt(pats[0].pos, "this subquery matches nothing of its own: give it a relationship or a label")
 		}
 	}
 	if where != nil {
@@ -1813,7 +1873,7 @@ func (c *compiler) subBody(pats []pattern, where expr, allowNew bool) (bodies []
 	}
 	ds, err := c.dnf(conds)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	for _, d := range ds {
 		var lits []frag
@@ -1821,13 +1881,18 @@ func (c *compiler) subBody(pats []pattern, where expr, allowNew bool) (bodies []
 		for _, cd := range d {
 			f, err := c.condition(cd.e, cd.neg)
 			if err != nil {
-				return nil, nil, nil, err
+				return nil, nil, nil, nil, err
 			}
 			lits = append(lits, f)
 		}
 		bodies = append(bodies, append(append(append([]frag{}, body...), c.shared...), lits...))
 	}
-	return bodies, anchors, inner, nil
+	for _, st := range stands {
+		if st.used {
+			rels = append(rels, st)
+		}
+	}
+	return bodies, anchors, inner, rels, nil
 }
 
 func hasRels(pats []pattern) bool {

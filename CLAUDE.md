@@ -265,7 +265,11 @@ GOARCH=wasm go test ./ns` (#417 ran `ns` that way).
   its own, and `count(b)` over its node a `sum` of a `?_seen` its braces bind; a relationship variable (#441,
   `relVar`) binds its edge's fact (`as ?r`) unless a type it reads is derived, and an undirected or
   several-type one goes through a `cypher_rel` helper binding its type and ends, a one-type `type(r)`
-  column being bound by `list.member` of a one-value list, since only an atom binds a constant; Cypher's null rules
+  column being bound by `list.member` of a one-value list, since only an atom binds a constant, and one
+  whose fact is bound elsewhere (`byFact`: a WITH carried it, a path's one relationship, read from
+  `path.edges` after the walk, or a subquery's stand-in for the stage's `r`, passed in the
+  `cypher_exists` head) has its type and ends read back by joining the type's relation on the fact
+  (`reread`, #445); Cypher's null rules
   are written into the program: `guards` adds `not absent(...)` to `=` (both sides), `<>` and text
   tests over a `nullable` operand (a label's column, an optional node or its property, a carried
   value, a node a WITH carried from an optional, `nodeVar.absent`), and `IS NULL` reads a variable

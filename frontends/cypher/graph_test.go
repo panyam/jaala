@@ -271,10 +271,15 @@ func TestARelationshipVariableIsItsFact(t *testing.T) {
 // IMPORTS answers RETURN r.
 func TestADerivedTypesRelationshipHasNoId(t *testing.T) {
 	v, b := guide.Deps(t)
-	for _, q := range []string{`MATCH (a)-[r:DEPENDS_ON]->(b) RETURN r`, `MATCH (a)-[r:DEPENDS_ON]->(b) RETURN count(r)`} {
+	for _, q := range []string{`MATCH (a)-[r:DEPENDS_ON]->(b) RETURN r`, `MATCH (a)-[r:DEPENDS_ON]->(b) RETURN count(r)`,
+		`MATCH p = (a)-[r:DEPENDS_ON]->(b) RETURN p`, `MATCH (a)-[r:DEPENDS_ON]->(b) WITH r RETURN type(r)`} {
 		if _, err := cypher.Compile(v, depsGraph, q); err == nil || !strings.Contains(err.Error(), "DEPENDS_ON is derived") {
 			t.Errorf("%s: %v, want a refusal naming DEPENDS_ON as derived", q, err)
 		}
+	}
+	// a path's relationship is refused as the variable written, not as relationships(p), never read
+	if _, err := cypher.Compile(v, depsGraph, `MATCH p = (a)-[r:DEPENDS_ON]->(b) RETURN p`); err == nil || !strings.Contains(err.Error(), "r reads its relationship's id") {
+		t.Errorf("a derived path relationship: %v, want a refusal naming r", err)
 	}
 	for _, c := range []struct{ query, want string }{
 		{`MATCH (a)-[r:DEPENDS_ON]->(b) WHERE a.name = 'app' RETURN DISTINCT type(r) AS t`, "[[DEPENDS_ON]]"},
@@ -305,6 +310,58 @@ func TestAnOptionalRelationshipVariableIsRefusedWhenRead(t *testing.T) {
 		var ce *cypher.Error
 		if !asError(err, &ce) || ce.Gap != 400 {
 			t.Errorf("%s: %v, want a refusal naming #400", q, err)
+		}
+	}
+}
+
+// A relationship variable read where nothing matched it is read back from its fact (#445): after a
+// WITH carried it, as a path's one relationship, and inside EXISTS { } or COUNT { }. control: main
+// calls parse twice, so naming r makes two paths of main's, where count(p) alone counts one route;
+// an outer r reused in EXISTS is that relationship, so it answers c1 and not c2, which a fresh one
+// between the same nodes would; and COUNT counts main's two calls whether r is named or not.
+func TestARelationshipVariableIsReadBackFromItsFact(t *testing.T) {
+	b, g := calledBase(t)
+	for _, c := range []struct{ query, want string }{
+		{`MATCH (f)-[r:CALLS]->(g) WITH r RETURN type(r) AS t, startNode(r) AS s, endNode(r) AS e, r ORDER BY r`,
+			"[[CALLS f:main f:parse c1] [CALLS f:main f:parse c2] [CALLS f:parse f:lex c3]]"},
+		{`MATCH (a)-[r:CALLS|CONTAINS]->(b) WITH r RETURN type(r) AS t, r ORDER BY r`, "[[CALLS c1] [CALLS c2] [CALLS c3] [CONTAINS k1]]"},
+		{`MATCH (a)-[r]-(b) WHERE a.name = 'lex' WITH r RETURN startNode(r) AS s, endNode(r) AS e`, "[[f:parse f:lex]]"},
+		{`MATCH ()-[r:CALLS]->() WITH r RETURN r.site AS s`, "[[a.go:3]]"},
+		{`MATCH ()-[r:IMPORTS]->() WITH r AS x RETURN x.line AS l, type(x) AS t`, "[[7 IMPORTS]]"},
+		{`MATCH (f)-[r:CALLS]->(g) WITH f, r WHERE f.name = 'main' RETURN count(r) AS n`, "[[2]]"},
+		{`MATCH p = (a)-[r:CALLS]->(b) RETURN r, type(r) AS t, length(p) AS n ORDER BY r`, "[[c1 CALLS 1] [c2 CALLS 1] [c3 CALLS 1]]"},
+		{`MATCH p = (a)-[r:CALLS]->(b) WHERE a.name = 'main' RETURN count(p) AS n`, "[[2]]"},
+		{`MATCH p = (a)-[:CALLS]->(b) WHERE a.name = 'main' RETURN count(p) AS n`, "[[1]]"},
+		{`MATCH p = (a)-[r]->(b) WHERE b.name = 'main' RETURN type(r) AS t, startNode(r) AS s`, "[[CONTAINS file:a.go]]"},
+		{`MATCH (f:Function) WHERE EXISTS { (f)-[r:CALLS]->() WHERE r.site = 'a.go:3' } RETURN f`, "[[f:main]]"},
+		{`MATCH (f)-[r:CALLS]->(g) WHERE EXISTS { (f)-[r]->(g) WHERE r.site = 'a.go:3' } RETURN r`, "[[c1]]"},
+		{`MATCH (f)-[r:CALLS]->(g) WHERE NOT EXISTS { (f)-[s:CALLS]->(g) WHERE s.site = 'a.go:3' } RETURN r`, "[[c3]]"},
+		{`MATCH (f)-[r:CALLS|CONTAINS]->(g) WHERE EXISTS { (g)-[:CALLS]->() WHERE type(r) = 'CALLS' } RETURN r ORDER BY r`, "[[c1] [c2]]"},
+		{`MATCH (f)-[r:CALLS|CONTAINS]->(g) WHERE EXISTS { (g)-[:CALLS]->() WHERE type(r) = 'CONTAINS' } RETURN r`, "[[k1]]"},
+		{`MATCH (f)-[r:CALLS]->(g) WHERE EXISTS { (g)-[:CALLS]->() WHERE r.site IS NULL } RETURN r`, "[[c2]]"},
+		{`MATCH (f:Function) RETURN f, COUNT { (f)-[r:CALLS]->() } AS n ORDER BY f`, "[[f:lex 0] [f:main 2] [f:parse 1]]"},
+		{`MATCH (f:Function) RETURN f, COUNT { (f)-[:CALLS]->() } AS n ORDER BY f`, "[[f:lex 0] [f:main 2] [f:parse 1]]"},
+	} {
+		p, err := cypher.Compile(b.Vocabulary(), g, c.query)
+		if err != nil {
+			t.Errorf("%s: %v", c.query, err)
+			continue
+		}
+		rows, err := rowsOf(t, p, b)
+		if err != nil {
+			t.Errorf("%s: %v\n%s", c.query, err, p.Text)
+			continue
+		}
+		if got := fmt.Sprint(rows); got != c.want {
+			t.Errorf("%s = %s, want %s\n%s", c.query, got, c.want, p.Text)
+		}
+	}
+	for _, c := range []struct{ query, want string }{
+		{`MATCH (a)-->(b) WHERE (a)-[s]->(b) RETURN a`, "can't introduce s"},
+		{`MATCH (a)-[r]->(b) WHERE EXISTS { (a)-[r]->(b)-[r]->(c) } RETURN a`, "r is already bound"},
+	} {
+		if _, err := cypher.Compile(b.Vocabulary(), g, c.query); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: %v, want %q", c.query, err, c.want)
 		}
 	}
 }

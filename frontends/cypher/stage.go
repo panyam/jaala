@@ -70,13 +70,15 @@ func (w *world) stage() *compiler {
 		values: map[string]string{}}
 }
 
-// carried is a variable a WITH hands on: a node, with the labels it has, or a value; absent says an
-// OPTIONAL MATCH bound the node, so it may be absent in the next stage too.
+// carried is a variable a WITH hands on: a node, with the labels it has, a relationship, as its fact
+// with the types it may have (#445), or a value; absent says an OPTIONAL MATCH bound the node, so it
+// may be absent in the next stage too.
 type carried struct {
 	name   string
 	node   bool
 	labels []string
 	absent bool
+	rel    []Edge
 }
 
 type stageIn struct {
@@ -225,6 +227,9 @@ func (c *compiler) carry(r returnClause) ([]carried, *Error) {
 			if n, ok := c.nodes[v.name]; ok {
 				cr.node, cr.labels, cr.absent = true, append([]string(nil), n.labels...), n.opt > 0 || n.absent
 			}
+			if rv := c.rels[v.name]; rv != nil && rv.jv != "" && !rv.opt {
+				cr.rel = rv.es
+			}
 		}
 		out = append(out, cr)
 	}
@@ -267,6 +272,12 @@ func (c *compiler) compileStage(in *stageIn, s stage, where expr) (projected, *E
 				c.nodes[it.name] = n
 				c.order = append(c.order, n)
 				atom = append(atom, keyArg{n})
+			} else if it.rel != nil {
+				rv := &relVar{name: it.name, jv: c.fresh(it.name), es: it.rel, byFact: true}
+				c.name(rv.jv, it.name)
+				c.rels[it.name] = rv
+				c.rorder = append(c.rorder, it.name)
+				atom = append(atom, "?"+rv.jv)
 			} else {
 				c.addValue(it.name)
 				atom = append(atom, "?"+c.values[it.name])
@@ -374,6 +385,8 @@ func (c *compiler) compileStage(in *stageIn, s stage, where expr) (projected, *E
 				}
 				if rv := c.rels[r.v]; rv != nil && part != nil {
 					rv.opt, rv.jv = true, "" // its fact would bind only inside the braces
+				} else if rv != nil && r.path != "" {
+					rv.byFact = true
 				}
 				// A relationship binds its ends, but one inside an OPTIONAL MATCH binds only the ends that
 				// match declared: a node an earlier MATCH declared still needs its own atom outside
@@ -427,6 +440,11 @@ func (c *compiler) compileStage(in *stageIn, s stage, where expr) (projected, *E
 			return projected{}, err
 		}
 		c.into(r.opt, at(r.r.pos, f))
+		if rv := c.rels[r.r.v]; rv != nil && rv.byFact && r.r.path != "" {
+			// the path's one relationship, read after the walk binding it, as Naive runs a call where written
+			l := c.fresh(r.r.v + "_rels")
+			c.shared = append(c.shared, frag{pathFuncs["relationships"] + "(?" + c.values[r.r.path] + ", ?" + l + "), list.at(?" + l + ", 0, ?" + rv.jv + ")"})
+		}
 	}
 	c.shared = append(c.shared, calls...)
 
@@ -630,10 +648,23 @@ func (c *compiler) declarePath(pat *pattern) *Error {
 		return gapPaths.at(pat.pathPos, "%s paths as values: write shortestPath or SHORTEST 1", strings.ToUpper(pat.selector))
 	}
 	r := &pat.rels[0]
-	if r.v != "" {
-		return gapRelVars.at(r.pos, "a relationship variable on a path variable's relationship: read relationships(%s)", pat.path)
-	}
 	r.path, r.selector, r.edges = pat.path, pat.selector, c.edgePaths[pat.path]
+	if r.v != "" {
+		// the path's one relationship is the fact its walk names, so the walk keeps each edge's (#445)
+		if r.varLen {
+			return gapPaths.at(r.pos, "a variable bound to a variable-length relationship: read relationships(%s)", pat.path)
+		}
+		es, _, err := c.edges(*r)
+		if err != nil {
+			return err
+		}
+		for _, e := range es {
+			if en, err := c.v.Lookup(e.Relation); err != nil || en.Kind != ns.EntryBase {
+				return errAt(r.pos, "%s reads its relationship's id, and %s is derived, so its relationships have none: read nodes(%s)", r.v, e.Type, pat.path)
+			}
+		}
+		r.edges = true
+	}
 	c.addValue(pat.path)
 	return nil
 }

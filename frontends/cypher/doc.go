@@ -66,10 +66,12 @@
 // type, startNode(r) and endNode(r) its ends, and r.prop a column of its type or Props keyed by its
 // id, r.prop IS NULL testing that none does. A type the vocabulary derives has no facts, so its id and
 // properties are refused, and so is reading one an OPTIONAL MATCH binds, which may be null (#400).
+// Where nothing matched it, it is read back from its fact (#445): after a WITH carried it, as a path
+// variable's one relationship (so the path keeps each edge, and two relationships between one pair
+// of nodes make two paths), and in EXISTS { } or COUNT { }, which may match the MATCH's own r again.
 //
-// The rest it refuses with an *Error naming the issue that would let it: a relationship variable in
-// a subquery, on a path variable's relationship, or read with type, startNode, endNode or a property
-// after a WITH carried it (#445), a path variable over more than one relationship, ALL SHORTEST and SHORTEST k
+// The rest it refuses with an *Error naming the issue that would let it: a relationship variable on
+// a variable-length relationship, a path variable over more than one relationship, ALL SHORTEST and SHORTEST k
 // paths as values, shortestPath as a value outside p = (...), and quantified path patterns (#398), an OPTIONAL MATCH before any MATCH, with an OR in its WHERE or
 // adding a label to an earlier node (#400), maps, comprehensions and lists of more than constants (#405), functions beyond the aggregates
 // above (#284), writes (#287), USE and LOAD CSV (#289), CALL { } subqueries, an ORDER BY, SKIP or
