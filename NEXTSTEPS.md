@@ -16,7 +16,8 @@ Maintained by /checkpoint: one thread per branch, pruned when the branch merges.
   merged.
 - Selfcheck passed on f007094 (#393's three PRs together). A run on #402's branch tree (e1ef44e) was
   still going at checkpoint; `make selfcheck-status` shows whether it recorded a pass.
-- Off-mission: #414 (P2 orphan). Waiting but prioritised: #384, #404, #419.
+- Mission #437 (`mission_text_memory`, not active, from the 2026-10-19 retriage) holds #414 then
+  #415; its exercise becomes runnable with #414's eval. #384, #404 and #419 are `waiting` only now.
 - This run: rewrote the whole file (it mixed two older runs naming #393, #407 and #411 as next, all
   closed). Most remote branches are merged and can be deleted after `gh pr view` says `MERGED`.
 

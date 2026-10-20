@@ -1216,7 +1216,9 @@ bindings dominate) as the measure of what a query holds. Several missions can be
 started 2026-10-19) is worked in its own worktree and isn't `mission:active`: a host answers over a graph
 kept in Neo4j or Memgraph as it would in memory, with the server doing the joins. Its exercise is `make
 exercise-graph-server`; its tickets are #411 (`stores/bolt`), #412 (pushdown as Cypher, profiles), #413
-(checking a Cypher database against jaala), declaire#339 and agni#1073. A new issue gets a
+(checking a Cypher database against jaala), declaire#339 and agni#1073. `mission_text_memory` (#437, filed
+2026-10-19, not active either) is a host's assistant extracting what it was told into versions and
+answering from them: #414 (`nl.Extract`, whose eval makes its exercise runnable), then #415 (LongMemEval). A new issue gets a
 priority and a mission link when filed, or `waiting` with the trigger that would unpark it.
 
 Create the branch before the first commit (`git branch --show-current` says so). #200's work was
