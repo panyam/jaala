@@ -215,6 +215,9 @@ func (g cypherGen) columns(vars []string, optional string, aggregate, propsOnly 
 			cols = append(cols, g.pick(v, v+".name", v+".size"))
 		}
 	}
+	if g.chance(0.15) {
+		cols = append(cols, g.pick("'tag'", "7", "-1")) // a constant column (#454)
+	}
 	if aggregate && g.chance(0.4) {
 		v := g.pick(all...)
 		cols = append(cols, g.pick("count(*)", "count("+v+")", "sum("+v+".size)", "min("+v+".name)", "max("+v+".size)", "collect("+v+".name)"))
@@ -436,7 +439,7 @@ func TestCypherAgreesWithNeo4j(t *testing.T) {
 	}
 	counts := map[diffOutcome]int{}
 	known := map[int]int{}
-	failed, relVars, carriedRels := 0, 0, 0
+	failed, relVars, carriedRels, constants := 0, 0, 0, 0
 	for seed := first; seed < first+int64(seeds); seed++ {
 		g, src := diffGraph(seed)
 		gen := cypherGen{rand.New(rand.NewSource(seed))}
@@ -466,6 +469,9 @@ func TestCypherAgreesWithNeo4j(t *testing.T) {
 				}
 			}
 			counts[out]++
+			if out == diffAgreed && (strings.Contains(text, "'tag' AS") || strings.Contains(text, " 7 AS") || strings.Contains(text, " -1 AS")) {
+				constants++
+			}
 			if out == diffAgreed && strings.Contains(text, "[r") {
 				relVars++
 				if strings.Contains(text, "WITH r") {
@@ -485,7 +491,10 @@ func TestCypherAgreesWithNeo4j(t *testing.T) {
 	if total := seeds * 20; counts[diffAgreed] < total/2 {
 		t.Errorf("control: only %d of %d queries were compared", counts[diffAgreed], total)
 	}
-	t.Logf("relationship variables compared: %d, carried through a WITH: %d", relVars, carriedRels)
+	t.Logf("relationship variables compared: %d, carried through a WITH: %d; constant columns: %d", relVars, carriedRels, constants)
+	if seeds >= 20 && constants == 0 {
+		t.Error("control: no query with a constant column was compared")
+	}
 	if seeds >= 20 && (relVars == 0 || carriedRels == 0) {
 		t.Errorf("control: %d queries binding a relationship variable compared, %d carrying one through a WITH", relVars, carriedRels)
 	}

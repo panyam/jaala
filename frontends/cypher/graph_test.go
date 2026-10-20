@@ -319,6 +319,30 @@ func TestARelationshipVariableCarriesThroughWithAndIntoSubqueries(t *testing.T) 
 	}
 }
 
+// A constant column (#454) repeats on every row, groups under an aggregate, passes through a WITH,
+// and answers nothing over a match that finds nothing. Declaire's translator wrote `RETURN ..., 'x' AS
+// k` nine times, each refused.
+func TestAConstantColumnRepeatsOnEveryRow(t *testing.T) {
+	b, g := calledBase(t)
+	for _, c := range []struct{ query, want string }{
+		{`MATCH (f:Function) RETURN f.name AS n, 'main' AS k ORDER BY n`, "[[lex main] [main main] [parse main]]"},
+		{`MATCH (f:Function) RETURN count(*) AS n, 3 AS k`, "[[3 3]]"},
+		{`MATCH (f:Function) RETURN f.name AS n, -2 AS k ORDER BY n LIMIT 1`, "[[lex -2]]"},
+		{`MATCH (f:Function) WITH f, 'x' AS tag RETURN f.name AS n, tag ORDER BY n`, "[[lex x] [main x] [parse x]]"},
+		{`MATCH (f:Function {name: 'nothing'}) RETURN 'x' AS k`, "[]"},
+	} {
+		p, err := cypher.Compile(b.Vocabulary(), g, c.query)
+		if err != nil {
+			t.Errorf("%s: %v", c.query, err)
+			continue
+		}
+		rows, err := rowsOf(t, p, b)
+		if err != nil || fmt.Sprint(rows) != c.want {
+			t.Errorf("%s = %v, %v; want %s\n%s", c.query, rows, err, c.want, p.Text)
+		}
+	}
+}
+
 // A type the vocabulary derives has no facts, so reading its relationship's id or property is refused
 // by name, while its type and ends, which need no fact, still answer. control: the guide's base type
 // IMPORTS answers RETURN r.

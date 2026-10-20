@@ -276,7 +276,9 @@ GOARCH=wasm go test ./ns` (#417 ran `ns` that way).
   `cypher_exists` rule as an argument (COUNT's braces share it by name); `p = (a)-[r:T]->(b)` writes
   r's atom beside `graph.paths`. COUNT counts bindings, not distinct keys, so it needed no change, and
   counting `?r` itself is refused by the engine (the aggregate must read a variable an atom binds,
-  and `as ?r` lowers later). Cypher's null rules
+  and `as ?r` lowers later). A constant RETURN or WITH column binds through
+  `constColumn` (#454: list.member of a one-value list, as a one-type `type(r)` does), and a test
+  returned as a value is refused naming its WHERE rewrite, the text a model's retry reads. Cypher's null rules
   are written into the program: `guards` adds `not absent(...)` to `=` (both sides), `<>` and text
   tests over a `nullable` operand (a label's column, an optional node or its property, a carried
   value, a node a WITH carried from an optional, `nodeVar.absent`), and `IS NULL` reads a variable

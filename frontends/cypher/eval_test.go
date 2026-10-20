@@ -87,3 +87,46 @@ func TestEval(t *testing.T) {
 		t.Errorf("control: missing passed (%v), so a refused draft can't fail a case", r.Err)
 	}
 }
+
+// turnsOf scripts a model per question, recording every prompt it was sent.
+type turnsOf struct {
+	drafts map[string][]string
+	sent   *[]nl.Prompt
+}
+
+func (turnsOf) Name() string { return "scripted" }
+
+func (m turnsOf) Complete(_ context.Context, p nl.Prompt) (nl.Completion, error) {
+	*m.sent = append(*m.sent, p)
+	ds := m.drafts[p.Turns[0].Text]
+	return nl.Completion{Text: ds[min(len(p.Turns)/2, len(ds)-1)]}, nil
+}
+
+// The translator takes a constant column on its first draft (#454), and a test returned as a value is
+// refused with the WHERE rewrite in the text the model reads, so the draft after it, written in WHERE,
+// passes on the second try.
+func TestTheTranslatorTakesAConstantColumnAndTellsATestToMoveToWhere(t *testing.T) {
+	v, b := guide.Deps(t)
+	fe := cypher.NewFrontEnd(depsGraph)
+	var sent []nl.Prompt
+	model := turnsOf{map[string][]string{
+		"is app a package?": {`MATCH (p:Package {name: 'app'}) RETURN p.name, 'yes' AS found`},
+		"does log import util?": {
+			`MATCH (:Package {name: 'log'})-[:IMPORTS]->(d) RETURN d.name IN ['util'] AS hit`,
+			`MATCH (:Package {name: 'log'})-[:IMPORTS]->(d) WHERE d.name IN ['util'] RETURN d.name`,
+		},
+	}, &sent}
+	_, tr, err := nl.Translate(context.Background(), "is app a package?", v, nil, model, nl.Options{Base: b, FrontEnd: fe})
+	if err != nil || len(tr.Tries) != 1 || tr.Tries[0].Err != nil {
+		t.Errorf("a constant column: %v, %d tries, first refused as %v; want it taken on the first", err, len(tr.Tries), tr.Tries[0].Err)
+	}
+	sent = nil
+	_, tr, err = nl.Translate(context.Background(), "does log import util?", v, nil, model, nl.Options{Base: b, FrontEnd: fe})
+	if err != nil || len(tr.Tries) != 2 || tr.Tries[0].Kind != "compile" || tr.Tries[1].Err != nil {
+		t.Fatalf("IN returned as a value: %v, %d tries; want a compile refusal and then an answer", err, len(tr.Tries))
+	}
+	last := sent[len(sent)-1].Turns
+	if read := last[len(last)-1].Text; !strings.Contains(read, "test it in WHERE") {
+		t.Errorf("the model read %q after its first draft, which doesn't say to move IN into WHERE", read)
+	}
+}

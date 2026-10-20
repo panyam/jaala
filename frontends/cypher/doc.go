@@ -27,8 +27,9 @@
 // x IN l and UNWIND l AS x through stdlib's list.*, a list literal of constants and IN $param
 // included), WITH stages with their aggregates and WHERE, UNION and UNION ALL, CALL proc(args) YIELD over a
 // predicate or relation of the vocabulary (each YIELD at the argument its label names), and RETURN
-// with aliases, DISTINCT, count, min, max, sum and collect (as jaala's list), ORDER BY, SKIP
-// and LIMIT. toLower, toUpper, replace, split(s, sep)[i] and + between text compile to stdlib's
+// with aliases, DISTINCT, count, min, max, sum and collect (as jaala's list), a constant column
+// (#454, bound through a one-value list), ORDER BY, SKIP and LIMIT. A test returned as a value (IN,
+// CONTAINS, a comparison, IS NULL) is refused with the rewrite into WHERE, since jaala has no booleans. toLower, toUpper, replace, split(s, sep)[i] and + between text compile to stdlib's
 // str.* (+ joins when a side is a string, a string function or a property typed as text, and adds
 // otherwise). A $parameter in the goal is bound with Program.Bind; one a rule reads (a stage, a
 // union part, an OR, a pattern test, a variable-length step) needs Params, which writes the values
