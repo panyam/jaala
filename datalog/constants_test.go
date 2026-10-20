@@ -47,6 +47,21 @@ func TestAnEqualityToAConstantBindsItsVariable(t *testing.T) {
 	}
 }
 
+// A constant column is named as written, in Columns and in each row's Bind, so a host reading the
+// columns finds its value (the docsite's demos read them so).
+func TestAConstantColumnIsNamedAsWritten(t *testing.T) {
+	q := mustParse(t, `edge(?x, ?y) => ?x, "tag", 3`)
+	cols := q.Columns()
+	if want := []Var{"x", `"tag"`, "3"}; !slices.Equal(cols, want) {
+		t.Fatalf("Columns = %q, want %q", cols, want)
+	}
+	for _, r := range eval(t, graph(), `edge(?x, ?y) => ?x, "tag", 3`) {
+		if r.Bind[cols[1]].S != "tag" || r.Bind[cols[2]].S != "3" {
+			t.Errorf("row %v: the constant columns read %q and %q", r.Bind["x"].S, r.Bind[cols[1]].S, r.Bind[cols[2]].S)
+		}
+	}
+}
+
 // A module's rule binds by an equality as the goal's rules do, and Validate takes what Eval answers.
 func TestAModuleRuleAndValidateTakeAConstantEquality(t *testing.T) {
 	r := withModules(t, "tags", `tagged(?x, ?k) :- edge(?x, _), ?k = "t";`)

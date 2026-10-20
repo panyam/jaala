@@ -127,7 +127,7 @@ The same, for a word that could be either: `api` is `?api` as a variable or `"ap
 
 `query: projection column … must be a ?variable or an aggregate`
 
-The columns after `=>` are variables, aggregates or arithmetic, such as `?i * ?r`.
+The columns after `=>` are variables, aggregates, arithmetic such as `?i * ?r`, or a quoted string or a number (#457). A bare word such as `true` is none of them.
 
 {{ demo "demos/errors/projection-column.yaml" }}
 

@@ -1,3 +1,3 @@
 fixture: "deps"
-query: "imports(?a, ?b) => \"x\""
+query: "imports(?a, ?b) => true"
 expect_error: "must be a ?variable or an aggregate"
