@@ -256,7 +256,7 @@ func lexString(s string) (string, int, error) {
 					width = 8
 				}
 				if r, err := strconv.ParseUint(s[i+1:min(i+1+width, len(s))], 16, 32); err == nil && i+width < len(s) {
-					b.WriteRune(rune(r))
+					b.WriteRune(rune(r)) // #nosec G115 -- ParseUint caps r at 32 bits, and WriteRune writes any rune past MaxRune, negative ones too, as U+FFFD
 					i += width
 					continue
 				}

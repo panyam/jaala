@@ -314,7 +314,7 @@ func localRules(names []string) []rule {
 
 func dropChars(chars string, drop []byte) string {
 	return strings.Map(func(r rune) rune {
-		if strings.IndexRune(string(drop), r) >= 0 {
+		if strings.ContainsRune(string(drop), r) {
 			return -1
 		}
 		return r

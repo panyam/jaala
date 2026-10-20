@@ -1991,7 +1991,6 @@ type column struct {
 	name string
 	text frag // the projection's column
 	agg  bool
-	vars []string
 	key  string // the expression, for ORDER BY to find it
 }
 

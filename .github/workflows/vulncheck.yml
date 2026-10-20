@@ -1,0 +1,63 @@
+name: vulncheck
+
+# Not on pull requests or pushes. govulncheck answers against an advisory database that moves on its
+# own, so an advisory published today affects code that has not changed in months, and only a scan
+# on a clock finds that case. It runs weekly, on each release tag, and by hand.
+on:
+  schedule:
+    # Mondays 06:30 UTC.
+    - cron: '30 6 * * 1'
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  vulncheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # The Makefile pins govulncheck's version and covers every shipped module (#459).
+      - name: Scan the shipped modules
+        run: make vulncheck 2>&1 | tee scan.log
+
+      # A red run on a schedule is easy to miss, so a failure files an issue, or comments on the one
+      # already open, rather than a new one every Monday.
+      - name: Report failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const log = fs.readFileSync('scan.log', 'utf8');
+            const tail = log.length > 8000 ? log.slice(-8000) : log;
+            const titlePrefix = 'vulncheck:';
+            const { data: open } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner, repo: context.repo.repo, state: 'open', labels: 'P1', per_page: 100,
+            });
+            const existing = open.find(i => i.title.startsWith(titlePrefix));
+            const run = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = [
+              `\`make vulncheck\` failed at \`${context.sha.slice(0, 7)}\`.`, ``, `[Workflow run](${run})`, ``,
+              '```', tail, '```',
+            ].join('\n');
+            if (existing) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo, issue_number: existing.number,
+                body: `Still failing.\n\n${body}`,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner, repo: context.repo.repo,
+                title: `${titlePrefix} advisories reachable from a shipped module`,
+                labels: ['P1', 'bug'], body,
+              });
+            }

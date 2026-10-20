@@ -393,6 +393,8 @@ func slParseHavingOne(piece string) (Compare, error) {
 // slParseRules reads text that holds rules only, such as a derived module's body (see
 // Language). It accepts the same clause syntax as slParse and refuses a goal clause, since
 // rules with nothing to ask are a definition rather than a query.
+//
+//lint:ignore U1000 the old parser is frozen as it was (see the file's comment), so nothing in it is deleted
 func slParseRules(s string) ([]Rule, error) {
 	rules, goals, err := slSplitClauses(slStripComments(s))
 	if err != nil {

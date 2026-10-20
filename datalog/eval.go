@@ -531,19 +531,14 @@ func splitNegations(lits []Literal) (pos, negs []Literal) {
 	return pos, negs
 }
 
-// validateNegations rejects a negated literal over an unknown relation or with the wrong arity —
+// validateNegationsFrom rejects a negated literal over an unknown relation or with the wrong arity —
 // caught here so a bad `not` fails clearly instead of silently never matching — or anchored to no
 // variable of the body (see checkNegationAnchored). Negation ranges over every callable relation
 // uniformly: EDB, IDB, string filters, overlay predicates, AND reaches (negation as failure —
 // atomHolds runs the same extendAtom the positive solve uses). Stratification (each evaluator's
 // fixpoint) already guarantees a negated IDB relation is fully derived before the rule or goal that
-// negates it runs, so the filter is safe.
-func (b *Base) validateNegations(body Body, negs []Literal) error {
-	return b.validateNegationsFrom(body, negs, nil)
-}
-
-// validateNegationsFrom is validateNegations for a body whose inputs its caller binds, which anchor
-// a negation as the host's bound variables anchor the goal's.
+// negates it runs, so the filter is safe. A body's inputs, which its caller binds, anchor a negation
+// as the host's bound variables anchor the goal's.
 func (b *Base) validateNegationsFrom(body Body, negs []Literal, inputs map[Var][]ns.Value) error {
 	if err := b.checkNegatedRelations(negs); err != nil {
 		return err

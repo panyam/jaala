@@ -300,8 +300,8 @@ func (s BitSet) Ranges() iter.Seq[VersionRange] {
 			for k, word := range p.bits {
 				base := (p.word + uint64(k)) * 64
 				for word != 0 {
-					lo := uint64(bits.TrailingZeros64(word))
-					ones := uint64(bits.TrailingZeros64(^(word >> lo)))
+					lo := uint64(bits.TrailingZeros64(word))            // #nosec G115 -- a bit count, 0 to 64
+					ones := uint64(bits.TrailingZeros64(^(word >> lo))) // #nosec G115 -- a bit count, 0 to 64
 					if lo+ones >= 64 {
 						ones = 64 - lo
 					}
@@ -352,7 +352,7 @@ func mergeBits(a, b BitSet, op func(a, b uint64) uint64) BitSet {
 			if word := op(ka, kb); word == ^uint64(0) {
 				out.add(at, n, nil)
 			} else if word != 0 {
-				out.add(at, n, slices.Repeat([]uint64{word}, int(n)))
+				out.add(at, n, slices.Repeat([]uint64{word}, int(n))) // #nosec G115 -- n words of a slice already held, so it fits an int
 			}
 		} else {
 			words := make([]uint64, n)
@@ -409,7 +409,7 @@ func (b *bitBuilder) add(word, n uint64, words []uint64) {
 			for e < len(words) && words[e] == ^uint64(0) {
 				e++
 			}
-			b.run(word+uint64(k), uint64(e-k))
+			b.run(word+uint64(k), uint64(e-k)) // #nosec G115 -- indexes into words, e >= k >= 0
 			k = e
 		default:
 			b.dense(word+uint64(k), words[k])

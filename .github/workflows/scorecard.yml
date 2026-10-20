@@ -1,0 +1,32 @@
+name: scorecard
+
+# OpenSSF Scorecard, which rates the repository's security practices (branch protection, pinned
+# actions, token permissions, a security policy) and publishes the result to api.scorecard.dev.
+on:
+  branch_protection_rule:
+  schedule:
+    - cron: '30 2 * * 1'
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: read-all
+
+jobs:
+  analysis:
+    runs-on: ubuntu-latest
+    permissions:
+      # publish_results signs its upload with the workflow's OIDC token.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # Pinned by commit SHA, as a third-party action that reads the repository should be.
+      - name: Run analysis
+        uses: ossf/scorecard-action@fa7117db83c52d787ae5a89f350999701505d78e # v2.5.0
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true

@@ -43,7 +43,15 @@ and records the result as a git note on that commit (`refs/notes/selfcheck`, pus
 start` that brackets it, and whether a run is due, which is once five PRs have merged since the last
 pass (`EVERY`). CI checks every PR; selfcheck runs on that cadence rather than per PR. Every Makefile recipe is a one-line call into `scripts/`
 (after mcpkit's): put a new target's shell there, never in the recipe. CI (`.github/workflows/ci.yml`) runs the set below, and a
-separate `souffle` job installs Soufflé 2.5's release `.deb` and compares 1000 seeds; all must pass:
+separate `souffle` job installs Soufflé 2.5's release `.deb` and compares 1000 seeds; all must pass.
+Its `scan` job runs `make lint seccheck secrets` (staticcheck, gosec, gitleaks over the history, #459,
+after agni's), over the root and every module in `SUB_MODS_TO_TAG` through `scripts/scan.sh`, each
+tool pinned in the Makefile and run by `go run`. A gosec finding is fixed or annotated `// #nosec
+G<n> -- <why>` on its line (the corpus's seeded `math/rand` is, in `corpus.stream`), and a frozen file
+takes `//lint:ignore` rather than an edit. gosec runs under each module's own `go` directive: under an
+older Go it loaded nothing in `frontends/mcp` (1.26.9) and still said 0 issues. `make vulncheck` runs
+weekly and on each tag (`vulncheck.yml`, which files a P1 issue on failure), not per PR; `make audit`
+runs all four. `SECURITY.md` is the reporting policy:
 
 ```sh
 gofmt -l .                      # must print nothing

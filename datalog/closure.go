@@ -28,9 +28,6 @@ const closureName = "graph.closure"
 // closurePrefix starts a closure's relation name.
 const closurePrefix = "\x00c:"
 
-// closureRelation is the closure over step.
-func closureRelation(step string) string { return closurePrefix + step }
-
 // An engineWalk is a call the engine answers by walking a relation itself: graph.closure (#281) and
 // graph.paths (#280). A call is written as a relation named by the walk's prefix and the relation it
 // walks, its arguments as written, so every check reads the step relation from the name.

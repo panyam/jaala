@@ -192,6 +192,26 @@ jobs:
       - name: test
         run: go test -race -count=1 ./...
 
+  # staticcheck, gosec and gitleaks over every module jaala ships (#459). Each tool's version is pinned
+  # in the Makefile and run through go run, so this runs what a laptop's `make audit` runs. govulncheck
+  # is time-sensitive rather than change-sensitive, so it runs on a clock instead (vulncheck.yml).
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # gitleaks reads the whole history.
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: staticcheck
+        run: make lint
+      - name: gosec
+        run: make seccheck
+      - name: gitleaks
+        run: make secrets
+
   # Naive against Soufflé on the generated corpus (#23). Soufflé is installed here only, from its
   # release, so it never becomes a Go dependency. The test is test code and runs the souffle binary.
   souffle:
