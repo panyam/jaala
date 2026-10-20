@@ -201,7 +201,8 @@ GOARCH=wasm go test ./ns` (#417 ran `ns` that way).
   protocol, which Neo4j and Memgraph serve: a module of its own on `neo4j-go-driver` (no third-party
   module beyond it, and it builds for wasm), laid out by a `cypher.Graph` so a host describes its graph
   once. A label's relation is nodes with that label keyed by `id`, a type's relation relationships, the
-  Props relation the nodes' other properties, and every node also carries `JaalaNode`, indexed on `id`
+  Props relation the nodes' other properties, and every node also carries `JaalaNode` (or
+  `JaalaNode_<ns>` with `Options.Namespace`, #435: each its own graph and index), indexed on `id`
   (Memgraph only takes the index in an auto-commit run, and names itself "Neo4j/v5.11.0 compatible ...
   Memgraph"). It streams a whole read, looks up and batches (`UNWIND $vals`, one query per label or
   type) by key, endpoint, Props key or text property, never by a number (the engine folds units), and
@@ -215,8 +216,11 @@ GOARCH=wasm go test ./ns` (#417 ran `ns` that way).
   CI's `bolt` job runs both as service containers, the corpus at 300 seeds (`JAALA_BOLT_SEEDS`) through
   `internal/corpus` against each seed's MemSource, values and, under `CanonicalCites`, citations and
   witnesses (a dropped edge id survived a values-only compare). `scripts/bolt-servers.sh` runs a command
-  against the servers `STORES` names, using a URL or starting a Docker container, exit 3 for "could not
-  run"; `make exercise-graph-server` and selfcheck's graph-server step (1000 seeds) go through it.
+  against the servers `STORES` names, using a URL, else the shared pair `make servers-up` starts
+  (`stores/bolt/compose.yml`, project `jaala-bolt`, 17687 and 17688), else a throwaway container; exit 3
+  for "could not run". The tests write in a namespace of their own (`JAALA_BOLT_NAMESPACE`, else a hash
+  of the checkout's path), so worktrees and selfchecks share the pair; two runs forced into one
+  namespace wipe each other's graph mid-run; `make exercise-graph-server` and selfcheck's graph-server step (1000 seeds) go through it.
   Joins, counts and pages go as Cypher (#412, `push.go`): a MATCH per atom (one MATCH never binds a
   relationship twice, which lost the row where two atoms read one fact), conditions only where the
   server matches exactly (ids, text, absent, null-safe text joins); a number's constant or join is

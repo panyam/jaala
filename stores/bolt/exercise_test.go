@@ -86,7 +86,7 @@ func TestExercise(t *testing.T) {
 			if err := s.Apply(bg, load(gr.src)); err != nil {
 				t.Fatal(err)
 			}
-			lookupsOnly, err := New(bg, sv.driver, gr.g, schemasOf(gr.src), Options{LookupsOnly: true})
+			lookupsOnly, err := New(bg, sv.driver, gr.g, schemasOf(gr.src), Options{LookupsOnly: true, Namespace: namespace})
 			if err != nil {
 				t.Fatal(err)
 			}

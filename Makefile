@@ -2,7 +2,7 @@
 # make. The engine itself needs nothing but Go; Soufflé (#23) and llama.cpp (#330) are only for
 # ./selfcheck.sh, and never a Go dependency.
 
-.PHONY: setup souffle llama selfcheck selfcheck-status exercise-graph-server tag tag-push bump-root
+.PHONY: setup souffle llama selfcheck selfcheck-status exercise-graph-server servers-up servers-down tag tag-push bump-root
 
 setup: souffle llama
 
@@ -14,6 +14,12 @@ llama: ## Install llama-server and fetch its 1 MB test model, for selfcheck's gr
 
 selfcheck: ## Run ./selfcheck.sh on a commit in its own worktree and note the result on it (make selfcheck REF=origin/main SEEDS=5000 FUZZ=30s CYPHER_FUZZ=2m STORES=neo4j,memgraph)
 	@REF="$(REF)" SEEDS="$(SEEDS)" FUZZ="$(FUZZ)" CYPHER_FUZZ="$(CYPHER_FUZZ)" STORES="$(STORES)" NOPUSH="$(NOPUSH)" ./scripts/selfcheck-run.sh
+
+servers-up: ## Start the graph-server pair every worktree shares (Neo4j on 17687, Memgraph on 17688), and print its URLs
+	@./scripts/bolt-compose.sh up
+
+servers-down: ## Remove the shared graph-server pair, and every namespace's graph with it
+	@./scripts/bolt-compose.sh down
 
 exercise-graph-server: ## The graph-server mission's exercise (#420) over the servers STORES names (make exercise-graph-server STORES=neo4j,memgraph)
 	@STORES="$(STORES)" ./scripts/exercise-graph-server.sh

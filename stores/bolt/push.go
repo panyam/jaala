@@ -81,7 +81,7 @@ func (s *Store) compile(c ns.Conjunction) (*compiled, bool) {
 			return "(" + n + ")"
 		}
 		declared[n] = true
-		return "(" + n + ":" + nodeLabel + ")"
+		return "(" + n + ":" + s.base + ")"
 	}
 	fixedVars := map[int]bool{}
 	for i, atom := range c.Atoms {

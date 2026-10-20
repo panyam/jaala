@@ -2,6 +2,8 @@ package bolt
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"iter"
 	"net/url"
 	"os"
@@ -61,10 +63,31 @@ func servers(t *testing.T) []server {
 	return out
 }
 
-// empty removes everything the store wrote, so each test starts from an empty graph.
+// namespace is the one these tests write in, so runs from different checkouts (two worktrees, a
+// selfcheck's own) share a server without touching each other's graph: JAALA_BOLT_NAMESPACE, or one
+// named by this checkout's path.
+var namespace = func() string {
+	if ns := os.Getenv("JAALA_BOLT_NAMESPACE"); ns != "" {
+		return ns
+	}
+	wd, _ := os.Getwd()
+	sum := sha256.Sum256([]byte(wd))
+	return "t" + hex.EncodeToString(sum[:4])
+}()
+
+// empty removes everything this run's namespace holds, so each test starts from an empty graph.
 func empty(t testing.TB, d neo4j.DriverWithContext) {
 	t.Helper()
-	if _, err := neo4j.ExecuteQuery(bg, d, "MATCH (n:"+nodeLabel+") DETACH DELETE n", nil, neo4j.EagerResultTransformer); err != nil {
+	emptyIn(t, d, namespace)
+}
+
+func emptyIn(t testing.TB, d neo4j.DriverWithContext, ns string) {
+	t.Helper()
+	label, err := baseLabel(ns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := neo4j.ExecuteQuery(bg, d, "MATCH (n:"+label+") DETACH DELETE n", nil, neo4j.EagerResultTransformer); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -73,7 +96,7 @@ func empty(t testing.TB, d neo4j.DriverWithContext) {
 func open(t testing.TB, d neo4j.DriverWithContext, g cypher.Graph, schemas map[string]ns.Schema) *Store {
 	t.Helper()
 	empty(t, d)
-	s, err := New(bg, d, g, schemas, Options{})
+	s, err := New(bg, d, g, schemas, Options{Namespace: namespace})
 	if err != nil {
 		t.Fatal(err)
 	}

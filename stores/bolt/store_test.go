@@ -315,9 +315,62 @@ func TestNewRefusesAGraphItCantLayOut(t *testing.T) {
 		{"a number as key", cypher.Graph{Nodes: []cypher.Node{{Label: "Sized", Relation: "size", Key: 1, Props: map[string]int{"id2": 0}}}}, "is a number"},
 		{"no schema", cypher.Graph{Nodes: []cypher.Node{{Label: "P", Relation: "pkg", Key: 0}}}, "has no schema"},
 	} {
-		_, err := New(bg, sv.driver, c.g, sc, Options{})
+		_, err := New(bg, sv.driver, c.g, sc, Options{Namespace: namespace})
 		if err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%s: New = %v, want an error saying %q", c.name, err, c.want)
 		}
+	}
+}
+
+// Two namespaces on one server keep their facts apart, the shared JaalaNode one among them: each
+// reads back only what it was given, and clearing one leaves the other whole.
+func TestNamespacesKeepTheirFactsApart(t *testing.T) {
+	for _, sv := range servers(t) {
+		t.Run(sv.name, func(t *testing.T) {
+			g, src := code()
+			other := ns.NewMemSource().DeclareSchema("node", ns.Schema{Arity: 2, Labels: []string{"id", "kind"}, Types: []ns.ArgType{{Kind: "node"}, {Type: ns.TypeString}}})
+			other.Add("node", ns.Tuple{Vals: []ns.Value{ns.S("main"), ns.S("Function")}, ID: "elsewhere"})
+			other.Add("node", ns.Tuple{Vals: []ns.Value{ns.S("only-here"), ns.S("Package")}})
+			names := []string{namespace, namespace + "_b", ""}
+			sources := []*ns.MemSource{src, other, other}
+			stores := make([]*Store, len(names))
+			for i, n := range names {
+				emptyIn(t, sv.driver, n)
+				s, err := New(bg, sv.driver, g, schemasOf(src), Options{Namespace: n})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := s.Apply(bg, load(sources[i])); err != nil {
+					t.Fatal(err)
+				}
+				stores[i] = s
+			}
+			t.Cleanup(func() {
+				emptyIn(t, sv.driver, names[1])
+				emptyIn(t, sv.driver, names[2])
+			})
+			read := func(i int) []string {
+				ts, err := stores[i].TuplesContext(bg, "node")
+				if err != nil {
+					t.Fatal(err)
+				}
+				return facts(ts)
+			}
+			for i := range names {
+				if got, want := read(i), facts(sources[i].Tuples("node")); !slices.Equal(got, want) {
+					t.Errorf("namespace %q holds %q, want %q", names[i], got, want)
+				}
+			}
+			emptyIn(t, sv.driver, names[1])
+			if got := read(1); len(got) != 0 {
+				t.Errorf("cleared namespace %q still holds %q", names[1], got)
+			}
+			if got, want := read(0), facts(src.Tuples("node")); !slices.Equal(got, want) {
+				t.Errorf("clearing %q changed %q: %q", names[1], names[0], got)
+			}
+			if _, err := New(bg, sv.driver, g, schemasOf(src), Options{Namespace: "a-b"}); err == nil || !strings.Contains(err.Error(), "letters, digits and _") {
+				t.Errorf("New with namespace a-b = %v, want it refused", err)
+			}
+		})
 	}
 }
