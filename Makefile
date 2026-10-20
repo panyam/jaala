@@ -2,7 +2,7 @@
 # make. The engine itself needs nothing but Go; Soufflé (#23) and llama.cpp (#330) are only for
 # ./selfcheck.sh, and never a Go dependency.
 
-.PHONY: setup souffle llama selfcheck selfcheck-status exercise-graph-server servers-up servers-down tag tag-push bump-root
+.PHONY: setup souffle llama selfcheck selfcheck-status exercise-graph-server servers-up servers-down lint vulncheck seccheck secrets audit tag tag-push bump-root
 
 setup: souffle llama
 
@@ -26,6 +26,33 @@ exercise-graph-server: ## The graph-server mission's exercise (#420) over the se
 
 selfcheck-status: ## The last selfcheck pass on origin/main, any failure since, and whether a run is due (make selfcheck-status EVERY=5)
 	@EVERY="$(EVERY)" ./scripts/selfcheck-status.sh
+
+# =============================================================================
+# Security and lint scanners (#459, after agni's): scripts/scan.sh says what each one covers
+# =============================================================================
+
+# Each runs through `go run` at the version pinned here, so CI and a developer's machine run the same
+# one with nothing installed. Bump a version here, never to @latest. They cover every module jaala
+# ships: the root and SUB_MODS_TO_TAG (below). The docsite is a site, not a module anyone imports.
+STATICCHECK := honnef.co/go/tools/cmd/staticcheck@v0.8.2
+GOVULNCHECK := golang.org/x/vuln/cmd/govulncheck@v1.8.0
+GOSEC := github.com/securego/gosec/v2/cmd/gosec@v2.29.0
+GITLEAKS := github.com/zricethezav/gitleaks/v8@v8.30.1
+export STATICCHECK GOVULNCHECK GOSEC GITLEAKS
+
+lint: ## staticcheck over each shipped module (CI's scan job)
+	@MODULES="$(SUB_MODS_TO_TAG)" ./scripts/scan.sh lint
+
+vulncheck: ## Known vulnerabilities reachable from each shipped module; weekly and on each tag, not per PR, since the advisory database moves on its own
+	@MODULES="$(SUB_MODS_TO_TAG)" ./scripts/scan.sh vulncheck
+
+seccheck: ## gosec at medium severity and above over each shipped module, under go.mod's Go (CI's scan job)
+	@MODULES="$(SUB_MODS_TO_TAG)" ./scripts/scan.sh seccheck
+
+secrets: ## gitleaks over the whole history, allowlisting exact values in .gitleaks.toml (CI's scan job)
+	@./scripts/scan.sh secrets
+
+audit: lint seccheck secrets vulncheck ## Every scanner, vulncheck included
 
 # =============================================================================
 # Release (after mcpkit's): CLAUDE.md, Releasing, says when

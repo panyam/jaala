@@ -1,0 +1,9 @@
+# The workflows pin each action by commit SHA (#459), which nothing else would ever move, so Dependabot
+# opens a PR when a pinned action has a new release. Go modules aren't listed: the root has no
+# dependencies, and every sub-module replaces jaala's modules with the checkout.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

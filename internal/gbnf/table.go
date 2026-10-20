@@ -129,7 +129,7 @@ type Sampler struct {
 
 // NewSampler is a Sampler over rules, drawing from seed.
 func NewSampler(rules []Rule, seed int64, maxDepth int) *Sampler {
-	s := &Sampler{rules: map[string]Expr{}, height: map[string]int{}, rnd: rand.New(rand.NewSource(seed)), maxDepth: maxDepth}
+	s := &Sampler{rules: map[string]Expr{}, height: map[string]int{}, rnd: rand.New(rand.NewSource(seed)), maxDepth: maxDepth} // #nosec G404 -- a seeded sampler, so a seed draws the same programs; nothing secret
 	for _, r := range rules {
 		s.rules[r.Name] = r.E
 		s.height[r.Name] = 1 << 20

@@ -217,9 +217,3 @@ type Row struct {
 	across *acrossSource
 	raw    []string
 }
-
-// v builds a variable term; k builds a constant string term. Kept unexported helpers for tests and
-// the parser to construct queries without the struct noise.
-func v(name string) Term { return Term{Var: Var(name)} }
-func k(s string) Term    { return Term{Const: &ns.Value{S: s}} }
-func num(f float64) Term { return Term{Const: &ns.Value{S: ftoa(f), Num: &f}} }

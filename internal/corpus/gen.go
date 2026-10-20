@@ -176,7 +176,7 @@ func Graph(rnd *rand.Rand) Facts {
 func genUnits(f Facts) []string {
 	h := fnv.New64a()
 	fmt.Fprint(h, f.n, f.edges, f.weights)
-	rnd := rand.New(rand.NewSource(int64(h.Sum64())))
+	rnd := rand.New(rand.NewSource(int64(h.Sum64()))) // #nosec G115 G404 -- as stream's: a seeded source of test data
 	var units []string
 	switch p := rnd.Float64(); {
 	case p < 0.7:
@@ -333,36 +333,26 @@ type Generator struct {
 // before the Soufflé step drops mixed ones, so the corpus and the Soufflé step generate one program.
 func New(rnd *rand.Rand, facts Facts) *Generator {
 	g := &Generator{rnd: rnd, nodes: facts.n}
-	h := fnv.New64a()
-	fmt.Fprint(h, "facts", facts.n, facts.edges, facts.weights)
-	g.facts = rand.New(rand.NewSource(int64(h.Sum64())))
-	h = fnv.New64a()
-	fmt.Fprint(h, "avgs", facts.n, facts.edges, facts.weights)
-	g.avgs = rand.New(rand.NewSource(int64(h.Sum64())))
-	h = fnv.New64a()
-	fmt.Fprint(h, "closures", facts.n, facts.edges, facts.weights)
-	g.closures = rand.New(rand.NewSource(int64(h.Sum64())))
-	h = fnv.New64a()
-	fmt.Fprint(h, "walks", facts.n, facts.edges, facts.weights)
-	g.walks = rand.New(rand.NewSource(int64(h.Sum64())))
-	h = fnv.New64a()
-	fmt.Fprint(h, "optionals", facts.n, facts.edges, facts.weights)
-	g.optionals = rand.New(rand.NewSource(int64(h.Sum64())))
-	h = fnv.New64a()
-	fmt.Fprint(h, "lists", facts.n, facts.edges, facts.weights)
-	g.lists = rand.New(rand.NewSource(int64(h.Sum64())))
-	h = fnv.New64a()
-	fmt.Fprint(h, "steps", facts.n, facts.edges, facts.weights)
-	g.steps = rand.New(rand.NewSource(int64(h.Sum64())))
-	h = fnv.New64a()
-	fmt.Fprint(h, "consts", facts.n, facts.edges, facts.weights)
-	g.consts = rand.New(rand.NewSource(int64(h.Sum64())))
+	g.facts = stream("facts", facts)
+	g.avgs = stream("avgs", facts)
+	g.closures = stream("closures", facts)
+	g.walks = stream("walks", facts)
+	g.optionals = stream("optionals", facts)
+	g.lists = stream("lists", facts)
+	g.steps = stream("steps", facts)
+	g.consts = stream("consts", facts)
 	if facts.units == nil {
-		h := fnv.New64a()
-		fmt.Fprint(h, "arith", facts.n, facts.edges, facts.weights)
-		g.arith = rand.New(rand.NewSource(int64(h.Sum64())))
+		g.arith = stream("arith", facts)
 	}
 	return g
+}
+
+// stream is a source of its own for one kind of draw, seeded by the graph, so adding a kind leaves
+// every other seed's program as it was.
+func stream(name string, facts Facts) *rand.Rand {
+	h := fnv.New64a()
+	fmt.Fprint(h, name, facts.n, facts.edges, facts.weights)
+	return rand.New(rand.NewSource(int64(h.Sum64()))) // #nosec G115 G404 -- a seed replays its program: the hash's bits are the seed, and the draws are test data, not secrets
 }
 
 func (g *Generator) chance(p float64) bool { return g.rnd.Float64() < p }

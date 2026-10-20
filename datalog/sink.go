@@ -123,9 +123,7 @@ type accumulator struct {
 	units    []string
 }
 
-func (acc *accumulator) add(val ns.Value, ok bool) { acc.addN(val, ok, 1) }
-
-// addN adds n bindings with the value val, as n calls of add would: a store's summary row stands for
+// addN adds n bindings with the value val: a store's summary row stands for
 // n matches (#240). A sum adds val times n exactly, through its product's rounding error.
 func (acc *accumulator) addN(val ns.Value, ok bool, n int) {
 	acc.bindings += n
@@ -364,9 +362,6 @@ func (ag *aggregator) value(bnd *binding, v Var) (ns.Value, bool) {
 }
 
 func (ag *aggregator) add(bnd *binding) { ag.addSummary(bnd, 1, nil) }
-
-// addN adds n bindings like bnd, as a store's summary row stands for n matches (#240).
-func (ag *aggregator) addN(bnd *binding, n int) { ag.addSummary(bnd, n, nil) }
 
 // addSummary adds n bindings like bnd, an aggregate over a variable in ext reading its extremes by
 // unit rather than a value (#252).

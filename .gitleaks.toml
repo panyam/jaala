@@ -1,0 +1,4 @@
+# gitleaks configuration for jaala (#459). It extends the default rules, and a value known to be
+# harmless is allowlisted here by its exact value, so a real secret of the same shape is still reported.
+[extend]
+useDefault = true

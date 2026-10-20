@@ -96,15 +96,6 @@ func bindsFrom(lits []Literal, bound map[Var]bool, self string, ins map[string]R
 	}
 }
 
-func containsVar(vs []Var, v Var) bool {
-	for _, x := range vs {
-		if x == v {
-			return true
-		}
-	}
-	return false
-}
-
 // inputRelations is each relation that takes an input and can be inlined: one rule, a head of
 // distinct variables with no aggregate, and no recursion. It grows to a fixpoint, since a relation
 // passing its argument on to one that takes it takes it too. A relation that takes an input but isn't
