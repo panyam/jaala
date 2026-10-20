@@ -141,7 +141,7 @@ func programRules() []rule {
 		{"optional", seq{lit("optional { "), list(ref("inner"), ", "), lit(" }")}},
 		{"aggregate", seq{ref("aggfn"), lit("("), opt(lit("distinct ")), lit("?"), ref("vname"), lit(")")}},
 		{"aggfn", alt{lit("count"), lit("min"), lit("max"), lit("sum"), lit("avg"), lit("list")}},
-		{"goal", seq{ref("literals"), opt(seq{lit(" => "), list(ref("column"), ", "), ref("tail")})}},
+		{"goal", seq{ref("literals"), opt(seq{lit(" => "), list(alt{ref("column"), ref("string"), ref("unumber")}, ", "), ref("tail")})}},
 		{"column", alt{seq{lit("?"), ref("vname")}, ref("aggregate"), ref("arith")}},
 		{"tail", seq{
 			opt(seq{lit(" having "), list(ref("having"), ", ")}),

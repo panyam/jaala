@@ -818,6 +818,16 @@ GOARCH=wasm go test ./ns` (#417 ran `ns` that way).
   tail -1 && next`: the `&&` reads tail's status, so a failing test ran the 10-minute fuzz after it.
   Its first hour found a quadratic did-you-mean, a parser panic, `?_: T` not printing back,
   comparison and head-`_` cases the evaluators answered differently, and a `-0` the index missed.
+- **`?k = constant` binds `?k` when no positive literal does** (`constants.go`, #457), with a constant
+  goal column (`=> ?x, "tag"`) rewritten to one by `constantColumns`. `lowerConstants` runs before
+  `lowerExpressions` in Eval, Validate and a module's rules: in a rule the constant is written into
+  the head and body, and in the goal it is merged into a copy of the host's bind, as `bindGoal`
+  fills a column. A host-bound or aggregated variable keeps its equality as a test. A selected
+  constant groups an aggregate (`evalOptions.grouped`, `aggregator.grouped`): over nothing it answers
+  no row, where a host's `Bind` answers one (`rowsAcross` reads it too: the 5000 seeds found
+  Across giving the row); Soufflé caught that difference. nl's grammar takes a text or number column. `order by` a constant
+  keeps its old refusal, and the slicer differential allows the new column (#457). The corpus draws
+  such equalities from `generator.consts`, never under an aggregate (which the engine refuses).
 - **A comparison is checked where its body binds it, not where it is written** (#89). Every solve
   runs `deferComparisons` first, which moves a comparison to just after the literal that binds its
   operands, so `?a = "a", edge(?a, ?b)` answers in every evaluator. `checkComparisons` refuses a

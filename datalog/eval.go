@@ -376,6 +376,7 @@ func evaluateOn(b *Base, gen int64, q Query, o evalOptions, rewrite func(*Base, 
 	if err != nil {
 		return nil, err
 	}
+	q, o.bind, o.grouped = lowerConstants(q, o.bind)
 	if q, err = lowerExpressions(q, b.reg); err != nil {
 		return nil, err
 	}

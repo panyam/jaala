@@ -428,7 +428,7 @@ func TestAComparisonWaitsForTheLiteralThatBindsIt(t *testing.T) {
 			t.Errorf("%s: b = %q, want %q", q, got, want)
 		}
 	}
-	if err := evalErr(graph(), `?c = "a", edge(?a, ?b) => ?b`); err == nil || !strings.Contains(err.Error(), "comparison operand is unbound") {
+	if err := evalErr(graph(), `?c != "a", edge(?a, ?b) => ?b`); err == nil || !strings.Contains(err.Error(), "comparison operand is unbound") {
 		t.Errorf("control: a comparison nothing binds: err = %v", err)
 	}
 }

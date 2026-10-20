@@ -4,6 +4,7 @@ import (
 	"math/rand"
 	"reflect"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -25,6 +26,8 @@ func slicerDiffs(text string) (diff, msg string) {
 		return "", "" // the slicer never read `atom as ?r` (#279), so it refuses it in its own words
 	case serr != nil && optionalBlock.MatchString(text):
 		return "", "" // nor `optional { ... }` (#282)
+	case err == nil && serr != nil && slices.ContainsFunc(q.Select, func(t Term) bool { return t.Const != nil }):
+		return "", "" // nor a constant projection column, => ?x, "tag" (#457)
 	case err == nil && serr != nil && (readsAsWritten(q) || agreesWithoutExponents(text)):
 		return "", "" // the slicer refused a spelling of a query it reads, as #276 allows
 	case err == nil && serr == nil && unknownAggregate(sq) && readsAsWritten(q):

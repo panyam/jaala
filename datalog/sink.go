@@ -297,8 +297,11 @@ func containsString(ss []string, s string) bool {
 // aggregate column per group, for a goal and for a rule head alike. A group's provenance is the union
 // of its bindings' cites.
 type aggregator struct {
-	sel       []Term
-	keyVars   []Var
+	sel     []Term
+	keyVars []Var
+	// grouped says a constant column the goal's equality bound stands for a group key (#457), so no
+	// binding means no group, and no row over nothing.
+	grouped   bool
 	aggs      []Term // the selected aggregates, then the ones only a having reads
 	selected  map[Var]bool
 	having    []Compare
@@ -411,7 +414,7 @@ func (ag *aggregator) rows() ([]Row, error) {
 	if ag.across != nil {
 		return ag.rowsAcross()
 	}
-	if len(ag.keyVars) == 0 && len(ag.groups) == 0 {
+	if len(ag.keyVars) == 0 && len(ag.groups) == 0 && !ag.grouped {
 		ag.groups[""] = ag.newGroup(nil)
 	}
 	out := make([]Row, 0, len(ag.groups))

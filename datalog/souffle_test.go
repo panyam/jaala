@@ -670,9 +670,10 @@ func (tr *souffler) namedBody(body Body, vk map[Var]sKind) (Body, []Var, []sKind
 			kinds = append(kinds, vk[l.Agg.Result])
 		}
 		if c := l.Compare; c != nil && c.Op == "=" {
-			// ?y = expr binds ?y (#209), so it is a column too.
+			// ?y = expr binds ?y (#209), and so does ?c = constant (#457), so each is a column too.
+			binds := c.Left.Expr != nil || c.Right.Expr != nil || c.Left.Const != nil || c.Right.Const != nil
 			for _, t := range []Term{c.Left, c.Right} {
-				if t.Var != "" && t.Var != "_" && !seen[t.Var] && (c.Left.Expr != nil || c.Right.Expr != nil) {
+				if t.Var != "" && t.Var != "_" && !seen[t.Var] && binds {
 					seen[t.Var] = true
 					cols = append(cols, t.Var)
 					kinds = append(kinds, vk[t.Var])

@@ -306,6 +306,10 @@ type Generator struct {
 	// from a stream of its own, as facts does; nclosures numbers the hops it binds.
 	closures  *rand.Rand
 	nclosures int
+	// consts binds a fresh variable by an equality with a constant now and then (#457), from a stream
+	// of its own, so a seed binding none is the program it was; nconsts numbers them.
+	consts  *rand.Rand
+	nconsts int
 	// walks turns a literal of two nodes that closures left alone into graph.paths now and then (#280),
 	// from a stream of its own, so a seed's closures are the ones it drew before; npaths numbers the
 	// paths it binds.
@@ -350,6 +354,9 @@ func New(rnd *rand.Rand, facts Facts) *Generator {
 	h = fnv.New64a()
 	fmt.Fprint(h, "steps", facts.n, facts.edges, facts.weights)
 	g.steps = rand.New(rand.NewSource(int64(h.Sum64())))
+	h = fnv.New64a()
+	fmt.Fprint(h, "consts", facts.n, facts.edges, facts.weights)
+	g.consts = rand.New(rand.NewSource(int64(h.Sum64())))
 	if facts.units == nil {
 		h := fnv.New64a()
 		fmt.Fprint(h, "arith", facts.n, facts.edges, facts.weights)
@@ -383,6 +390,7 @@ type genBody struct {
 	bound    map[genType][]string
 	results  map[string]bool // what a body aggregate binds
 	computed []string        // what ?y = expr binds (#209), which a head or the goal reads now and then
+	consts   map[string]bool // what ?c = constant binds (#457), which no aggregate reduces
 }
 
 func newBody() *genBody { return &genBody{bound: map[genType][]string{}} }
@@ -517,6 +525,31 @@ func (g *Generator) place(b *genBody, l genLit) {
 	b.lits = slices.Insert(b.lits, i, l)
 }
 
+// bindConstant binds a fresh variable by ?c = constant now and then (#457), anywhere in the body, which
+// the head or the goal may then read: a node's name, or on a unitless graph a number.
+func (g *Generator) bindConstant(b *genBody) {
+	if g.consts == nil || g.consts.Float64() >= 0.12 {
+		return
+	}
+	g.nconsts++
+	v := fmt.Sprintf("?c%d", g.nconsts)
+	t, c := genNode, strconv.Quote(fmt.Sprintf("v%d", g.consts.Intn(g.nodes+1)))
+	if g.arith != nil && g.consts.Float64() < 0.4 {
+		t, c = genNum, strconv.Itoa(g.consts.Intn(10))
+	}
+	l := genLit{args: []string{v, c}, op: "="}
+	if g.consts.Float64() < 0.5 {
+		l.args[0], l.args[1] = c, v
+	}
+	b.lits = slices.Insert(b.lits, g.consts.Intn(len(b.lits)+1), l)
+	b.bound[t] = append(b.bound[t], v)
+	if b.consts == nil {
+		b.consts = map[string]bool{}
+	}
+	b.consts[v] = true
+	g.shapes["constant binding"] = true
+}
+
 // compute adds a computed number to a body that binds one, now and then, so a head or the goal can
 // show what arithmetic answers rather than only what it filters.
 func (g *Generator) compute(b *genBody) {
@@ -609,6 +642,7 @@ func (g *Generator) body(layer int, recursive bool) *genBody {
 	}
 	g.compareFacts(b)
 	g.compute(b)
+	g.bindConstant(b)
 	g.optional(b)
 	return b
 }
@@ -849,6 +883,21 @@ func (g *Generator) aggregate(b *genBody, list bool) string {
 			v = all[g.pick(len(all))]
 		}
 	}
+	if b.consts[v] {
+		// a constant-bound variable has no relation for an aggregate to reduce; bind one that does
+		t := genNode
+		switch fn {
+		case "sum", "avg", "min", "max":
+			t = genNum
+		}
+		v = g.fresh()
+		if t == genNode {
+			b.lits = append(b.lits, genLit{rel: "node", args: []string{v}})
+		} else {
+			b.lits = append(b.lits, genLit{rel: "weight", args: []string{"_", v}})
+		}
+		b.bound[t] = append(b.bound[t], v)
+	}
 	if f, ok := strings.CutSuffix(fn, " distinct"); ok {
 		return f + "(distinct " + v + ")"
 	}
@@ -936,6 +985,7 @@ func (g *Generator) goal() genGoal {
 	}
 	g.compareFacts(b)
 	g.compute(b)
+	g.bindConstant(b)
 	g.listRead(b)
 	goal := genGoal{}
 	if g.chance(0.35) {
