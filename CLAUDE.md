@@ -1192,7 +1192,7 @@ host filed or the PR's own issue.
 Issues are ranked by the mission they serve (labels `P0`–`P3`, `waiting`, `mission`,
 `mission:active`, `mission_<slug>`), and its tickets are linked as blocked-by. Most of jaala's
 missions unblock a host's active mission; such a mission closes when the host's half of its exercise
-passes too, so it can stay open after jaala's tickets close. Two are active. The first is
+passes too, so it can stay open after jaala's tickets close. One is active,
 `mission_agent_frontend` (#322), a host's caller asks in plain language and jaala's front end
 turns it into a program that checks. jaala's half is `frontends/nl` and `frontends/nlmodels`
 (#321, #323 to #326, #330, #331, #336, #337, released in v0.1.66 and frontends/nlmodels/v0.1.66);
@@ -1207,7 +1207,7 @@ MCP server for any vocabulary that a host wraps with its pack, PR #351, v0.1.70 
 `frontends/mcp/v0.1.70`) followed; Declaire moves its translator and server onto them in
 declaire#302, and its wording experiments (declaire#308) replace `mcp.Instructions`' default. The mission's done-when points at
 declaire#288's translator line rather than quoting its number, which is Declaire's to set.
-The second active mission is `mission_cypher_frontend` (#356, from epic #278), started 2026-10-18:
+`mission_cypher_frontend` (#356, from epic #278) ran from 2026-10-18 and closed 2026-10-20, when Declaire's v0.1.84 run (declaire PR #348) answered x10b:
 an agent or the model translating for it writes Cypher, and `frontends/cypher` compiles it into a
 program that checks, so Declaire can measure whether Cypher or jaala's syntax costs an agent less per
 correct answer (declaire#288's "one arm per front end"; the arms are declaire#248). Its tickets: #352
@@ -1216,7 +1216,7 @@ correct answer (declaire#288's "one arm per front end"; the arms are declaire#24
 (`nl.Translate` writing Cypher, the 32B arm) and #355 (`frontends/mcp` taking Cypher, closed by
 #366's `cypher` tool and `cypher.Store`, PR #368). #279 (facts as terms, #371) came out of
 `waiting` beside them; the other gaps (#280 to #284) and #364 (`CALL { }`, an order or limit in a
-stage) stay `waiting` until an exercise case is refused for one. Next is #354. The two store missions closed on 2026-10-16. `mission_store_federation` (#219), a host answers a question over many stores without holding them
+stage) stay `waiting` until an exercise case is refused for one. The two store missions closed on 2026-10-16. `mission_store_federation` (#219), a host answers a question over many stores without holding them
 in memory, measured by the `Stores` benchmark (#218: stores asked, unindexed probes, round trips,
 peak heap and a repeated question's fetches as the number of stores grows) and Declaire's `bench
 -time` on a federated view. The benchmark's stores run in its process, so `peak-MB` counts their
@@ -1251,7 +1251,11 @@ kept in Neo4j or Memgraph as it would in memory, with the server doing the joins
 exercise-graph-server`; its tickets are #411 (`stores/bolt`), #412 (pushdown as Cypher, profiles), #413
 (checking a Cypher database against jaala), declaire#339 and agni#1073. `mission_text_memory` (#437, filed
 2026-10-19, not active either) is a host's assistant extracting what it was told into versions and
-answering from them: #414 (`nl.Extract`, whose eval makes its exercise runnable), then #415 (LongMemEval). A new issue gets a
+answering from them, for less money and time per correct answer than reading the history: #414
+(`nl.Extract`, whose eval makes its exercise runnable), then #415, LongMemEval used to find which
+primitives an agent lacks (arms that hold the model fixed and vary the layer), not to rank jaala as an
+agent. Epic #455 lists those primitives and which side owns each; the split between jaala and its
+hosts is the docsite's `architecture/layering.md` ("What stays with a host"). A new issue gets a
 priority and a mission link when filed, or `waiting` with the trigger that would unpark it.
 
 Create the branch before the first commit (`git branch --show-current` says so). #200's work was

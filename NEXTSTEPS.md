@@ -5,18 +5,16 @@ Maintained by /checkpoint: one thread per branch, pruned when the branch merges.
 
 ## At a glance
 
-- No open branches or PRs in this clone. v0.1.84 (on `main` after #451) carries #445's relationship
-  variables through WITH, in subqueries and on a path; Declaire's frontier Cypher arm can rerun x10b on it.
-- Mission #322 (`mission_agent_frontend`) is active, 22/22 jaala tickets closed; it waits on Declaire's
-  translator run against declaire#288's bar. Exercise last logged at fbfa0ff; 10 PRs merged since.
-- Mission #356 (`mission_cypher_frontend`) is 24/24 closed and every done-when line holds (log on #356 at
-  d4e5187, exercise at e37db85); another session is closing it. #453 (P3, `waiting`) holds the two
-  subquery edges #452's tests found in #451.
-- Mission #420 (Neo4j/Memgraph, not `mission:active`) is 4/6. Mission #437 (`mission_text_memory`,
-  not active) is 1/3, next ready #415.
-- Selfcheck: 36f59f2 recorded FAIL, a corpus timeout at a load near 80 (passed rerun alone, 18m). A run
-  on e37db85 was going at checkpoint; `make selfcheck-status` shows whether it recorded a pass.
-- This run: no threads on any branch; rewrote At a glance (dropped v0.1.82 and the #402 run, superseded).
+- No open branches or PRs in this clone. `main` is at d0e645b (#454's constant columns, merged after v0.1.84).
+- Mission #322 (`mission_agent_frontend`) is the one active mission, 23/24 closed; next ready #457 (bind a
+  variable to a constant). Its exercise last logged at d0e645b: nl and Cypher `TestEval` both 7/8.
+  It still waits on Declaire's translator run against declaire#288's bar.
+- Mission #356 (Cypher) closed 2026-10-20. #453 (P3, `waiting`) holds #451's two subquery edges.
+- Mission #420 (Neo4j/Memgraph, not active) is 4/6. Mission #437 (`mission_text_memory`, not active) is
+  1/3, next ready #415, rewritten as a lens on missing primitives; epic #455 lists them and the jaala/host
+  split, now also in the docsite's `architecture/layering.md`.
+- Selfcheck: last pass 51cd431 (v0.1.84); 1 PR merged since, not due until 5.
+- This run: dropped the "another session is closing #356" line (closed).
 
 ## Across threads
 
