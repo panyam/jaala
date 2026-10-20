@@ -51,9 +51,13 @@
 //     that a path uses a relationship once, which can differ for a bounded range over a cycle. Bind
 //     the path, p = (...), for trails (#280). A zero-length one from a node nothing else binds pairs
 //     only the nodes its relationship's relation holds.
+//   - Within one MATCH, Cypher uses a relationship once; a program's atoms may read one fact twice,
+//     so a self-loop stands for both hops of (a)-->(b)-->(c) where Cypher finds no match.
 //   - A path is its nodes, so two relationships between the same nodes make one path, and count(p)
 //     counts routes, unless relationships(p) is read, when the path names each edge's fact and they
 //     make two. nodes(p) and relationships(p) answer a list, as collect does.
+//   - min and max reduce numbers, as jaala's aggregates do, so over text they answer null where
+//     Cypher answers the least or greatest string (#413's differential).
 //   - collect's list is sorted in jaala's answer order, not in match order, so it doesn't depend on
 //     the order rows arrive in; lists compare and order by their text (#405).
 //

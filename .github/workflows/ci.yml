@@ -144,6 +144,9 @@ jobs:
       JAALA_BOLT_MEMGRAPH: bolt://127.0.0.1:7688
       JAALA_BOLT_REQUIRE: "1"
       JAALA_BOLT_SEEDS: "300"
+      # The job's servers are its own, so the Cypher differential may clear them (#413).
+      JAALA_BOLT_EXCLUSIVE: "1"
+      JAALA_BOLT_CYPHER_SEEDS: "100"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
