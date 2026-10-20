@@ -49,9 +49,9 @@ cypher_match1(?a) :- pkg(?a, ?a_license), not str.match(?a, "^(?:a.*)$"), absent
 cypher_match1(?a) => ?a
 
 MATCH (a:Package) WHERE a.license IS NOT NULL AND a.name IN ['app', 'api'] RETURN toUpper(a.name) + '!'
-  -> cypher_match1(?_c) :- pkg(?a, ?a_license), ?_c = str.concat(str.upper(?a), "!"), not absent(?a_license), ?a = "app";
-cypher_match1(?_c) :- pkg(?a, ?a_license), ?_c = str.concat(str.upper(?a), "!"), not absent(?a_license), ?a = "api";
-cypher_match1(?_c) => ?_c
+  -> cypher_match1(?_c, ?a) :- pkg(?a, ?a_license), ?_c = str.concat(str.upper(?a), "!"), not absent(?a_license), ?a = "app";
+cypher_match1(?_c, ?a) :- pkg(?a, ?a_license), ?_c = str.concat(str.upper(?a), "!"), not absent(?a_license), ?a = "api";
+cypher_match1(?_c, ?a) => ?_c
 
 MATCH (a:Package) RETURN min(a.name), max(a.name), collect(a.name)
   -> pkg(?a, _) => min(?a), max(?a), list(?a)

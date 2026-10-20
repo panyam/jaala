@@ -543,17 +543,25 @@ func (c *compiler) compileStage(in *stageIn, s stage, where expr) (projected, *E
 		out.lits = append(append([]frag{}, c.shared...), bodies[0]...)
 		return out, nil
 	}
-	// Several alternatives are a rule each over the variables the columns read.
+	// Several alternatives are a rule each over the variables the columns read and every node of the
+	// match, so two bindings differing only in a node the columns don't read stay two tuples, which
+	// count(*) and collect count (#439).
 	name := c.helper("match")
 	var vars []string
 	seen := map[string]bool{}
+	add := func(v string) {
+		if !seen[v] {
+			seen[v] = true
+			vars = append(vars, v)
+		}
+	}
 	for _, col := range ret.cols {
 		for _, v := range varsIn(c.render(col.text)) {
-			if !seen[v] {
-				seen[v] = true
-				vars = append(vars, v)
-			}
+			add(v)
 		}
+	}
+	for _, n := range c.order {
+		add("?" + n.jv)
 	}
 	head := name + "(" + strings.Join(vars, ", ") + ")"
 	keys := map[string]*nodeVar{}
