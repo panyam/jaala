@@ -14,7 +14,10 @@ import (
 type Option func(*evalOptions)
 
 type evalOptions struct {
-	bind      map[Var][]ns.Value
+	bind map[Var][]ns.Value
+	// grouped says a column the goal selects is a constant its own equality bound (#457), a group key
+	// as any column is: an aggregate over nothing then answers no row, where a host's Bind answers one.
+	grouped   bool
 	budget    int64
 	witness   bool
 	canonical bool

@@ -1,0 +1,5 @@
+fixture: deps
+query: |
+  # = gives a variable a constant when nothing else binds it, and a column can be a constant
+  imports("api", ?p), ?from = "api" => ?from, ?p, "direct"
+expect: [[api, auth, direct], [api, cache, direct], [api, db, direct], [api, log, direct]]

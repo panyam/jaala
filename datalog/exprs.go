@@ -307,7 +307,8 @@ func exprLabel(t Term) string {
 
 // lowerExprRules is lowerExpressions for rules alone, a module's.
 func lowerExprRules(rules []Rule, reg *ns.Vocabulary) ([]Rule, error) {
-	q, err := lowerExpressions(Query{Rules: rules}, reg)
+	q, _, _ := lowerConstants(Query{Rules: rules}, nil)
+	q, err := lowerExpressions(q, reg)
 	return q.Rules, err
 }
 

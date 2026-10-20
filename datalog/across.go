@@ -604,9 +604,9 @@ func (acc accumulator) clone() accumulator {
 
 // rowsAcross reduces every segment of every group, each row with its segment's versions, and joins a
 // group's segments that reduce to the same row. With no group-by column, the versions no binding holds
-// in get the row over nothing, as At gives each of them.
+// in get the row over nothing, as At gives each of them, unless a constant column groups (#457).
 func (ag *aggregator) rowsAcross() ([]Row, error) {
-	if len(ag.keyVars) == 0 {
+	if len(ag.keyVars) == 0 && !ag.grouped {
 		left := ag.across
 		for _, g := range ag.segs[""] {
 			left = left.Minus(g.vs)

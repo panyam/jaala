@@ -54,8 +54,9 @@ func FuzzCompile(f *testing.F) {
 		err = datalog.ValidateBound(p.Query, v, params...)
 		var ce *datalog.CheckError
 		if errors.As(err, &ce) && ce.Kind == datalog.KindType {
-			// the query's own mistake, as negating a string is, which is located in the query
-			if pos, ok := p.Locate(err); !ok || pos.Offset < 0 || pos.Offset > len(text) {
+			// the query's own mistake, as negating a string is, which is located in the query unless it
+			// left the compiler no bytes to mark the program with
+			if pos, ok := p.Locate(err); (!ok && cypher.Marked(p)) || ok && (pos.Offset < 0 || pos.Offset > len(text)) {
 				t.Fatalf("%q compiled to %s, whose type error %v Locate places at %+v %v, not in the query", text, p.Text, err, pos, ok)
 			}
 			return

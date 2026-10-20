@@ -103,6 +103,7 @@ func answerGoal(b *Base, pos, negs []Literal, having []Compare, sel, cols []Term
 	total := 0
 	if hasAggregate(sel) || len(having) > 0 {
 		ag := newAggregator(sel, having, true)
+		ag.grouped = o.grouped
 		if b.across != nil {
 			ag.across = b.across.vs
 		}

@@ -24,7 +24,7 @@ inner ::= fact | "not " atom | comparison
 optional ::= "optional { " (inner (", " inner)*) " }"
 aggregate ::= aggfn "(" "distinct "? "?" vname ")"
 aggfn ::= "count" | "min" | "max" | "sum" | "avg" | "list"
-goal ::= literals (" => " (column (", " column)*) tail)?
+goal ::= literals (" => " ((column | string | unumber) (", " (column | string | unumber))*) tail)?
 column ::= "?" vname | aggregate | arith
 tail ::= (" having " (having (", " having)*))? (" order by " (order (", " order)*))? (" after " (constant (", " constant)*))? (" limit " [1-9] [0-9]{0,5})? (" offset " [0-9] [0-9]{0,5})?
 having ::= aggregate " " cmpop " " term

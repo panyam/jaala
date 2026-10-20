@@ -31,9 +31,13 @@ A goal or a rule body is a list of literals separated by commas, and all of them
 
 {{ demo "demos/guide/syntax-comparisons.yaml" }}
 
-A comparison only compares, which is a bit different from `=` in most programming languages. `=` checks that two values are equal, and it doesn't give a value to a variable that has none, so a variable a comparison uses has to appear in an atom of the same goal or rule. Where the comparison is written doesn't matter, since it's checked once the atom has run:
+A comparison mostly compares, which is a bit different from `=` in most programming languages. `=` checks that two values are equal, and it doesn't give a value to a variable that has none, so a variable a comparison uses has to appear in an atom of the same goal or rule. Where the comparison is written doesn't matter, since it's checked once the atom has run:
 
 {{ demo "demos/guide/syntax-equals-compares.yaml" }}
+
+The one exception is a constant ([#457](https://github.com/panyam/jaala/issues/457)). `?from = "api"`, or `"api" = ?from`, gives `?from` that value when nothing else binds it, in a goal or a rule, and the answer can hold a constant as a column of its own. A constant column groups an aggregate the way any column does, so over nothing it answers no row:
+
+{{ demo "demos/guide/syntax-equals-binds.yaml" }}
 
 An atom can also name the fact it matched: `imports(?a, ?b) as ?r` binds `?r` to that fact, so a query can return it, compare two with `!=`, or join on it ([#279](https://github.com/panyam/jaala/issues/279)). This is what Cypher's `-[r:IMPORTS]->` binds. A fact's name is the id its store gave it, or, when the store gave none, as here, the relation and its values written the way a query writes them:
 
@@ -103,7 +107,7 @@ The `path.*` functions read a path ([reference]({{.Site.PathPrefix}}/reference/b
 
 ## The goal and its projection
 
-After the goal, `=>` and a list of columns say what the answer holds. The columns are variables, [aggregates]({{.Site.PathPrefix}}/guide/aggregation/) or [arithmetic]({{.Site.PathPrefix}}/guide/arithmetic/#in-the-answer-and-in-a-rules-head), and after them can come `having`, `order by`, `limit` and `offset`, in that order. Leave out `=>` and its columns, and the answer has one column per variable of the goal, in the order they first appear:
+After the goal, `=>` and a list of columns say what the answer holds. The columns are variables, constants, [aggregates]({{.Site.PathPrefix}}/guide/aggregation/) or [arithmetic]({{.Site.PathPrefix}}/guide/arithmetic/#in-the-answer-and-in-a-rules-head), and after them can come `having`, `order by`, `limit` and `offset`, in that order. Leave out `=>` and its columns, and the answer has one column per variable of the goal, in the order they first appear:
 
 {{ demo "demos/guide/syntax-no-projection.yaml" }}
 

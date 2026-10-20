@@ -2133,12 +2133,15 @@ func (c *compiler) column(it returnItem) (column, *Error) {
 	return col, nil
 }
 
-// constColumn binds v to a fresh variable through list.member of a one-value list, since only an
-// atom binds a constant: a column that is a constant (#454), or a one-type relationship's type (#441).
+// constColumn binds v to a fresh variable by an equality, which binds a variable nothing else does
+// (#457): a column that is a constant (#454), or a one-type relationship's type (#441).
 func (c *compiler) constColumn(v ns.Value, name string) frag {
 	jv := c.fresh(name)
-	l := ns.ListText([]ns.Value{v})
-	*c.scope = append(*c.scope, frag{"list.member(" + quote(strings.ReplaceAll(l, `"`, `\"`)) + ", _, ?" + jv + ")"})
+	lit := v.S
+	if v.Num == nil {
+		lit = quote(v.S)
+	}
+	*c.scope = append(*c.scope, frag{"?" + jv + " = " + lit})
 	return frag{"?" + jv}
 }
 

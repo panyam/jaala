@@ -261,6 +261,10 @@ func parseOrderBy(sp span) ([]Order, error) {
 			return nil, piece.errorf("query: order by needs a column, as in %q", "order by ?n desc")
 		}
 		t, err := parseSelItem(piece)
+		if err == nil && t.Const != nil {
+			// a constant orders nothing; the projection may hold one (#457), order by may not
+			err = piece.errorf("query: projection column %q must be a ?variable or an aggregate", piece.text())
+		}
 		if err != nil {
 			return nil, within("order by", err)
 		}
@@ -776,7 +780,8 @@ func termError(s span) error {
 }
 
 // parseSelect parses the projection columns: each is a ?variable (a group key), an aggregate
-// func(?variable), func in {count,min,max,sum,list}, or arithmetic over variables (#206).
+// func(?variable), func in {count,min,max,sum,list}, arithmetic over variables (#206), or a constant
+// (#457).
 func parseSelect(proj span) ([]Term, error) {
 	if proj.empty() {
 		return nil, nil
@@ -801,6 +806,10 @@ func parseSelItem(p span) (Term, error) {
 		return parseOperand(p)
 	}
 	text := p.text()
+	if t := p.toks(); len(t) == 1 && (t[0].kind == tokString && t[0].flag || t[0].kind == tokNumber) {
+		// a constant column, the same value on every row (#457)
+		return parseTerm(p)
+	}
 	if strings.Contains(text, "(") {
 		return parseAggregate(p)
 	}
