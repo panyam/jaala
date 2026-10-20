@@ -292,7 +292,10 @@ GOARCH=wasm go test ./ns` (#417 ran `ns` that way).
   guide's questions in Cypher with `nl.Eval` (`internal/guide` is the fixture both front ends'
   `TestEval` share, `testdata/eval.golden`, `-update`), and `FuzzCompile` (in selfcheck) requires
   any text to compile to a program that validates, or to fail with an `*Error` or a type error
-  the query itself makes. It is a module of its own (CI's `cypher` job, `SUB_MODS_TO_TAG`), standard
+  the query itself makes. A `(` in an expression is tried as a pattern first and rewound
+  on failure; `parser.notPattern` keeps each failed attempt by token index, so a deep nesting parses in
+  one pass (#449: 6,000 levels took 11s and hung fuzz workers), and `TestThePatternMemoChangesNoParse`
+  holds every parse to what it was without it. It is a module of its own (CI's `cypher` job, `SUB_MODS_TO_TAG`), standard
   library and jaala only, and replaces jaala and nl with the checkout (Releasing); `internal/guide`
   imports no front end (its `Case` is converted to `nl.Case` in each test) so the root never
   requires one. Run its tests from inside it: the root's `./...` stops at the module. The docsite's

@@ -737,3 +737,23 @@ func TestAWalkToAnINListStartsFromTheList(t *testing.T) {
 		t.Errorf("control: the walk to every method answered under a budget of %d (%v), so the budget can't tell", budget, err)
 	}
 }
+
+// A ( in an expression is tried as a pattern before a parenthesized expression, and the attempt at a
+// deep nesting reads to its end before it fails, so each level redid every level inside it: FuzzCompile's
+// workers hung on 6,000 levels (#449). With failed attempts kept by position it takes one pass.
+// control: an expression nested 60 deep still compiles.
+func TestDeepNestingParsesInOnePass(t *testing.T) {
+	v, _ := guide.Deps(t)
+	const n = 5000
+	for _, pre := range []string{"MATCH (a) RETURN ", "MATCH (a) WHERE (a)--(", "MATCH () WHERE (A)--({A: (A)--("} {
+		text := pre + strings.Repeat("(", n) + "1" + strings.Repeat(")", n)
+		start := time.Now()
+		_, err := cypher.Compile(v, depsGraph, text)
+		if d := time.Since(start); d > 250*time.Millisecond {
+			t.Errorf("%s(×%d: %v to compile, want well under a second (%v)", pre, n, d, err)
+		}
+	}
+	if _, err := cypher.Compile(v, depsGraph, "MATCH (a:Package) RETURN "+strings.Repeat("(", 60)+"a.name"+strings.Repeat(")", 60)+" AS n"); err != nil {
+		t.Errorf("control: 60 levels: %v", err)
+	}
+}

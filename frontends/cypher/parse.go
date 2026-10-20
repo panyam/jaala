@@ -44,7 +44,14 @@ type parser struct {
 	braces int
 	// edgePaths are the variables relationships() reads (#280).
 	edgePaths map[string]bool
+	// notPattern is where pattern has failed, by token index, with its error. An expression tries a
+	// pattern at each ( before reading a parenthesized expression, and a failed attempt can read to
+	// the end of a deep nesting, so without it each level redid the levels inside it (#449).
+	notPattern map[int]*Error
 }
+
+// memoizePatterns turns notPattern on; a test turns it off to check it changes no parse.
+var memoizePatterns = true
 
 func parse(text string) (statement, error) {
 	toks, err := lex(text)
@@ -516,6 +523,22 @@ var clauseWords = map[string]bool{
 // variable binds the path (#280), when it chooses which paths. A quantified relationship is a variable
 // length, and a quantified path pattern is read and refused.
 func (p *parser) pattern() (pattern, *Error) {
+	start := p.i
+	if err, ok := p.notPattern[start]; ok {
+		return pattern{}, err
+	}
+	pat, err := p.readPattern()
+	if err != nil && memoizePatterns {
+		if p.notPattern == nil {
+			p.notPattern = map[int]*Error{}
+		}
+		p.notPattern[start] = err
+	}
+	return pat, err
+}
+
+// readPattern is pattern without the memo: a pattern from the token at p.i on.
+func (p *parser) readPattern() (pattern, *Error) {
 	t := p.peek()
 	var path string
 	var pathPos Pos
