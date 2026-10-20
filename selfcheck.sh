@@ -126,6 +126,19 @@ case $? in
 esac
 tr -d '\000' <"$out" | grep -E '^== |could not run|seeds:|seeds,|seed [0-9]+|DIFFERS|^(--- |ok|FAIL)'
 
+cypherseeds=${JAALA_BOLT_CYPHER_SEEDS:-1000}
+echo "== Cypher against Neo4j: $cypherseeds seeds"
+cypher_ran=yes
+# The same Cypher through frontends/cypher and natively in Neo4j (#413), on a server of its own, since
+# the differential reads every node of a label whatever namespace wrote it.
+EXCLUSIVE=1 STORES=neo4j JAALA_BOLT_CYPHER_SEEDS=$cypherseeds ./scripts/bolt-servers.sh sh -c 'cd stores/bolt && go test -count=1 -timeout 60m . -run "^(TestCypherAgreesWithNeo4j|TestKnownCypherDisagreementsStillDisagree)$" -v' >"$out" 2>&1
+case $? in
+0) ;;
+3) cypher_ran=no ;;
+*) status=1 ;;
+esac
+tr -d '\000' <"$out" | grep -E '^== |could not run|seeds:|seed [0-9]+|jaala answers|jaala errs|now gives|control:|^(--- |ok|FAIL)'
+
 echo "== llama.cpp keeps a model to nl's grammar"
 llama_ran=yes
 model=${JAALA_LLAMA_MODEL:-${XDG_CACHE_HOME:-$HOME/.cache}/jaala/stories260K.gguf}
@@ -156,6 +169,7 @@ missing=""
 [ $souffle_ran = no ] && missing="Soufflé"
 [ $llama_ran = no ] && missing="${missing:+$missing and }llama.cpp"
 [ $bolt_ran = no ] && missing="${missing:+$missing and }the graph servers"
+[ $cypher_ran = no ] && missing="${missing:+$missing and }Neo4j for the Cypher differential"
 if [ $status -ne 0 ]; then
 	echo "selfcheck: FAIL"
 elif [ -n "$missing" ]; then

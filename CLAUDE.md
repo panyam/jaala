@@ -235,6 +235,14 @@ GOARCH=wasm go test ./ns` (#417 ran `ns` that way).
   (`ns.WalkSource`) in one query: Neo4j's `*0..d-1` with `WITH DISTINCT n` (its planner prunes it to a
   BFS: 5,423 facts in 8 ms on the exercise's graph), Memgraph's `*BFS ..d-1` plus the starts, which its
   BFS doesn't return; a bound property or several literals (`ConjunctionWalkSource`) stay the engine's.
+  `TestCypherAgreesWithNeo4j` (#413, `cypherdiff_test.go`) runs the same Cypher through
+  `frontends/cypher` and natively in Neo4j over seeded graphs that rule out doc.go's differences (no
+  self-loops, one relationship per ordered pair, every node every property) and seeded queries that
+  mean something (`cypherGen`: the grammar's sampler writes syntax, and 1997 of 2000 draws didn't
+  compile). It clears the whole server, since a label MATCH sees every namespace, so it runs only with
+  `JAALA_BOLT_EXCLUSIVE` (CI's job, 100 seeds; selfcheck's own step, `EXCLUSIVE=1`, 1000). A shrink
+  drops whole nodes or edges, never one property, or it recreates the Props-as-match difference.
+  `knownCypherDisagreements` holds the open ones with a repro and seed (#438, #439, min/max over text).
 - **`frontends/cypher` compiles Cypher to jaala text over a host's `Graph`** (#352, mission #356):
   `Node` and `Edge` name the relation holding a label or a type, its key or endpoints, `Fixed`
   constants (Declaire's `node(id, "Function")`) and property columns, `Props` a key-value

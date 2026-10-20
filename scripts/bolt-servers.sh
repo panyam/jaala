@@ -5,7 +5,8 @@
 # pair make servers-up starts (#435) is used when it's up, and otherwise the server is started in a
 # Docker container on a free port and removed after (KEEP=1 keeps it). Each run's tests keep to a
 # namespace of their own, so runs from several worktrees share the pair safely. A server not chosen
-# is unset, so the tests skip it.
+# is unset, so the tests skip it. EXCLUSIVE=1 skips the shared pair and starts a throwaway server,
+# and sets JAALA_BOLT_EXCLUSIVE for the tests that clear a whole server (#413's Cypher differential).
 #
 #   scripts/bolt-servers.sh <command...>
 #
@@ -49,7 +50,7 @@ for s in neo4j memgraph; do
 		missing+=("$s: no $var and no Docker to start one")
 		continue
 	fi
-	if shared=$(docker compose -f "$(dirname "$0")/../stores/bolt/compose.yml" port "$s" 7687 2>/dev/null) && [ -n "$shared" ]; then
+	if [ -z "${EXCLUSIVE:-}" ] && shared=$(docker compose -f "$(dirname "$0")/../stores/bolt/compose.yml" port "$s" 7687 2>/dev/null) && [ -n "$shared" ]; then
 		export "$var=bolt://$shared"
 		echo "== $s from the shared pair at ${!var}"
 		chosen=$((chosen + 1))
@@ -78,4 +79,5 @@ for m in ${missing[@]+"${missing[@]}"}; do echo "  could not run: $m"; done
 if [ $chosen -eq 0 ]; then
 	exit 3
 fi
+[ -n "${EXCLUSIVE:-}" ] && export JAALA_BOLT_EXCLUSIVE=1
 JAALA_BOLT_REQUIRE=1 "$@"
