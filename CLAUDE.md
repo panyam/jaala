@@ -31,7 +31,11 @@ stores, which is why it was split (#320).
 work baselines, fuzzing, the same 5000 seeds against Soufflé when `souffle` is on PATH, and a real
 `llama-server` under nl's grammar when `make llama` has fetched it (each prints "could not run"
 otherwise). The corpus step takes about 5.5 minutes alone and runs under `-timeout 30m`, as the
-Soufflé step does (#381: under a load near 28 it passed go test's default 10 and failed). `make setup` installs both.
+Soufflé step does (#381: under a load near 28 it passed go test's default 10 and failed). Near 80
+even 30 wasn't enough: 36f59f2's note says FAIL with only `FAIL ... 1800s` to show for it, since
+selfcheck's filter drops the timeout's goroutine dump and the next step overwrites the output. Rerun
+that step's `go test` line alone with its output kept before bisecting; there it passed in 18m at a
+load near 50. `make setup` installs both.
 `make selfcheck` runs it on a commit (`REF`, default `origin/main`; `SEEDS`, `FUZZ`, `CYPHER_FUZZ` for a
 bigger run) in a worktree of its own, in the foreground with its log teed to `~/.cache/jaala/selfcheck/`,
 and records the result as a git note on that commit (`refs/notes/selfcheck`, pushed unless `NOPUSH`).
@@ -1251,6 +1255,10 @@ priority and a mission link when filed, or `waiting` with the trigger that would
 Create the branch before the first commit (`git branch --show-current` says so). #200's work was
 committed on local `main`, so `git reset --soft main` to squash it did nothing and the PR opened
 with WIP commits. Squash against `origin/main`, never a local name that may have moved.
+
+Another session may be working the same ticket: #445 was built twice in parallel (#451 merged, #452
+closed as its duplicate). Before branching, `gh pr list --state all --search '<N>'` for a PR naming
+the ticket, and again before opening yours.
 
 Another session may tag a release while your PR is open: v0.1.65 shipped `nl` at the root while
 #337, which moved it, was being planned on "no tag ships it yet". Check `git fetch --tags` and
