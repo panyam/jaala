@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -184,4 +185,90 @@ func remarshal(from, to any) error {
 		return err
 	}
 	return json.Unmarshal(data, to)
+}
+
+// A Run's BaseFor is asked with the program each of query, explain and values runs, and its Base is
+// the one the program reads. control: a Run with only a Base reads that Base, every road.
+func TestARunsBaseForIsAskedWithTheProgram(t *testing.T) {
+	v, whole := roads(t)
+	fromA, err := datalog.NewBase(v, roadSource(func(from string) bool { return from == "a" }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var asked []datalog.Query
+	type narrow struct {
+		Narrow bool `json:"narrow,omitempty" jsonschema_description:"Read only the roads from a."`
+	}
+	srv, err := mcp.NewWith(v, pack, mcp.Options{Base: func(context.Context) (*datalog.Base, error) { return whole, nil }},
+		mcp.Extension[narrow]{Prepare: func(_ context.Context, _ string, a narrow) (mcp.Run, error) {
+			if !a.Narrow {
+				return mcp.Run{Base: whole}, nil
+			}
+			return mcp.Run{BaseFor: func(_ context.Context, q datalog.Query) (*datalog.Base, error) {
+				asked = append(asked, q)
+				return fromA, nil
+			}}, nil
+		}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := testutil.NewTestClient(t, srv)
+	const program = `road(?from, ?to) => ?to`
+	if got := c.ToolCall("query", map[string]any{"program": program}); !strings.Contains(got, "4 rows") || len(asked) != 0 {
+		t.Fatalf("control: with a Base alone, BaseFor asked %d times:\n%s", len(asked), got)
+	}
+	if got := c.ToolCall("query", map[string]any{"program": program, "narrow": true}); !strings.Contains(got, "1 row\n") {
+		t.Errorf("query over BaseFor's base:\n%s", got)
+	}
+	want, _ := datalog.Parse(program)
+	if len(asked) != 1 || !reflect.DeepEqual(asked[0], want) {
+		t.Fatalf("BaseFor was asked with %v, want the program once", asked)
+	}
+	if got := c.ToolCall("explain", map[string]any{"program": program, "narrow": true}); !strings.HasPrefix(got, "1 row\n") || len(asked) != 2 {
+		t.Errorf("explain over BaseFor's base, asked %d:\n%s", len(asked), got)
+	}
+	if got := c.ToolCall("values", map[string]any{"target": "road.from", "narrow": true}); !strings.Contains(got, "1 row") || len(asked) != 3 {
+		t.Errorf("values over BaseFor's base, asked %d:\n%s", len(asked), got)
+	}
+}
+
+// A failing BaseFor is the call's tool error, with its text.
+func TestAFailingBaseForIsTheCallsError(t *testing.T) {
+	v, b := roads(t)
+	srv, err := mcp.NewWith(v, pack, mcp.Options{Base: func(context.Context) (*datalog.Base, error) { return b, nil }},
+		mcp.Extension[struct{}]{Prepare: func(context.Context, string, struct{}) (mcp.Run, error) {
+			return mcp.Run{BaseFor: func(context.Context, datalog.Query) (*datalog.Base, error) {
+				return nil, errors.New("the board tier could not be read")
+			}}, nil
+		}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := call(t, testutil.NewTestClient(t, srv), "query", map[string]any{"program": `road(?from, ?to) => ?to`})
+	if !res.IsError || !strings.Contains(res.Content[0].Text, "the board tier could not be read") {
+		t.Errorf("%v %s", res.IsError, res.Content[0].Text)
+	}
+}
+
+// An answer carries what the call bound, by the name the call gave: query's variables without
+// their ?, and cypher's parameters. control: an unbound call's Bind is nil.
+func TestAnAnswerCarriesWhatTheCallBound(t *testing.T) {
+	var got []map[string][]ns.Value
+	record := func(a mcp.Answer) string { got = append(got, a.Bind); return "ok" }
+	p := pack
+	p.Format = record
+	c := dial(t, p, mcp.Options{})
+	c.ToolCall("query", map[string]any{"program": `road(?from, ?to) => ?to`})
+	c.ToolCall("query", map[string]any{"program": `road(?from, ?to) => ?to`, "bind": map[string]any{"?from": []any{"a", "c"}}})
+	if len(got) != 2 || got[0] != nil || !reflect.DeepEqual(got[1], map[string][]ns.Value{"from": {ns.S("a"), ns.S("c")}}) {
+		t.Errorf("query's Bind: %v", got)
+	}
+
+	cp := codePack(codeGraph("Func"))
+	cp.Format = record
+	cy := dialCode(t, cp, mcp.Options{})
+	cy.ToolCall("cypher", map[string]any{"query": `MATCH (a:Func {name: $who})-[:CALLS]->(b:Func) RETURN b.name`, "params": map[string]any{"who": "main"}})
+	if len(got) != 3 || !reflect.DeepEqual(got[2], map[string][]ns.Value{"who": {ns.S("main")}}) {
+		t.Errorf("cypher's Bind: %v", got[len(got)-1])
+	}
 }

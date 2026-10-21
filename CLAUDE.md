@@ -177,13 +177,15 @@ GOARCH=wasm go test ./ns` (#417 ran `ns` that way).
   none) unless `Pack.Instructions` replaces them word for word, which declaire#308's wording runs
   use. A host adds its own tools on the returned server and writes answers with `Pack.Format`, and
   `Pack.Data` (#469) as structured content, which must be a JSON object and replaces the `json` shape.
-  `query` and `explain` take `bind` (`bind.option`, through `datalog.Bind`; a list ranges a variable). Its
+  `query` and `explain` take `bind` (`bind.values`, then `option` into `datalog.Bind`; a list ranges a
+  variable), and `Answer.Bind` reports it, or cypher's `params`, by the name the call gave (#472). Its
   own arguments go on jaala's tools through `mcp.NewWith` and an `Extension[A]` (#357): `A`'s
   fields are merged flat into each tool's schema (`args.go`, which reads the arguments twice, since
   Go can't embed a type parameter), a clash with a tool's own name is refused at startup, and every
   schema says `additionalProperties: false`, so mcpkit's argument validation fails a misspelled
   call, plain `New`'s too. `Prepare` returns a `Run` per call (Base, Eval, a whole Pack, a `Vocabulary`
-  the vocabulary-reading tools use instead of the server's, never resolving it, #469, and a
+  the vocabulary-reading tools use instead of the server's, never resolving it, #469, a `BaseFor`
+  asked with each program query, explain, values and cypher run, in place of Base, ask excepted, #472, and a
   `Timeout` that shortens `Options.Timeout`, #361: the handler in `args.go` sets the deadline on
   `ToolContext`'s embedded context before `Prepare`, and `budgetHint` names it). `look`, `values` and
   `find` (`actions.go`, #393) are nl's actions as tools, through the exported `nl.Look` and `nl.Probe`,

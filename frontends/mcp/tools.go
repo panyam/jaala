@@ -49,7 +49,7 @@ func (c *call) query(ctx core.ToolContext, in queryInput) (core.ToolResult, erro
 	if err != nil {
 		return c.refuse(in.Program, err), nil
 	}
-	b, err := c.base(ctx)
+	b, err := c.base(ctx, &q)
 	if err != nil {
 		return core.ErrorResult(err.Error() + c.budgetHint(err)), nil
 	}
@@ -62,18 +62,21 @@ func (c *call) query(ctx core.ToolContext, in queryInput) (core.ToolResult, erro
 		r = &datalog.Report{}
 		extra = append(extra, datalog.Explain(r))
 	}
-	if len(in.Bind) > 0 {
-		opt, err := in.Bind.option()
-		if err != nil {
-			return core.ErrorResult(err.Error()), nil
-		}
-		extra = append(extra, opt)
+	bound, err := in.Bind.values()
+	if err != nil {
+		return core.ErrorResult(err.Error()), nil
+	}
+	if len(bound) > 0 {
+		extra = append(extra, option(bound))
 	}
 	tab, err := datalog.SemiNaive{}.EvalTable(ctx, sampled(q, in.Sample), b, c.evalOptions(in.MaxWork, extra...)...)
 	if err != nil {
 		return c.refuse(in.Program, err), nil
 	}
 	a := page(in.Program, tab, offset, c.limit(in.Limit))
+	if len(bound) > 0 {
+		a.Bind = bound
+	}
 	a.Why = c.whyEmpty(ctx, tab.Len(), r, func(err error) string { return nl.Explain(in.Program, err) })
 	return c.answer(a, in.JSON)
 }
@@ -98,8 +101,12 @@ func (t *tools) limit(asked int) int {
 	return t.o.Limit
 }
 
-// base is the Base the call reads: its Run's, or else the one Options.Base picks.
-func (c *call) base(ctx context.Context) (*datalog.Base, error) {
+// base is the Base the call reads q over: its Run's BaseFor's, or its Run's Base, or else the one
+// Options.Base picks. ask, which has no program until its model writes one, reads it with none.
+func (c *call) base(ctx context.Context, q *datalog.Query) (*datalog.Base, error) {
+	if c.run.BaseFor != nil && q != nil {
+		return c.run.BaseFor(ctx, *q)
+	}
 	if c.run.Base != nil {
 		return c.run.Base, nil
 	}
@@ -406,18 +413,18 @@ func (c *call) explain(ctx core.ToolContext, in explainInput) (core.ToolResult, 
 	if err != nil {
 		return c.refuse(in.Program, err), nil
 	}
-	b, err := c.base(ctx)
+	b, err := c.base(ctx, &q)
 	if err != nil {
 		return core.ErrorResult(err.Error() + c.budgetHint(err)), nil
 	}
 	var r datalog.Report
 	extra := []datalog.Option{datalog.Explain(&r)}
-	if len(in.Bind) > 0 {
-		opt, err := in.Bind.option()
-		if err != nil {
-			return core.ErrorResult(err.Error()), nil
-		}
-		extra = append(extra, opt)
+	bound, err := in.Bind.values()
+	if err != nil {
+		return core.ErrorResult(err.Error()), nil
+	}
+	if len(bound) > 0 {
+		extra = append(extra, option(bound))
 	}
 	rows, err := datalog.SemiNaive{}.Eval(ctx, q, b, c.evalOptions(in.MaxWork, extra...)...)
 	if err != nil {
@@ -472,7 +479,7 @@ func (c *call) ask(ctx core.ToolContext, in askInput) (core.ToolResult, error) {
 	default:
 		return core.ErrorResult(fmt.Sprintf("language %q: want datalog or cypher", lang)), nil
 	}
-	b, err := c.base(ctx)
+	b, err := c.base(ctx, nil)
 	if err != nil {
 		return core.ErrorResult(err.Error() + c.budgetHint(err)), nil
 	}
