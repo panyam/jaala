@@ -46,7 +46,8 @@ type Extraction struct {
 }
 
 // A Fact is one line of an accepted draft: a fact the text adds (Add) or says no longer holds, its
-// values as the engine reads a query's constants, and the words of the text that state it, Span as
+// values as the engine reads a query's constants, text unescaped as Span's words are (a backslash
+// keeps the next character, so "say \"hi\"" is say "hi", #444), and the words of the text that state it, Span as
 // quoted and Start and End its byte offsets in the text, -1 when the line quoted none. Replaced are the
 // facts it replaced through Pack.Keys, from the Base or from an earlier line, which the change set
 // removes.
@@ -456,7 +457,11 @@ func readLine(text, line string, v *ns.Vocabulary) (Fact, *lineError) {
 	}
 	f.Relation = a.Relation
 	for _, arg := range a.Args {
-		f.Values = append(f.Values, *arg.Const)
+		val := *arg.Const
+		if val.Num == nil {
+			val.S = unescape(val.S)
+		}
+		f.Values = append(f.Values, val)
 	}
 	var one ns.Changes
 	if err := one.Add(f.Relation, ns.Tuple{Vals: f.Values}).Check(v); err != nil {
@@ -534,7 +539,7 @@ func pick(vals []ns.Value, at []int) []ns.Value {
 }
 
 // heldUnder are the facts of rel b holds with vals' values at keys, read by evaluating rel's call with
-// those values as constants.
+// those values bound, never written as text, which can't spell a value holding a quote (#444).
 func heldUnder(ctx context.Context, b *datalog.Base, opts []datalog.Option, rel string, vals []ns.Value, keys []int) ([][]ns.Value, error) {
 	isKey := map[int]bool{}
 	for _, k := range keys {
@@ -542,9 +547,11 @@ func heldUnder(ctx context.Context, b *datalog.Base, opts []datalog.Option, rel 
 	}
 	args := make([]string, len(vals))
 	var cols []string
+	bind := map[datalog.Var][]ns.Value{}
 	for i, v := range vals {
 		if isKey[i] {
-			args[i] = constantText(v)
+			args[i] = fmt.Sprintf("?k%d", i)
+			bind[datalog.Var(fmt.Sprintf("k%d", i))] = []ns.Value{v}
 			continue
 		}
 		args[i] = fmt.Sprintf("?v%d", i)
@@ -554,7 +561,7 @@ func heldUnder(ctx context.Context, b *datalog.Base, opts []datalog.Option, rel 
 	if err != nil {
 		return nil, err
 	}
-	rows, err := datalog.SemiNaive{}.Eval(ctx, q, b, opts...)
+	rows, err := datalog.SemiNaive{}.Eval(ctx, q, b, append(opts[:len(opts):len(opts)], datalog.Bind(bind))...)
 	if err != nil {
 		return nil, err
 	}
@@ -569,15 +576,6 @@ func heldUnder(ctx context.Context, b *datalog.Base, opts []datalog.Option, rel 
 		out[r] = held
 	}
 	return out, nil
-}
-
-// constantText writes v as a query's constant: a number with its unit, or quoted text, whose
-// backslashes are already the parser's.
-func constantText(v ns.Value) string {
-	if v.Num != nil {
-		return v.S + v.BaseUnit
-	}
-	return `"` + v.S + `"`
 }
 
 // sameValues reports whether a and b are one fact's values: numbers by value and unit, text by text.

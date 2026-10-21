@@ -176,6 +176,44 @@ func TestAnExtractedFactReplacesTheOneHeldUnderItsKey(t *testing.T) {
 	}
 }
 
+// A key holding a quote or a backslash, which a draft writes escaped, finds the fact the host stored
+// unescaped and replaces it (#444); an earlier line under that key is replaced the same way.
+func TestAQuotedKeyReplacesTheFactHeldUnderIt(t *testing.T) {
+	src := ns.NewMemSource().DeclareSchema("owner", ns.Schema{Arity: 2, Labels: []string{"pkg", "person"}})
+	src.Add("owner", ns.Tuple{Vals: []ns.Value{ns.S(`say "hi"`), ns.S("alice")}})
+	src.Add("owner", ns.Tuple{Vals: []ns.Value{ns.S(`C:\dir`), ns.S("alice")}})
+	v, err := ns.NewVocabulary(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := v.AddLanguage(datalog.Language); err != nil {
+		t.Fatal(err)
+	}
+	b, err := datalog.NewBase(v, src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pack := &nl.Pack{Keys: map[string][]int{"owner": {0}}}
+	const text = `Bob owns say "hi" now. Carol took it over. Dan owns C:\dir.`
+	cases := []struct{ name, lines, want string }{
+		{"quote", `+ owner("say \"hi\"", "bob") from "Bob owns say \"hi\" now"`,
+			"- owner(\"say \\\"hi\\\"\", \"alice\")\n+ owner(\"say \\\"hi\\\"\", \"bob\") [text:0-21]\n"},
+		{"backslash", `+ owner("C:\\dir", "dan") from "Dan owns C:\\dir"`,
+			"- owner(\"C:\\\\dir\", \"alice\")\n+ owner(\"C:\\\\dir\", \"dan\") [text:43-58]\n"},
+		{"earlier line", `+ owner("say \"hi\"", "bob") from "Bob owns say \"hi\" now"` + "\n" + `+ owner("say \"hi\"", "carol") from "Carol took it over"`,
+			"- owner(\"say \\\"hi\\\"\", \"alice\")\n- owner(\"say \\\"hi\\\"\", \"bob\")\n+ owner(\"say \\\"hi\\\"\", \"carol\") [text:23-41]\n"},
+	}
+	for _, c := range cases {
+		x, _, err := nl.Extract(context.Background(), text, v, model("m", c.lines), nl.ExtractOptions{Base: b, Pack: pack})
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if got := changesText(x.Changes); got != c.want {
+			t.Errorf("%s: changes\n%s\nwant\n%s", c.name, got, c.want)
+		}
+	}
+}
+
 // A refused line goes back to the model naming its line, what was wrong and, for a value, where.
 func TestExtractRefusesALineItCantHold(t *testing.T) {
 	v, _ := owned(t)
