@@ -59,7 +59,7 @@ func (c *call) cypher(ctx core.ToolContext, in cypherInput) (core.ToolResult, er
 		}
 		extra = append(extra, bind)
 	}
-	b, err := c.base(ctx)
+	b, err := c.base(ctx, &p.Query)
 	if err != nil {
 		return core.ErrorResult(err.Error() + c.budgetHint(err)), nil
 	}
@@ -71,6 +71,12 @@ func (c *call) cypher(ctx core.ToolContext, in cypherInput) (core.ToolResult, er
 	}
 	a := page(p.Text, tab, offset, c.limit(in.Limit))
 	a.Cypher = in.Query
+	if len(values) > 0 {
+		a.Bind = map[string][]ns.Value{}
+		for name, v := range values {
+			a.Bind[name] = []ns.Value{v}
+		}
+	}
 	a.Why = c.whyEmpty(ctx, tab.Len(), r, func(err error) string { return cypher.Explain(in.Query, p, err) })
 	if len(p.Columns) == len(a.Columns) {
 		a.Columns = p.Columns
@@ -92,10 +98,10 @@ func paramValues(params map[string]any) (map[string]ns.Value, error) {
 	return out, nil
 }
 
-// option is b as datalog.Bind takes it: each variable, named with or without its ?, to its value, or
-// to each value of a list, which it ranges over.
-func (b bind) option() (datalog.Option, error) {
-	out := make(map[datalog.Var][]ns.Value, len(b))
+// values is b as an answer reports it: each variable, named without its ?, to its value, or to each
+// value of a list, which it ranges over.
+func (b bind) values() (map[string][]ns.Value, error) {
+	out := make(map[string][]ns.Value, len(b))
 	for name, v := range b {
 		name = strings.TrimPrefix(name, "?")
 		list, ok := v.([]any)
@@ -110,9 +116,18 @@ func (b bind) option() (datalog.Option, error) {
 			}
 			vals = append(vals, val)
 		}
-		out[datalog.Var(name)] = vals
+		out[name] = vals
 	}
-	return datalog.Bind(out), nil
+	return out, nil
+}
+
+// option is vals as datalog.Bind takes them.
+func option(vals map[string][]ns.Value) datalog.Option {
+	out := make(map[datalog.Var][]ns.Value, len(vals))
+	for name, v := range vals {
+		out[datalog.Var(name)] = v
+	}
+	return datalog.Bind(out)
 }
 
 // valueOf is a JSON value as jaala's: a string is text and a number a number, and nothing else is one.

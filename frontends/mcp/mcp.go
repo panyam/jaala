@@ -106,6 +106,11 @@ type Answer struct {
 	// Why says, for a call with a sample that answered no rows, which part matched nothing, in the
 	// language the call was written in; "" otherwise.
 	Why string
+	// Bind is what the call bound, by the name it gave: a program's variables, without their ?, for
+	// query, and a Cypher query's $parameters, without their $, for cypher. A host writing a link
+	// or a program that asks the same question again needs them, since Program is the text alone.
+	// nil when the call bound nothing.
+	Bind map[string][]ns.Value
 }
 
 // An Extension adds a host's own arguments, the fields of A, to every jaala tool (#357), such as
@@ -125,6 +130,12 @@ type Run struct {
 	// Base is the Base the call reads, such as one narrowed to some repos. Options.Base is asked
 	// only when it is nil.
 	Base *datalog.Base
+	// BaseFor, when set, is asked for the Base of each program the call runs (query's and explain's,
+	// values' probe, and the program cypher compiles to), given the program, in place of Base. It is
+	// for a host whose Base depends on what a program reads, such as one that opens an expensive
+	// tier only when a program reads a relation in it. ask, which has no program until its model
+	// writes one, reads Base.
+	BaseFor func(ctx context.Context, q datalog.Query) (*datalog.Base, error)
 	// Eval are options the call runs with after Options.Eval.
 	Eval []datalog.Option
 	// Pack replaces the server's pack for the call: its Card is what schema says at "data", its
