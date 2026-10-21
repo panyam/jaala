@@ -83,16 +83,47 @@ func (c *call) cypher(ctx core.ToolContext, in cypherInput) (core.ToolResult, er
 func paramValues(params map[string]any) (map[string]ns.Value, error) {
 	out := map[string]ns.Value{}
 	for name, v := range params {
-		switch x := v.(type) {
-		case string:
-			out[name] = ns.S(x)
-		case float64:
-			out[name] = ns.N(x)
-		default:
+		val, ok := valueOf(v)
+		if !ok {
 			return nil, fmt.Errorf("params: $%s is %v; a parameter is a string or a number", name, v)
 		}
+		out[name] = val
 	}
 	return out, nil
+}
+
+// option is b as datalog.Bind takes it: each variable, named with or without its ?, to its value, or
+// to each value of a list, which it ranges over.
+func (b bind) option() (datalog.Option, error) {
+	out := make(map[datalog.Var][]ns.Value, len(b))
+	for name, v := range b {
+		name = strings.TrimPrefix(name, "?")
+		list, ok := v.([]any)
+		if !ok {
+			list = []any{v}
+		}
+		vals := make([]ns.Value, 0, len(list))
+		for _, x := range list {
+			val, ok := valueOf(x)
+			if !ok {
+				return nil, fmt.Errorf("bind: ?%s is %v; a variable is bound to a string, a number, or a list of them", name, x)
+			}
+			vals = append(vals, val)
+		}
+		out[datalog.Var(name)] = vals
+	}
+	return datalog.Bind(out), nil
+}
+
+// valueOf is a JSON value as jaala's: a string is text and a number a number, and nothing else is one.
+func valueOf(v any) (ns.Value, bool) {
+	switch x := v.(type) {
+	case string:
+		return ns.S(x), true
+	case float64:
+		return ns.N(x), true
+	}
+	return ns.Value{}, false
 }
 
 // pageOffset reads a page_token: "" is the start, and anything else must be an offset this server gave.

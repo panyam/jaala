@@ -35,7 +35,7 @@ func Example_mcpInstructions() {
 	// Output:
 	// the packages of a Go service and what each imports
 	//
-	// Ask with the query tool, in jaala's Datalog. A program is rules, if any, then one goal: 'rule(?a, ?b) :- body; ... body => ?a, ?b'. Variables are ?name and strings are "quoted"; there's no "?-" before a goal, and its columns follow => without parentheses. Every row carries the facts it was derived from.
+	// Ask with the query tool, in jaala's Datalog. A program is rules, if any, then one goal: 'rule(?a, ?b) :- body; ... body => ?a, ?b'. Variables are ?name and strings are "quoted"; there's no "?-" before a goal, and its columns follow => without parentheses. Every row carries the facts it was derived from. A value the user gave goes in bind, by its variable's name, rather than into the program's text.
 	//
 	// Before writing a program, call schema with no path for every relation and module, and with a module's or relation's path for its members and docs.
 	//
