@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -31,9 +32,13 @@ type queryInput struct {
 	MaxWork   int64  `json:"max_work,omitempty" jsonschema_description:"Stop past this much work; the server caps it too."`
 	Sample    int    `json:"sample,omitempty" jsonschema_description:"Try the program on this many rows: it stops after them, and when none come back the answer says which part matched nothing."`
 	JSON      bool   `json:"json,omitempty" jsonschema_description:"Answer with the columns, rows and witnesses as JSON instead of text."`
+	Bind      bind   `json:"bind,omitempty" jsonschema_description:"Values for the program's variables, by name (net or ?net): a string, a number, or a list the variable ranges over. Put a value the user gave here rather than into the program's text."`
 
 	bare bool // no witnesses, for the values tool
 }
+
+// A bind is the values an agent binds a program's variables to, by name.
+type bind map[string]any
 
 func (c *call) query(ctx core.ToolContext, in queryInput) (core.ToolResult, error) {
 	offset, err := pageOffset(in.PageToken)
@@ -56,6 +61,13 @@ func (c *call) query(ctx core.ToolContext, in queryInput) (core.ToolResult, erro
 	if in.Sample > 0 || c.p.Hint != nil {
 		r = &datalog.Report{}
 		extra = append(extra, datalog.Explain(r))
+	}
+	if len(in.Bind) > 0 {
+		opt, err := in.Bind.option()
+		if err != nil {
+			return core.ErrorResult(err.Error()), nil
+		}
+		extra = append(extra, opt)
 	}
 	tab, err := datalog.SemiNaive{}.EvalTable(ctx, sampled(q, in.Sample), b, c.evalOptions(in.MaxWork, extra...)...)
 	if err != nil {
@@ -135,19 +147,57 @@ func (c *call) budgetHint(err error) string {
 	return text + ".\n"
 }
 
+// answer is a page as the call answers it: Format's text, or the default's, and as structured
+// content the pack's Data, or with json the default's, which then is the text too.
 func (t *tools) answer(a Answer, asJSON bool) (core.ToolResult, error) {
 	text := formatAnswer(a)
 	if t.p.Format != nil {
 		text = t.p.Format(a)
 	}
-	if !asJSON {
+	var data any
+	if t.p.Data != nil {
+		d, err := t.p.Data(a)
+		if err != nil {
+			return core.ErrorResult(err.Error()), nil
+		}
+		data = d
+	}
+	if data == nil && !asJSON {
 		return core.TextResult(text), nil
 	}
-	data, err := json.Marshal(answerJSON(a))
+	if data == nil {
+		data = answerJSON(a)
+	}
+	raw, err := json.Marshal(data)
 	if err != nil {
 		return core.ToolResult{}, err
 	}
-	return core.StructuredResult(string(data), json.RawMessage(data)), nil
+	// MCP's structuredContent is an object, so a host's array or scalar is its mistake to hear about.
+	if !bytes.HasPrefix(bytes.TrimSpace(raw), []byte("{")) {
+		return core.ErrorResult(fmt.Sprintf("the server's Data gave %s, and an answer's structured content must be a JSON object", kindOf(raw))), nil
+	}
+	if asJSON {
+		text = string(raw)
+	}
+	return core.StructuredResult(text, json.RawMessage(raw)), nil
+}
+
+// kindOf names raw's JSON kind for an error: an array, a string, and so on.
+func kindOf(raw []byte) string {
+	switch b := bytes.TrimSpace(raw); {
+	case len(b) == 0:
+		return "nothing"
+	case b[0] == '[':
+		return "an array"
+	case b[0] == '"':
+		return "a string"
+	case string(b) == "null":
+		return "null"
+	case string(b) == "true" || string(b) == "false":
+		return "a boolean"
+	default:
+		return "a number"
+	}
 }
 
 // maxWitness is the most witness lines the default format writes per row.
@@ -348,6 +398,7 @@ const explainDesc = `Run a Datalog program and say how it went instead of its ro
 type explainInput struct {
 	Program string `json:"program" jsonschema:"required" jsonschema_description:"A Datalog program: rules, if any, then a goal with =>."`
 	MaxWork int64  `json:"max_work,omitempty" jsonschema_description:"Stop past this much work; the server caps it too."`
+	Bind    bind   `json:"bind,omitempty" jsonschema_description:"Values for the program's variables, as query takes them."`
 }
 
 func (c *call) explain(ctx core.ToolContext, in explainInput) (core.ToolResult, error) {
@@ -360,7 +411,15 @@ func (c *call) explain(ctx core.ToolContext, in explainInput) (core.ToolResult, 
 		return core.ErrorResult(err.Error() + c.budgetHint(err)), nil
 	}
 	var r datalog.Report
-	rows, err := datalog.SemiNaive{}.Eval(ctx, q, b, c.evalOptions(in.MaxWork, datalog.Explain(&r))...)
+	extra := []datalog.Option{datalog.Explain(&r)}
+	if len(in.Bind) > 0 {
+		opt, err := in.Bind.option()
+		if err != nil {
+			return core.ErrorResult(err.Error()), nil
+		}
+		extra = append(extra, opt)
+	}
+	rows, err := datalog.SemiNaive{}.Eval(ctx, q, b, c.evalOptions(in.MaxWork, extra...)...)
 	if err != nil {
 		return c.refuse(in.Program, err), nil
 	}

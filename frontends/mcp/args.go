@@ -72,7 +72,9 @@ func tool[In, A any](t *tools, x Extension[A], host object, name, desc string, h
 				c.timeout = r.Timeout
 			}
 		}
-		if readsVocabulary[name] {
+		if readsVocabulary[name] && c.run.Vocabulary != nil {
+			c.v = c.run.Vocabulary
+		} else if readsVocabulary[name] {
 			v, err := t.vocab.get(ctx)
 			if err != nil {
 				return core.ErrorResult(err.Error()), nil

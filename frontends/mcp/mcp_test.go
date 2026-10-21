@@ -97,7 +97,7 @@ func call(t *testing.T, c *testutil.TestClient, tool string, args map[string]any
 func TestTheInstructionsSayWhatTheServerIsFor(t *testing.T) {
 	c := dial(t, pack, mcp.Options{})
 	got := c.Client.Instructions
-	for _, want := range []string{"Roads between towns.", "call schema", `"data"`, "# where can a get to?", `trip.reach("a", ?t) => ?t`, "explain"} {
+	for _, want := range []string{"Roads between towns.", "call schema", `"data"`, "# where can a get to?", `trip.reach("a", ?t) => ?t`, "explain", "goes in bind"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("instructions lack %q:\n%s", want, got)
 		}

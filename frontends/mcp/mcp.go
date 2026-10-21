@@ -43,6 +43,12 @@ type Pack struct {
 	// Format, when set, writes a query's or an ask's answer instead of the default table, such as with
 	// a host's own links or code snippets for what the rows cite.
 	Format func(Answer) string
+	// Data, when set, is the structured content of a query's, cypher's or ask's answer, in place of
+	// the columns, rows and witnesses json asks for, so a client reads the host's own shape of an
+	// answer (its entities, citations or links) as data. It must marshal to a JSON object, and it is
+	// sent whether or not the call asked for json; with json, its JSON is the text too. nil is no
+	// data, and an error is the call's tool error.
+	Data func(Answer) (any, error)
 	// Cypher, when set, is how the vocabulary reads as a property graph, and New offers the cypher
 	// tool, which compiles a Cypher query over it (frontends/cypher, #366). A Run's Pack may bring
 	// another graph for its call; one without a graph refuses the call. cypher.Store writes it for
@@ -129,6 +135,11 @@ type Run struct {
 	// Timeout, when shorter than Options.Timeout (or that is 0), is the longest the rest of the call
 	// may take.
 	Timeout time.Duration
+	// Vocabulary, when set, is the vocabulary the call's schema, look, values, ask and cypher read,
+	// such as one holding the modules of the project the call names, in place of the server's, which
+	// the call then never waits for. Like the Run's Pack it isn't checked as New checks the server's,
+	// so the Run's Base should be read through it.
+	Vocabulary *ns.Vocabulary
 }
 
 // New builds the server for v and p. It refuses a pack whose examples don't check against v
@@ -275,7 +286,7 @@ func instructions(p Pack, ask bool) string {
 	if about := strings.TrimSpace(p.About); about != "" {
 		b.WriteString(about + "\n\n")
 	}
-	b.WriteString(`Ask with the query tool, in jaala's Datalog. A program is rules, if any, then one goal: 'rule(?a, ?b) :- body; ... body => ?a, ?b'. Variables are ?name and strings are "quoted"; there's no "?-" before a goal, and its columns follow => without parentheses. Every row carries the facts it was derived from.` + "\n\n")
+	b.WriteString(`Ask with the query tool, in jaala's Datalog. A program is rules, if any, then one goal: 'rule(?a, ?b) :- body; ... body => ?a, ?b'. Variables are ?name and strings are "quoted"; there's no "?-" before a goal, and its columns follow => without parentheses. Every row carries the facts it was derived from. A value the user gave goes in bind, by its variable's name, rather than into the program's text.` + "\n\n")
 	b.WriteString("Before writing a program, call schema with no path for every relation and module, and with a module's or relation's path for its members and docs.")
 	if strings.TrimSpace(p.Card) != "" {
 		b.WriteString(` Call schema with the path "data" for what the data holds.`)
