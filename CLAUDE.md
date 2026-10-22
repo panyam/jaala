@@ -660,7 +660,9 @@ GOARCH=wasm go test ./ns` (#417 ran `ns` that way).
   counts) and a cut inside a token re-reads that piece (`span.slice`). Every parse error is a
   `*ParseError` with `Line`, `Column` (runes) and `Offset`; `Error()` is the message alone. A string
   takes no escapes, but a backslash keeps the next character in it, so `\"` is a quote inside and both
-  stay in the value (#314: Declaire's regexes write `\"`). The old parser is frozen as test code
+  stay in the value (#314: Declaire's regexes write `\"`). So query text can't spell a value holding a bare quote: code looking a host's value up binds it
+  (`datalog.Bind`) rather than writing it into text, and `nl.Extract` reads a draft's text values
+  unescaped, as it reads the `from` words (#444: a quoted key never found the host's fact). The old parser is frozen as test code
   (`slicer_test.go`, every change to it marked), and `FuzzParseAgreesWithSlicer` and
   `TestATypoGetsTheSlicersMessage` hold the two to the same `Query` and the same message word for
   word. A grammar change that should make them disagree is when to delete it, keeping its typo
