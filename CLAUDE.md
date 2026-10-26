@@ -175,7 +175,8 @@ GOARCH=wasm go test ./ns` (#417 ran `ns` that way).
   instructions are written from the pack (`mcp.Instructions`, sent with mcpkit's `WithInstructions`,
   which mcpkit v0.8.2 put on the initialize result where clients read it: before, Claude Code saw
   none) unless `Pack.Instructions` replaces them word for word, which declaire#308's wording runs
-  use. A host adds its own tools on the returned server and writes answers with `Pack.Format`, and
+  use. `Options.Server` (#474) are a host's own mcpkit options, applied after those, so the host's
+  wins, a `WithInstructions` included (agni's `WithListTTLMs`; unset, mcpkit sends `ttlMs: 0`, not nothing). A host adds its own tools on the returned server and writes answers with `Pack.Format`, and
   `Pack.Data` (#469) as structured content, which must be a JSON object and replaces the `json` shape.
   `query` and `explain` take `bind` (`bind.values`, then `option` into `datalog.Bind`; a list ranges a
   variable), and `Answer.Bind` reports it, or cypher's `params`, by the name the call gave (#472). Its
