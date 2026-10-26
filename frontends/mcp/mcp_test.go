@@ -14,6 +14,7 @@ import (
 	"github.com/panyam/jaala/ns"
 	"github.com/panyam/jaala/stdlib"
 	"github.com/panyam/mcpkit/core"
+	"github.com/panyam/mcpkit/server"
 	"github.com/panyam/mcpkit/testutil"
 )
 
@@ -120,6 +121,31 @@ func TestTheInstructionsSayWhatTheServerIsFor(t *testing.T) {
 		if tool.Name != "explain" && !strings.Contains(tool.Description, "roads between towns") {
 			t.Errorf("%s's description doesn't say what the data is: %s", tool.Name, tool.Description)
 		}
+	}
+}
+
+// A host's own mcpkit options reach the wire, after New's, so its instructions replace the pack's.
+func TestAHostsServerOptionsReachTheClient(t *testing.T) {
+	ttl := func(c *testutil.TestClient) any {
+		res, err := c.Client.Call(context.Background(), "tools/list", map[string]any{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var list map[string]any
+		if err := json.Unmarshal(res.Raw, &list); err != nil {
+			t.Fatal(err)
+		}
+		return list["ttlMs"]
+	}
+	if got := ttl(dial(t, pack, mcp.Options{})); got != float64(0) {
+		t.Errorf("control: tools/list has ttlMs %v with no option, mcpkit's default 0", got)
+	}
+	if got := ttl(dial(t, pack, mcp.Options{Server: []server.Option{server.WithListTTLMs(60000)}})); got != float64(60000) {
+		t.Errorf("tools/list has ttlMs %v, want 60000", got)
+	}
+	o := mcp.Options{Server: []server.Option{server.WithInstructions("Ask me about roads.")}}
+	if got := dial(t, pack, o).Client.Instructions; got != "Ask me about roads." {
+		t.Errorf("the host's instructions read %q", got)
 	}
 }
 

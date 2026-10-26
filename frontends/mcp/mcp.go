@@ -86,6 +86,11 @@ type Options struct {
 	// vocabulary it returns, failing that call when they fail. query and explain read the Base and
 	// never wait for it.
 	Vocabulary func(ctx context.Context) (*ns.Vocabulary, error)
+	// Server are mcpkit options the server is built with, after New's own (the instructions), so a
+	// host's wins where both set one thing (#474): server.WithListTTLMs for a host whose tools never
+	// change, a keepalive, or whatever mcpkit adds. They are passed through unexamined, and a
+	// server.WithInstructions here replaces Pack.Instructions.
+	Server []server.Option
 }
 
 // An Answer is one page of an evaluated program, as Pack.Format receives it.
@@ -209,7 +214,7 @@ func NewWith[A any](v *ns.Vocabulary, p Pack, o Options, x Extension[A]) (*serve
 	if err := errors.Join(qerr, serr, eerr, aerr, lerr, verr, ferr); err != nil {
 		return nil, err
 	}
-	srv := server.NewServer(core.Implementation{Name: name, Version: version}, server.WithInstructions(text))
+	srv := server.NewServer(core.Implementation{Name: name, Version: version}, append([]server.Option{server.WithInstructions(text)}, o.Server...)...)
 	srv.Register(query, schema, explain, look, values)
 	if p.Grounder != nil {
 		srv.Register(find)
