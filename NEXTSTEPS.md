@@ -14,8 +14,7 @@ Maintained by /checkpoint: one thread per branch, pruned when the branch merges.
 - Mission #437 (`mission_text_memory`, not active) is 2/3. Next ready is #415, which needs #437 made
   active first (`retriage`).
 - Mission #420 (Neo4j/Memgraph, not active) is 4/6, both left with hosts (declaire#339, agni#1073).
-- Selfcheck: last pass d15c542; 5 PRs merged since, so one was started on v0.1.88's commit at this
-  checkpoint (`make selfcheck-status` reads its note).
+- Selfcheck: passed on 7079085 (v0.1.88), 5000 seeds; next due 5 merged PRs after it.
 - This run: dropped feat/mcp-server-options (PR #475 merged); the closed #452's branch is gone from the
   remote.
 
