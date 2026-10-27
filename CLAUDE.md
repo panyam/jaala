@@ -1220,8 +1220,9 @@ host filed or the PR's own issue.
 Issues are ranked by the mission they serve (labels `P0`–`P3`, `waiting`, `mission`,
 `mission:active`, `mission_<slug>`), and its tickets are linked as blocked-by. Most of jaala's
 missions unblock a host's active mission; such a mission closes when the host's half of its exercise
-passes too, so it can stay open after jaala's tickets close. One is active,
-`mission_agent_frontend` (#322), a host's caller asks in plain language and jaala's front end
+passes too, so it can stay open after jaala's tickets close. Two are active: `mission_text_memory`
+(#437, below) and `mission_agent_frontend` (#322), whose jaala tickets are all closed and which waits
+on Declaire: a host's caller asks in plain language and jaala's front end
 turns it into a program that checks. jaala's half is `frontends/nl` and `frontends/nlmodels`
 (#321, #323 to #326, #330, #331, #336, #337, released in v0.1.66 and frontends/nlmodels/v0.1.66);
 `go test -run TestEval -v .` in `frontends/nl` is its jaala-side exercise (fix line 5/5). Declaire's
@@ -1277,10 +1278,11 @@ bindings dominate) as the measure of what a query holds. Several missions can be
 started 2026-10-19) is worked in its own worktree and isn't `mission:active`: a host answers over a graph
 kept in Neo4j or Memgraph as it would in memory, with the server doing the joins. Its exercise is `make
 exercise-graph-server`; its tickets are #411 (`stores/bolt`), #412 (pushdown as Cypher, profiles), #413
-(checking a Cypher database against jaala), declaire#339 and agni#1073. `mission_text_memory` (#437, filed
-2026-10-19, not active either) is a host's assistant extracting what it was told into versions and
+(checking a Cypher database against jaala), declaire#339 and agni#1073, the last two left with the
+hosts. `mission_text_memory` (#437, filed 2026-10-19, `mission:active` from 2026-10-26) is a host's assistant extracting what it was told into versions and
 answering from them, for less money and time per correct answer than reading the history: #414
-(`nl.Extract`, whose eval makes its exercise runnable), then #415, LongMemEval used to find which
+(`nl.Extract`, whose eval makes its exercise's first half runnable), then #415 (P1, its first PR a
+`make exercise-memory` target running the one-shot arm on an oracle subset), LongMemEval used to find which
 primitives an agent lacks (arms that hold the model fixed and vary the layer), not to rank jaala as an
 agent. Epic #455 lists those primitives and which side owns each; the split between jaala and its
 hosts is the docsite's `architecture/layering.md` ("What stays with a host"). A new issue gets a
