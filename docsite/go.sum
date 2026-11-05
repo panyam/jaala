@@ -23,8 +23,8 @@ github.com/invopop/jsonschema v0.14.0 h1:MHQqLhvpNUZfw+hM3AZDYK7jxO8FZoQeQM77g8i
 github.com/invopop/jsonschema v0.14.0/go.mod h1:ygm6C2EaVNMBDPpaPlnOA2pFAxBnxGjFlMZABxm9n2I=
 github.com/morrisxyang/xreflect v0.0.0-20231001053442-6df0df9858ba h1:As4ul3aWz7tNZHCOsE5BkY+5VT1z1P6M/bmJZ3Tq5b8=
 github.com/morrisxyang/xreflect v0.0.0-20231001053442-6df0df9858ba/go.mod h1:M7gEkNNIO7dO1XnjIZUUvY57QG8Oed3Cf882guZD8sI=
-github.com/panyam/chakra v0.2.7 h1:U8pnjfBvI7U8bUXwBmoG0UuGBOJunRvDMmIt5OqiVHI=
-github.com/panyam/chakra v0.2.7/go.mod h1:sCJoMt12WSKp3TbEt/n2KKqRPj5CNzQHkcslP5gz5wg=
+github.com/panyam/chakra v0.2.9 h1:x6ZCJnHaIHhkluqLsIgtH3rVDNnPisGREwC3NhKBzKE=
+github.com/panyam/chakra v0.2.9/go.mod h1:sCJoMt12WSKp3TbEt/n2KKqRPj5CNzQHkcslP5gz5wg=
 github.com/panyam/gocurrent v0.1.2 h1:MtD98xJKVvGGdMrxIvUqhVA7AxA6rr9eU1ZUo5pNoyc=
 github.com/panyam/gocurrent v0.1.2/go.mod h1:jIIhcNfNnnIe2JXH8aY2+ba+/5G1fzwCWoZXdcMNw6o=
 github.com/panyam/goutils v0.1.13 h1:V819IdZTEJ3rpu33ZqohC6O9ou7KOu6cxfigoYT12OQ=
