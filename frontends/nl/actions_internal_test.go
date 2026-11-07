@@ -59,3 +59,35 @@ func testActionGrammar(t *testing.T, find bool) {
 		t.Errorf("%q with find %v: accepted %v, read as %q %q", phrase, find, g.Accepts(phrase), action, arg)
 	}
 }
+
+// The grammar after the last step takes a sampled program alone or after a try line, which
+// withoutTry takes off, and no action. control: the draft's grammar refuses the try line.
+func TestTheFinalGrammarTakesATryLineBeforeTheDraft(t *testing.T) {
+	grammar, err := GrammarFor(grammarVocabulary(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, plain := mustGBNF(t, finalGrammar(grammar)), mustGBNF(t, grammar)
+	rules, err := vocabRules(grammarVocabulary(t), grammarOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := gbnf.NewSampler(table(rules), 2, 4)
+	for i := 0; i < 200; i++ {
+		prog := s.Sample("root")
+		if !g.Accepts(prog) || !g.Accepts("try\n"+prog) {
+			t.Fatalf("the final grammar refuses %q, alone or after try", prog)
+		}
+		if got := withoutTry("try\n" + prog); got != strings.TrimSpace(prog) {
+			t.Fatalf("withoutTry gave %q for %q", got, prog)
+		}
+		if plain.Accepts("try\n" + prog) {
+			t.Fatalf("control: the draft's grammar takes a try line before %q", prog)
+		}
+	}
+	for _, reply := range []string{"look pkg", "values pkg.license", "try\n"} {
+		if g.Accepts(reply) {
+			t.Errorf("the final grammar accepts %q", reply)
+		}
+	}
+}
