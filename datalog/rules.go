@@ -194,7 +194,9 @@ func (b *Base) validateRule(r Rule) error {
 	}
 	for _, arg := range r.Head.Args {
 		if arg.Agg != nil {
-			if err := validateAggOrVar(arg, bound); err != nil {
+			// The rule's own body is the "goal" here and no outer rule applies: the head-drop
+			// message only makes sense for a projection over another relation's rule.
+			if err := validateAggOrVar(arg, bound, r.Body, nil); err != nil {
 				return err
 			}
 			continue

@@ -1,3 +1,3 @@
 fixture: "deps"
-query: "imports(?a, ?b) => ?c"
+query: "imports(?a, ?b), not imports(?a, ?c) => ?c"
 expect_error: "is not bound by a positive relation (a variable used only under negation is existential and cannot be selected"

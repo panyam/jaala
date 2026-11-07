@@ -609,6 +609,18 @@ A column of the answer has to be bound by a positive atom.
 
 {{ demo "demos/errors/projected-s-is-not-bound.yaml" }}
 
+`query: rule … binds ?… in its body but its head drops it, so the answer cannot project it`
+
+The goal reads a rule whose body binds the column's variable but whose head has no place for it, so the rule's head is what to change.
+
+{{ demo "demos/errors/rule-head-drops-projected-variable.yaml" }}
+
+`query: projected ?… is not bound by the goal (nothing in it binds ?…)`
+
+Nothing in the goal binds the column's variable at all.
+
+{{ demo "demos/errors/projected-s-not-bound-by-the-goal.yaml" }}
+
 `query: … aggregates ?…, which no relation binds`
 
 An aggregate's variable has to be bound by the goal.

@@ -471,7 +471,7 @@ func evaluateOn(b *Base, gen int64, q Query, o evalOptions, rewrite func(*Base, 
 	if err := checkFilters(b, q.Goal, nil); err != nil {
 		return nil, err
 	}
-	if err := validateSelect(sel, q.Having, q.Goal); err != nil {
+	if err := validateSelect(sel, q.Having, q.Goal, q.Rules); err != nil {
 		return nil, err
 	}
 	if err := validateOrder(cols, written); err != nil {
@@ -1509,13 +1509,14 @@ func positiveVars(goal Body) []Var {
 // validateSelect rejects a projection over a variable no positive relation binds (an unknown or
 // negation-only existential) and an unknown aggregate function — so a bad query errors clearly. The
 // having filters are checked by the same rules, since each is an aggregate over the same goal.
-func validateSelect(sel []Term, having []Compare, goal Body) error {
+// The program's rules go along so an unbound projection can name the rule whose head drops it.
+func validateSelect(sel []Term, having []Compare, goal Body, rules []Rule) error {
 	pv := map[Var]bool{}
 	for _, vv := range positiveVars(goal) {
 		pv[vv] = true
 	}
 	for _, t := range sel {
-		if err := validateAggOrVar(t, pv); err != nil {
+		if err := validateAggOrVar(t, pv, goal, rules); err != nil {
 			return err
 		}
 	}
@@ -1526,7 +1527,7 @@ func validateSelect(sel []Term, having []Compare, goal Body) error {
 		}
 	}
 	for _, h := range having {
-		if err := validateAggOrVar(h.Left, pv); err != nil {
+		if err := validateAggOrVar(h.Left, pv, goal, rules); err != nil {
 			return err
 		}
 		// Caught here rather than at evaluation so the query fails on the query, not on whichever
@@ -1585,7 +1586,11 @@ func validateOrder(cols []Term, q Query) error {
 	return nil
 }
 
-func validateAggOrVar(t Term, pv map[Var]bool) error {
+// validateAggOrVar rejects a projected aggregate or variable nothing binds. The negation message is
+// kept for a variable the goal uses only under negation (issue 513's done-when: it names negation
+// only when negation is the cause); a variable a goal relation's rule binds in its body but drops
+// from its head gets its own message naming the rule, since the fix there is the head, not the goal.
+func validateAggOrVar(t Term, pv map[Var]bool, goal Body, rules []Rule) error {
 	switch {
 	case t.Agg != nil:
 		if !validAggFunc(t.Agg.Func) {
@@ -1596,10 +1601,117 @@ func validateAggOrVar(t Term, pv map[Var]bool) error {
 				about(t.Agg.Var).fix(fmt.Sprintf("bind ?%s with a positive relation in the body", t.Agg.Var))
 		}
 	case t.Var != "" && !pv[t.Var]:
-		return checkErr(KindUnbound, fmt.Sprintf("query: projected ?%s is not bound by a positive relation (a variable used only under negation is existential and cannot be selected)", t.Var)).
-			about(t.Var).fix(fmt.Sprintf("bind ?%s with a positive relation in the goal, or drop it from the answer", t.Var))
+		return unboundProjectedErr(t.Var, goal, rules)
 	}
 	return nil
+}
+
+// unboundProjectedErr explains why a projected variable is not bound. A variable used only under
+// negation is existential and cannot be selected; a variable the goal reads through a rule whose
+// head has no place for it is the head's doing — the rule's body binds it, so the head is what to
+// change; anything else the goal binds nowhere at all.
+func unboundProjectedErr(v Var, goal Body, rules []Rule) error {
+	const negationMsg = "query: projected ?%s is not bound by a positive relation (a variable used only under negation is existential and cannot be selected)"
+	const negationFix = "bind ?%s with a positive relation in the goal, or drop it from the answer"
+	if occursUnderNegation(goal, v) {
+		return checkErr(KindUnbound, fmt.Sprintf(negationMsg, v)).
+			about(v).fix(fmt.Sprintf(negationFix, v))
+	}
+	for _, lit := range goal.Literals {
+		if lit.Pos == nil {
+			continue
+		}
+		for _, r := range rules {
+			if r.Head.Relation != lit.Pos.Relation {
+				continue
+			}
+			if bodyBindsPositiveVar(r.Body, v) && !headCarriesVar(r.Head, v) {
+				// The fix spells the head with its own arguments plus the variable, and moves the
+				// goal's call with it: replacing the head outright would drop the arguments it
+				// already carries, and a call left at the old arity fails to compile next.
+				fix := fmt.Sprintf("add ?%s to the rule's head and to the goal's call, so the rule's head carries ?%s out", v, v)
+				if args, ok := headArgsText(r.Head); ok {
+					with := args
+					if with != "" {
+						with += ", "
+					}
+					fix = fmt.Sprintf("write the head as %s(%s?%s) and add ?%s to the goal's call, so the rule's head carries ?%s out", shownName(r.Head.Relation), with, v, v, v)
+				}
+				return checkErr(KindUnbound, fmt.Sprintf("query: rule %q binds ?%s in its body but its head drops it, so the answer cannot project it", shownName(r.Head.Relation), v)).
+					inRule(r.Head.Relation).about(v).fix(fix)
+			}
+		}
+	}
+	return checkErr(KindUnbound, fmt.Sprintf("query: projected ?%s is not bound by the goal (nothing in it binds ?%s)", v, v)).
+		about(v).fix(fmt.Sprintf(negationFix, v))
+}
+
+// occursUnderNegation reports whether a variable appears in a negated literal of the body, in an
+// argument or the atom's `as` fact — the places positiveVars reads, so the two agree on occurrence.
+func occursUnderNegation(goal Body, v Var) bool {
+	for _, lit := range goal.Literals {
+		if lit.Neg == nil {
+			continue
+		}
+		for _, a := range append(slices.Clone(lit.Neg.Args), Term{Var: lit.Neg.Fact}) {
+			if a.Var == v {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// bodyBindsPositiveVar reports whether a positive literal of the body binds a variable, in an
+// argument or the atom's `as` fact.
+func bodyBindsPositiveVar(body Body, v Var) bool {
+	for _, lit := range body.Literals {
+		if lit.Pos == nil {
+			continue
+		}
+		for _, a := range append(slices.Clone(lit.Pos.Args), Term{Var: lit.Pos.Fact}) {
+			if a.Var == v {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// headCarriesVar reports whether a rule head has a place for a variable, so a projection over the
+// head's relation can read it.
+func headCarriesVar(head Atom, v Var) bool {
+	for _, a := range head.Args {
+		if a.Var == v {
+			return true
+		}
+	}
+	return false
+}
+
+// headArgsText spells a head's own arguments the way the surface syntax would: variables as ?name,
+// constants bare when numeric and quoted otherwise, aggregates as their call. It reports false for
+// a head it cannot spell (an arithmetic argument), so the fix falls back to wording that names no
+// argument.
+func headArgsText(head Atom) (string, bool) {
+	parts := make([]string, 0, len(head.Args))
+	for _, a := range head.Args {
+		switch {
+		case a.Var != "":
+			parts = append(parts, fmt.Sprintf("?%s", a.Var))
+		case a.Const != nil && a.Const.Num != nil:
+			parts = append(parts, a.Const.S)
+		case a.Const != nil:
+			parts = append(parts, strconv.Quote(a.Const.S))
+		case a.Agg != nil && a.Agg.Var != "":
+			parts = append(parts, fmt.Sprintf("%s(?%s)", a.Agg.Func, a.Agg.Var))
+		case a.Agg != nil:
+			parts = append(parts, a.Agg.Func+"()")
+		default:
+			return "", false
+		}
+	}
+	return strings.Join(parts, ", "), true
 }
 
 func validAggFunc(f string) bool {
