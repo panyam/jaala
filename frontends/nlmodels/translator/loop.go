@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 	"time"
 
@@ -310,8 +311,9 @@ func (l *loop) try(r *role, text string, turn agent.Usage) nl.Try {
 	return try
 }
 
-// stages name each call for the turn's usage, stop offering the actions once the model has taken
-// MaxSteps of them (for a TextActions role, by holding the call to the draft's grammar), and send Compact's one message in place of the conversation when Actions.Compact
+// stages name each call for the turn's usage, watch for a model repeating its actions (stuck), stop
+// offering the actions once the model has taken MaxSteps of them (for a TextActions role, by holding
+// the call to the draft's grammar, a try line allowed), and send Compact's one message in place of the conversation when Actions.Compact
 // asks for it. Compacting is a turn stage, since it rewrites the working messages, which chakra's
 // guided finalizing call reads too; a request stage's messages reach only the step's own call.
 func (l *loop) stages(s *nl.Session, c *nl.Conversation, r *role) []agent.StepStage {
@@ -326,11 +328,14 @@ func (l *loop) stages(s *nl.Session, c *nl.Conversation, r *role) []agent.StepSt
 		if out {
 			v.Tools = nil
 			if r.text {
-				v.Guided = r.guided(s.Grammar())
+				v.Guided = r.guided(s.FinalGrammar())
 			}
 		}
 		return v, nil
 	}}}
+	if l.o.Actions != nil {
+		st = append([]agent.StepStage{l.stuck(s, c, r)}, st...)
+	}
 	if l.o.Actions != nil && l.o.Actions.Compact {
 		st = append(st, agent.StepStage{Name: "jaala.translator.compact", Scope: agent.ScopeTurn, Run: func(_ context.Context, _ agent.StepInfo, v agent.StepView) (agent.StepView, error) {
 			l.mu.Lock()
@@ -343,6 +348,56 @@ func (l *loop) stages(s *nl.Session, c *nl.Conversation, r *role) []agent.StepSt
 		}})
 	}
 	return st
+}
+
+// stuck is chakra's stuck detector over the turn's actions (#512): the same action twice in a row, or
+// two taking turns twice, with Prompts.Stuck as the note and, where the provider takes one, the
+// fallback's temperature for that call, since a greedy model given the same input writes the same
+// reply. If the model is still stuck at the next call, its actions end, and the stage after this one
+// holds it to its answer. It runs first, so that stage sees the steps spent.
+func (l *loop) stuck(s *nl.Session, c *nl.Conversation, r *role) agent.StepStage {
+	warm := FallbackTemperature
+	nudge := agent.StuckGeneration(agent.GenerationParams{Temperature: &warm})
+	return agent.NewStuckDetector(agent.StuckConfig{
+		Key:     func(rec agent.StepRecord) (agent.StuckKey, bool) { return actionKey(r, rec) },
+		Repeats: 2, Alternations: 2, Errors: -1,
+		Policy: func(ctx context.Context, info agent.StepInfo, v agent.StepView, f agent.StuckFinding) (agent.StepView, error) {
+			if f.Count > 2 {
+				l.mu.Lock()
+				c.EndActions()
+				l.mu.Unlock()
+				return v, nil
+			}
+			v.Messages = append(slices.Clip(v.Messages), agent.Message{Role: agent.RoleSystem, Text: s.StuckNote(f.String())})
+			if r.gen.Temperature != nil {
+				return nudge(ctx, info, v, f)
+			}
+			return v, nil
+		},
+	})
+}
+
+// actionKey keys a step by the action it took: a tool call's, or for a TextActions role the action
+// its reply wrote. An answer is no action and breaks a pattern. The result needs no key of its own:
+// over one question's Base, the same action answers the same.
+func actionKey(r *role, rec agent.StepRecord) (agent.StuckKey, bool) {
+	if tcs := rec.Assistant.ToolCalls; len(tcs) > 0 {
+		var k agent.StuckKey
+		for _, tc := range tcs {
+			k.Call += nl.ActionText(tc.Name, toolArg(tc)) + "\x00"
+			k.Tools = append(k.Tools, tc.Name)
+		}
+		return k, true
+	}
+	if !r.text {
+		return agent.StuckKey{}, false
+	}
+	action, arg, ok := nl.ReadAction(r.answer(rec.Assistant.Text))
+	if !ok {
+		return agent.StuckKey{}, false
+	}
+	// Tools names the action so the note says "repeated try"; no policy here drops tools
+	return agent.StuckKey{Call: nl.ActionText(action, arg), Tools: []string{action}}, true
 }
 
 // The arguments of the action tools, one text each.

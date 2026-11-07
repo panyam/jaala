@@ -316,3 +316,74 @@ func TestReadActionTellsAnActionFromAnAnswer(t *testing.T) {
 		}
 	}
 }
+
+// A try of a draft tried before isn't run and takes no step: it gets TriedAgain and what the draft
+// answered then. control: another draft runs and takes one.
+func TestARepeatedTryIsNotRunAgain(t *testing.T) {
+	v, b := guide.Deps(t)
+	d := nl.DefaultPrompts()
+	s, _ := nl.NewSession(context.Background(), mitQ, v, nil, nl.Options{Base: b, Actions: &nl.Actions{Steps: 3}})
+	c := s.NewConversation(nil, true)
+	nope := `pkg(?p, "nope") => ?p`
+	first := c.Act(context.Background(), nl.ActionTry, nope)
+	again := c.Act(context.Background(), nl.ActionTry, nope)
+	if again != d.TriedAgain+"\n"+first || c.Steps() != 1 {
+		t.Errorf("the repeat answered %q, steps %d", again, c.Steps())
+	}
+	if other := c.Act(context.Background(), nl.ActionTry, mit); strings.HasPrefix(other, d.TriedAgain) || c.Steps() != 2 {
+		t.Errorf("control: another draft answered %q, steps %d", other, c.Steps())
+	}
+}
+
+// A reply opening with a try line alone is judged as the draft after it, under the final grammar a
+// model is held to once its steps run out. control: without Actions, the try line is the draft's.
+func TestAnAnswerAfterTheLastStepMayOpenWithTry(t *testing.T) {
+	v, b := guide.Deps(t)
+	s, _ := nl.NewSession(context.Background(), mitQ, v, nil, nl.Options{Base: b, Actions: &nl.Actions{}})
+	vd := s.NewConversation(nil, true).Judge(context.Background(), reply("try\n"+mit))
+	if verdict(t, vd) != "accept" || vd.Program.Text != mit {
+		t.Errorf("verdict %+v", vd)
+	}
+	plain, _ := nl.NewSession(context.Background(), mitQ, v, nil, nl.Options{Base: b})
+	if vd := plain.NewConversation(nil, true).Judge(context.Background(), reply("try\n"+mit)); vd.Program != nil {
+		t.Errorf("control: without Actions, a try line was taken off")
+	}
+}
+
+// EndActions spends the steps left, and the next reply is the answer.
+func TestEndActionsSpendsTheStepsLeft(t *testing.T) {
+	v, b := guide.Deps(t)
+	s, _ := nl.NewSession(context.Background(), mitQ, v, nil, nl.Options{Base: b, Actions: &nl.Actions{Steps: 4}})
+	c := s.NewConversation(nil, true)
+	c.Act(context.Background(), nl.ActionLook, "pkg")
+	if c.EndActions(); c.Steps() != 4 {
+		t.Errorf("steps %d", c.Steps())
+	}
+}
+
+// A look naming nothing lists the members whose name or first doc line hold the word, names first;
+// with nothing listed it answers as find does, and with no Grounder it says what look takes.
+// control: a look naming a member answers its card line.
+func TestALookForAPlainWordSearches(t *testing.T) {
+	v, b := guide.Deps(t)
+	d := nl.DefaultPrompts()
+	s, _ := nl.NewSession(context.Background(), mitQ, v, nil, nl.Options{Base: b, Actions: &nl.Actions{}})
+	got := s.Act(context.Background(), nl.ActionLook, "license")
+	if !strings.HasPrefix(got, "Nothing is named license; these mention it:\n") || !strings.Contains(got, "pkg(name, license)") || strings.Contains(got, "imports(") {
+		t.Errorf("look license: %q", got)
+	}
+	if got := s.Act(context.Background(), nl.ActionLook, "IMPORT"); !strings.Contains(got, "imports(from, to)") {
+		t.Errorf("look IMPORT: %q", got)
+	}
+	if got := s.Act(context.Background(), nl.ActionLook, "zebra"); !strings.HasSuffix(got, "\n"+d.LookNothing) {
+		t.Errorf("look zebra: %q", got)
+	}
+	g := &grounder{cands: []nl.Candidate{{Name: "zebra", Values: []string{"app"}}}}
+	found, _ := nl.NewSession(context.Background(), mitQ, v, g, nl.Options{Base: b, Actions: &nl.Actions{}})
+	if got := found.Act(context.Background(), nl.ActionLook, "zebra"); got != found.Act(context.Background(), nl.ActionFind, "zebra") {
+		t.Errorf("look zebra with a Grounder: %q", got)
+	}
+	if got := s.Act(context.Background(), nl.ActionLook, "pkg"); strings.Contains(got, "mention") || !strings.Contains(got, "pkg(name, license)") {
+		t.Errorf("control: look pkg: %q", got)
+	}
+}

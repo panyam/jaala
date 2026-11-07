@@ -24,6 +24,7 @@ type Session struct {
 
 	prefix, ask, grammar, answerGrammar string
 	textPrefix, textGrammar             string // for a model that writes its actions (TextActions)
+	finalGrammar                        string // the draft's, a try line allowed before it (FinalGrammar)
 	tries                               int
 	pick                                bool
 }
@@ -72,9 +73,10 @@ func NewSession(ctx context.Context, question string, v *ns.Vocabulary, g Ground
 	if err != nil {
 		return nil, err
 	}
-	s.grammar, s.textGrammar = s.answerGrammar, s.answerGrammar
+	s.grammar, s.textGrammar, s.finalGrammar = s.answerGrammar, s.answerGrammar, s.answerGrammar
 	if o.Actions != nil && s.answerGrammar != "" {
 		s.textGrammar = actionGrammar(s.answerGrammar, g != nil)
+		s.finalGrammar = finalGrammar(s.answerGrammar)
 	}
 	if o.Actions.replies() {
 		s.grammar = s.textGrammar
@@ -132,6 +134,14 @@ func (s *Session) ActionGrammar() string { return s.grammar }
 // Without Options.Actions they are Prefix and Grammar.
 func (s *Session) TextActions() (prefix, grammar string) { return s.textPrefix, s.textGrammar }
 
+// FinalGrammar is what a model that writes its actions is held to once its steps run out (#512):
+// Grammar with a try line allowed before the draft, which Judge drops. Grammar without
+// Options.Actions.
+func (s *Session) FinalGrammar() string { return s.finalGrammar }
+
+// StuckNote is Prompts.Stuck over what, for a loop telling a model it repeats its actions (#512).
+func (s *Session) StuckNote(what string) string { return fmt.Sprintf(s.pr.Stuck, what) }
+
 // MaxTries is how many answers a model gets in one Conversation before it ends.
 func (s *Session) MaxTries() int { return s.tries }
 
@@ -171,6 +181,9 @@ func (s *Session) reply(try Try) Try {
 		try.Language = s.o.FrontEnd.Language()
 	}
 	try.Text = unfence(try.Text)
+	if s.o.Actions != nil {
+		try.Text = withoutTry(try.Text)
+	}
 	text := try.Text
 	try.explain = func(err error) string { return Explain(text, err) }
 	return try
@@ -186,15 +199,16 @@ type Conversation struct {
 	why     map[string]string // what each refused draft was told, in its own language
 	reasked bool              // a repeated empty draft was asked again (#483)
 	tries   int
-	steps   int             // actions taken
-	asked   map[string]bool // each action taken, as action and argument
+	steps   int               // actions taken
+	asked   map[string]bool   // each action taken, as action and argument
+	tried   map[string]string // what each try's draft answered
 }
 
 // NewConversation starts a model's turn. after is why the previous model's turn ended, nil for the
 // first, and last says no model follows this one: an empty answer then goes back to this model
 // rather than ending its turn.
 func (s *Session) NewConversation(after error, last bool) *Conversation {
-	c := &Conversation{s: s, ask: s.ask, last: last, refused: map[string]error{}, why: map[string]string{}, asked: map[string]bool{}}
+	c := &Conversation{s: s, ask: s.ask, last: last, refused: map[string]error{}, why: map[string]string{}, asked: map[string]bool{}, tried: map[string]string{}}
 	if !s.pick {
 		s.mem.facts, s.mem.last = nil, ""
 		if after != nil && errors.Is(after, errEmpty) {
@@ -217,9 +231,19 @@ func (c *Conversation) Compact() []Turn { return c.s.mem.compact(c.ask) }
 // Prompts.LastLook when it was the last MaxSteps allows. It is kept for Compact as the reply that
 // would have asked for it ("values pkg.license"). Steps counts it, and the caller stops offering
 // actions once Steps reaches MaxSteps.
+//
+// A try of a draft the conversation tried before isn't run again and takes no step (#512): it gets
+// Prompts.TriedAgain and what the draft answered then. A greedy model sent the same draft six times
+// and got the same rows-or-why each time, spending a step on every one.
 func (c *Conversation) Act(ctx context.Context, action, arg string) string {
 	s := c.s
+	if before, ok := c.tried[arg]; ok && action == ActionTry {
+		return s.pr.TriedAgain + "\n" + before
+	}
 	result := s.Act(ctx, action, arg)
+	if action == ActionTry {
+		c.tried[arg] = result
+	}
 	key := action + "\x00" + arg
 	if c.asked[key] {
 		result = s.pr.AskedAgain + " " + result
@@ -232,6 +256,10 @@ func (c *Conversation) Act(ctx context.Context, action, arg string) string {
 	s.mem.facts = append(s.mem.facts, fact(ActionText(action, arg), result))
 	return result
 }
+
+// EndActions spends the steps left, so the caller stops offering actions and the model's next reply
+// is its answer. The translator calls it when the model stays stuck after a note (#512).
+func (c *Conversation) EndActions() { c.steps = max(c.steps, c.s.MaxSteps()) }
 
 // Steps is how many actions the conversation's model has taken.
 func (c *Conversation) Steps() int { return c.steps }

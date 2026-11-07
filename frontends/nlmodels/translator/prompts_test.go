@@ -19,6 +19,10 @@ func hostPrompts() *nl.Prompts {
 		Find:                 "H-FIND",
 		AskedAgain:           "H-ASKED",
 		LastLook:             "H-LAST",
+		TriedAgain:           "H-TRIED",
+		LookFound:            "H-LOOKFOUND %s",
+		LookNothing:          "H-LOOKNOTHING",
+		Stuck:                "H-STUCK %s",
 		ToolLook:             "H-TOOLLOOK",
 		ToolValues:           "H-TOOLVALUES %s",
 		ToolTry:              "H-TOOLTRY",
@@ -67,8 +71,8 @@ func absent(s string, parts ...string) string {
 
 // Every field a pack sets reaches the prompt in place of jaala's text (#485): the instructions, a
 // front end's, the tools' descriptions, an action asked again and the last one, the fix lines, the
-// fallback's note, the reask, the grounded values' heading, the pick's and its retry, and the compact
-// turn's headings. control: a pack setting none sends jaala's text.
+// fallback's note, the reask, the grounded values' heading, the pick's and its retry, the compact
+// turn's headings, a try tried again, a look for a plain word, and the stuck note. control: a pack setting none sends jaala's text.
 func TestAPacksPromptsReplaceJaalasText(t *testing.T) {
 	v := vocabulary(t)
 	b := graphBase(t, v)
@@ -97,6 +101,23 @@ func TestAPacksPromptsReplaceJaalasText(t *testing.T) {
 			r := tr.Steps[1].Result
 			if !strings.HasPrefix(r, "H-ASKED ") || !strings.HasSuffix(r, "\n\nH-LAST") {
 				return fmt.Sprintf("second look's result %q", r)
+			}
+			return ""
+		}},
+		{"a try tried again and the stuck note", nl.Options{Base: b, Actions: &nl.Actions{}}, nil, []string{"try\n" + `edge("zz", ?b) => ?b`, "try\n" + `edge("zz", ?b) => ?b`, `edge("a", ?b) => ?b`}, func(m *scripted, tr nl.Trace) string {
+			if r := tr.Steps[1].Result; !strings.HasPrefix(r, "H-TRIED\n") {
+				return fmt.Sprintf("the second try's result %q", r)
+			}
+			for _, turn := range m.asked[2].Turns {
+				if strings.HasPrefix(turn.Text, "H-STUCK repeated try 2 times") {
+					return ""
+				}
+			}
+			return fmt.Sprintf("no stuck note in %+v", m.asked[2].Turns)
+		}},
+		{"a look for a plain word", nl.Options{Base: b, Actions: &nl.Actions{}}, nil, []string{"look dge", "look zebra", `edge("a", ?b) => ?b`}, func(_ *scripted, tr nl.Trace) string {
+			if found, none := tr.Steps[0].Result, tr.Steps[1].Result; !strings.HasPrefix(found, "H-LOOKFOUND dge\n") || !strings.HasSuffix(none, "\nH-LOOKNOTHING") {
+				return fmt.Sprintf("the looks' results %q, %q", found, none)
 			}
 			return ""
 		}},
@@ -157,6 +178,8 @@ func TestAPacksPromptTemplatesKeepTheirPlaceholders(t *testing.T) {
 		{nl.Prompts{Actions: "%s %s %s"}, "prompt Actions isn't a template of 2 placeholders"},
 		{nl.Prompts{Reask: "%[1]s %[2]s %[3]s"}, "prompt Reask leaves out placeholder 4 of 4"},
 		{nl.Prompts{Reask: "%[5]s"}, "prompt Reask isn't a template of 4 placeholders"},
+		{nl.Prompts{LookFound: "Nothing here."}, "prompt LookFound isn't a template of 1 placeholders"},
+		{nl.Prompts{Stuck: "Stop."}, "prompt Stuck isn't a template of 1 placeholders"},
 	} {
 		pack := &nl.Pack{Prompts: &c.pr}
 		if err := pack.Validate(v); err == nil || !strings.Contains(err.Error(), c.want) {

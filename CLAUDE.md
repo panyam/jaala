@@ -210,8 +210,14 @@ GOARCH=wasm go test ./ns` (#417 ran `ns` that way).
   `CapabilitiesOf` says it takes one (chakra#191, v0.2.4). A `Role` with `TextActions` (#509) is for a
   model that can't call tools (Qwen2.5-Coder under `--jinja` writes a call as JSON text): it gets no
   tools, `Session.TextActions`' prefix and grammar, its replies read with `nl.ReadAction` in the
-  `TurnEnd` hook, and once its steps run out the request stage sets `StepView.Guided` to the draft's
-  grammar (chakra#259, v0.2.9). jaala's agent loop runs on chakra (#496),
+  `TurnEnd` hook, and once its steps run out the request stage sets `StepView.Guided` to
+  `Session.FinalGrammar` (chakra#259, v0.2.9): the draft's, a `try⏎` line allowed before it and dropped by
+  `Session.reply` (#512: under the draft's grammar alone `try` ran into the first name). A repeated `try`
+  isn't run and takes no step (`Conversation.tried`); chakra's `NewStuckDetector` (v0.3.0) runs first among
+  the request stages, keyed by `actionKey` (a tool call, or a text reply read with `ReadAction`), and
+  sends `Prompts.Stuck` at the fallback's temperature on the second repeat or alternation, then
+  `Conversation.EndActions`. A `look` naming nothing lists members mentioning the word (`lookFor`), else
+  answers as `find`; `nl.Look`, mcp's tool, is unchanged. jaala's agent loop runs on chakra (#496),
   jaala the Session a chakra agent plugs in, never a wrapper over it. `Translate(ctx, q, o, model,
   fallback)` is `Ask` under per-call options and roles, which is `mcp.Translator`'s method.
   CI's `nlmodels` job tests it; the root's `./...` doesn't reach it. Like every

@@ -29,6 +29,17 @@ type Prompts struct {
 	AskedAgain string
 	// LastLook ends the last action's result the model may ask for.
 	LastLook string
+	// TriedAgain opens what a try sends back when the model tried that draft before, which isn't run
+	// again (#512); what it answered then follows.
+	TriedAgain string
+	// LookFound opens a look's list of the members mentioning a word that names none (#512).
+	// Placeholder: the word.
+	LookFound string
+	// LookNothing follows the error of a look that names nothing and matches nothing.
+	LookNothing string
+	// Stuck is the note a model gets when it repeats an action, or takes turns between two, with the
+	// same results (#512). Placeholder: what it repeated, as chakra's StuckFinding writes it.
+	Stuck string
 	// ToolLook, ToolValues, ToolTry and ToolFind describe the actions when they are offered as tools
 	// (Actions.AsTools, Session.Tools). ToolValues' placeholder is the values target, as the model's
 	// language writes one.
@@ -65,7 +76,11 @@ func DefaultPrompts() Prompts {
 		Actions:       actionInstructions,
 		Find:          findInstruction,
 		AskedAgain:    "You asked that already.",
-		LastLook:      "That was the last look: reply with your answer.",
+		LastLook:      "That was the last look: reply with your answer alone, not another action.",
+		TriedAgain:    "You tried that draft already, so it wasn't run again. Last time:",
+		LookFound:     "Nothing is named %s; these mention it:",
+		LookNothing:   "look takes a relation, module or label name, as the card lists them.",
+		Stuck:         "You have %s. Doing it again gives the same result: change the draft, or reply with your answer.",
 		ToolLook:      "What a relation, module or label holds: its arguments and what they mean. name is the relation, module or label.",
 		ToolValues:    "Some of the values one argument or property holds. target is one, such as %s.",
 		ToolTry:       "Run a draft on a few rows and see its rows, or why none came back. It isn't your answer: reply with that once it is right.",
@@ -95,7 +110,8 @@ func (p *Pack) prompts() Prompts {
 	h := *p.Prompts
 	for _, f := range []struct{ host, def *string }{
 		{&h.Instructions, &d.Instructions}, {&h.Actions, &d.Actions}, {&h.Find, &d.Find},
-		{&h.AskedAgain, &d.AskedAgain}, {&h.LastLook, &d.LastLook}, {&h.ToolLook, &d.ToolLook},
+		{&h.AskedAgain, &d.AskedAgain}, {&h.LastLook, &d.LastLook}, {&h.TriedAgain, &d.TriedAgain},
+		{&h.LookFound, &d.LookFound}, {&h.LookNothing, &d.LookNothing}, {&h.Stuck, &d.Stuck}, {&h.ToolLook, &d.ToolLook},
 		{&h.ToolValues, &d.ToolValues}, {&h.ToolTry, &d.ToolTry}, {&h.ToolFind, &d.ToolFind}, {&h.Fix, &d.Fix}, {&h.FixEmpty, &d.FixEmpty},
 		{&h.EmptyFallback, &d.EmptyFallback}, {&h.Reask, &d.Reask}, {&h.Grounded, &d.Grounded},
 		{&h.Pick, &d.Pick}, {&h.PickRetry, &d.PickRetry}, {&h.CompactFound, &d.CompactFound},
@@ -117,7 +133,8 @@ func (t Prompts) templates() []struct {
 	return []struct {
 		name, text string
 		n          int
-	}{{"Actions", t.Actions, 2}, {"ToolValues", t.ToolValues, 1}, {"Fix", t.Fix, 1}, {"FixEmpty", t.FixEmpty, 1}, {"Reask", t.Reask, 4}}
+	}{{"Actions", t.Actions, 2}, {"ToolValues", t.ToolValues, 1}, {"Fix", t.Fix, 1}, {"FixEmpty", t.FixEmpty, 1}, {"Reask", t.Reask, 4},
+		{"LookFound", t.LookFound, 1}, {"Stuck", t.Stuck, 1}}
 }
 
 // checkTemplates refuses a template that drops one of its placeholders or reads one it isn't given:

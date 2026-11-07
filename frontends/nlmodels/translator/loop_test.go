@@ -284,3 +284,81 @@ func TestATextRoleCompacts(t *testing.T) {
 		t.Errorf("the second request: %+v", ms)
 	}
 }
+
+// A text role repeating a try gets the stuck note and a warmer call; still repeating at the next, its
+// actions end, and its answer after a try line is taken as the draft. control: a role that doesn't
+// repeat gets no note.
+func TestATextRoleStuckOnATryIsNudgedThenMadeToAnswer(t *testing.T) {
+	v, b := guide.Deps(t)
+	nope := "try\n" + `pkg(?p, "nope") => ?p`
+	rec := &recordingProvider{Provider: scripted("small", map[string][]string{mitQ: {nope, nope, nope, "try\n" + mit}})}
+	tr, err := New(v, nil, Config{Model: Role{Provider: rec, TextActions: true}, Base: b, Actions: &nl.Actions{Steps: 6}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, trace, err := tr.Ask(context.Background(), mitQ)
+	if err != nil || p.Text != mit {
+		t.Fatalf("Ask = %+v, %v", p, err)
+	}
+	if len(trace.Steps) != 3 || !strings.HasPrefix(trace.Steps[1].Result, nl.DefaultPrompts().TriedAgain) || len(trace.Tries) != 1 {
+		t.Fatalf("steps %+v, tries %+v", trace.Steps, trace.Tries)
+	}
+	if len(rec.reqs) != 4 {
+		t.Fatalf("%d requests", len(rec.reqs))
+	}
+	for i, req := range rec.reqs {
+		note := false
+		for _, m := range req.Messages {
+			note = note || m.Role == agent.RoleSystem && strings.HasPrefix(m.Text, "You have repeated try 2 times")
+		}
+		warm := req.Temperature != nil && *req.Temperature == FallbackTemperature
+		if want := i == 2; note != want || warm != want {
+			t.Errorf("request %d: note %v, warm %v", i, note, warm)
+		}
+		final := req.Guided != nil && !strings.Contains(req.Guided.Grammar, `"look "`) && strings.Contains(req.Guided.Grammar, `"try\n"`)
+		if final != (i == 3) {
+			t.Errorf("request %d: held to the final grammar %v", i, final)
+		}
+	}
+
+	ctl := &recordingProvider{Provider: scripted("small", map[string][]string{mitQ: {"look pkg", nope, mit}})}
+	tools, err := New(v, nil, Config{Model: Role{Provider: ctl, TextActions: true}, Base: b, Actions: &nl.Actions{Steps: 6}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := tools.Ask(context.Background(), mitQ); err != nil {
+		t.Fatal(err)
+	}
+	for i, req := range ctl.reqs {
+		for _, m := range req.Messages {
+			if m.Role == agent.RoleSystem {
+				t.Errorf("control: request %d has a note %q", i, m.Text)
+			}
+		}
+	}
+}
+
+// A tool role taking turns between two tries is keyed by its tool calls, and gets the note too.
+func TestAToolRoleAlternatingTriesGetsTheNote(t *testing.T) {
+	v, b := guide.Deps(t)
+	a, c := "try\n"+`pkg(?p, "nope") => ?p`, "try\n"+`pkg(?p, "none") => ?p`
+	rec := &recordingProvider{Provider: scripted("big", map[string][]string{mitQ: {a, c, a, c, mit}})}
+	tr, err := New(v, nil, Config{Model: Role{Provider: rec}, Base: b, Actions: &nl.Actions{Steps: 6}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p, _, err := tr.Ask(context.Background(), mitQ); err != nil || p.Text != mit {
+		t.Fatalf("Ask = %+v, %v", p, err)
+	}
+	noted := -1
+	for i, req := range rec.reqs {
+		for _, m := range req.Messages {
+			if m.Role == agent.RoleSystem && strings.Contains(m.Text, "alternated") && noted < 0 {
+				noted = i
+			}
+		}
+	}
+	if noted != 4 {
+		t.Errorf("the note first went with request %d of %d", noted, len(rec.reqs))
+	}
+}

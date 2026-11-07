@@ -135,24 +135,20 @@ func act(ctx context.Context, action, arg string, v *ns.Vocabulary, o Options) (
 		if o.grounder == nil {
 			return "there is nothing to find names with here; look and values say what the data holds", nil
 		}
-		cands, err := o.grounder.Ground(ctx, arg)
-		if err != nil {
+		text, seen, err := find(ctx, o, arg)
+		switch {
+		case err != nil:
 			return err.Error(), nil
+		case text == "":
+			return fmt.Sprintf("nothing found for %q", arg), nil
 		}
-		var seen []string
-		for _, c := range cands {
-			seen = append(seen, c.Values...)
-		}
-		if text := strings.TrimSpace(grounded(o.Pack.prompts().Grounded, cands)); text != "" {
-			return text, seen
-		}
-		return fmt.Sprintf("nothing found for %q", arg), nil
+		return text, seen
 	case ActionLook:
 		text, err := Look(v, o.FrontEnd, arg)
-		if err != nil {
-			return err.Error(), nil
+		if err == nil {
+			return text, nil
 		}
-		return text, nil
+		return lookFor(ctx, v, o, arg, err)
 	case ActionValues:
 		probe, err := Probe(v, o.FrontEnd, arg, o.Actions.sample())
 		if err != nil {
@@ -234,6 +230,82 @@ func Probe(v *ns.Vocabulary, fe FrontEnd, target string, limit int) (string, err
 	return valuesProgram(v, target, limit)
 }
 
+// lookMatches caps the members a look for a plain word lists.
+const lookMatches = 10
+
+// lookFor answers a look whose name is no member, module or label (#512): a model takes look for a
+// search, and sends look interface. Under jaala's own language it lists the members whose name or
+// first doc line holds the word, names first; with nothing listed and a Grounder, it answers as find
+// does; and otherwise it says what look takes, after err. A Prober's front end lists nothing, since
+// jaala's names aren't its language.
+func lookFor(ctx context.Context, v *ns.Vocabulary, o Options, word string, err error) (string, []string) {
+	pr := o.Pack.prompts()
+	if _, ok := o.FrontEnd.(Prober); !ok {
+		if lines := membersMentioning(v, word); len(lines) > 0 {
+			return fmt.Sprintf(pr.LookFound, word) + "\n" + strings.TrimRight(strings.Join(lines, ""), "\n"), nil
+		}
+	}
+	if o.grounder != nil {
+		if text, seen, ferr := find(ctx, o, word); ferr == nil && text != "" {
+			return text, seen
+		}
+	}
+	return err.Error() + "\n" + pr.LookNothing, nil
+}
+
+// find asks the Grounder what name may stand for: the text that goes back, "" when it found nothing,
+// and the values it showed.
+func find(ctx context.Context, o Options, name string) (string, []string, error) {
+	cands, err := o.grounder.Ground(ctx, name)
+	if err != nil {
+		return "", nil, err
+	}
+	var seen []string
+	for _, c := range cands {
+		seen = append(seen, c.Values...)
+	}
+	text := strings.TrimSpace(grounded(o.Pack.prompts().Grounded, cands))
+	if text == "" {
+		seen = nil
+	}
+	return text, seen, nil
+}
+
+// membersMentioning are the card lines of v's members whose path or first doc line holds word, any
+// case, the path matches first, at most lookMatches.
+func membersMentioning(v *ns.Vocabulary, word string) []string {
+	word = strings.ToLower(strings.TrimSpace(word))
+	if word == "" {
+		return nil
+	}
+	var byName, byDoc []string
+	var walk func(module string)
+	walk = func(module string) {
+		members, err := v.Members(module)
+		if err != nil {
+			return
+		}
+		for _, m := range members {
+			if m.Kind == ns.EntryModule {
+				walk(m.Path)
+				continue
+			}
+			switch {
+			case strings.Contains(strings.ToLower(m.Path), word):
+				byName = append(byName, cardLine(v, m))
+			case strings.Contains(strings.ToLower(firstLine(m.Doc)), word):
+				byDoc = append(byDoc, cardLine(v, m))
+			}
+		}
+	}
+	walk("")
+	out := append(byName, byDoc...)
+	if len(out) > lookMatches {
+		out = out[:lookMatches]
+	}
+	return out
+}
+
 // look is jaala's look: a member's card line with its whole doc, or a module's members.
 func look(v *ns.Vocabulary, name string) (string, error) {
 	e, err := v.Lookup(name)
@@ -312,6 +384,27 @@ func actionGrammar(grammar string, find bool) string {
 	}
 	root = append(root, gbnf.Ref("program"))
 	return gbnf.Render(append([]gbnf.Rule{{Name: "root", E: root}}, rules...)) + rootRule.ReplaceAllString(grammar, "program ::=")
+}
+
+// finalGrammar is a draft's grammar for the reply after the last step (#512): the draft, with the
+// try line before it allowed and dropped when it is judged (Session.reply). A model whose history
+// holds its own try replies writes one more, and under the draft's grammar alone the word ran into
+// the first name (tryagainlater(), trygraphreach(...)).
+func finalGrammar(grammar string) string {
+	if grammar == "" {
+		return ""
+	}
+	root := gbnf.Seq{gbnf.Opt(gbnf.Lit("try\n")), gbnf.Ref("program")}
+	return gbnf.Render([]gbnf.Rule{{Name: "root", E: root}}) + rootRule.ReplaceAllString(grammar, "program ::=")
+}
+
+// withoutTry is text with a first line of try alone taken off, the rest unchanged.
+func withoutTry(text string) string {
+	first, rest, ok := strings.Cut(text, "\n")
+	if ok && strings.TrimSpace(first) == ActionTry && strings.TrimSpace(rest) != "" {
+		return strings.TrimSpace(rest)
+	}
+	return text
 }
 
 var rootRule = regexp.MustCompile(`(?m)^root ::=`)
