@@ -1,0 +1,4 @@
+fixture: "graph"
+program: "mine() :- node(?a);"
+query: "mine() => ?a, count(?a)"
+expect_error: "in its body but its head drops it, so the answer cannot project it"

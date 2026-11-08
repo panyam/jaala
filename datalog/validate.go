@@ -118,7 +118,7 @@ func validateBound(q Query, reg *ns.Vocabulary, vars []Var) error {
 	if err := checkWrittenAnchors(written.Goal, q.Rules, bind, b.inputRels, reg); err != nil {
 		return err
 	}
-	if err := validateSelect(sel, q.Having, q.Goal); err != nil {
+	if err := validateSelect(sel, q.Having, q.Goal, q.Rules); err != nil {
 		return err
 	}
 	if err := validateOrder(cols, written); err != nil {
@@ -149,7 +149,7 @@ func validateWithoutVocabulary(q Query, reg *ns.Vocabulary, written Query, bind 
 	if err := checkWrittenAnchors(written.Goal, q.Rules, bind, b.inputRels, reg); err != nil {
 		return err
 	}
-	if err := validateSelect(sel, q.Having, q.Goal); err != nil {
+	if err := validateSelect(sel, q.Having, q.Goal, q.Rules); err != nil {
 		return err
 	}
 	if err := validateOrder(cols, written); err != nil {

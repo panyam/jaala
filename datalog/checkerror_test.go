@@ -87,6 +87,9 @@ func TestACheckErrorSaysWhatToFixAndWhere(t *testing.T) {
 		{"projected and unbound", `node(?a), not edge(?a, ?b) => ?b`,
 			`query: projected ?b is not bound by a positive relation (a variable used only under negation is existential and cannot be selected)`,
 			KindUnbound, "", "b", "bind ?b with a positive relation in the goal, or drop it from the answer", 1, 24},
+		{"projected and nowhere bound", `node(?a) => ?z`,
+			`query: projected ?z is not bound by the goal (nothing in it binds ?z)`,
+			KindUnbound, "", "z", "bind ?z with a positive relation in the goal, or drop it from the answer", 1, 13},
 		{"recursion through negation", "p(?a) :- node(?a), not q(?a);\nq(?a) :- node(?a), not p(?a);\np(?a) => ?a",
 			`query: rules are not stratifiable (recursion through negation: p, q)`, KindStratify, "", "", "", 0, 0},
 		{"order by a column not selected", `node(?a), edge(?a, ?b) => ?a order by ?b`,
@@ -112,6 +115,71 @@ func TestACheckErrorSaysWhatToFixAndWhere(t *testing.T) {
 				t.Errorf("Locate = %+v %v, want line %d column %d", pos, ok, c.line, c.col)
 			}
 		})
+	}
+}
+
+// A projection over a rule whose head drops the variable used to get the negation message, whose fix
+// sends the author to bind the variable in the goal — the wrong repair for a head that has no place
+// for the variable (issue 513). The message names the rule, and the fix is the head.
+func TestAProjectionOverARuleWhoseHeadDropsAVarNamesTheRule(t *testing.T) {
+	text := "mine() :- node(?a);\nmine() => ?a, count(?a)"
+	ce := checkErrorOf(t, text)
+	want := `query: rule "mine" binds ?a in its body but its head drops it, so the answer cannot project it`
+	if ce.Error() != want {
+		t.Errorf("message:\n got %s\nwant %s", ce.Error(), want)
+	}
+	if ce.Kind != KindUnbound || ce.Rule != "mine" || ce.Var != "a" {
+		t.Errorf("got kind %q rule %q var %q\nwant kind %q rule \"mine\" var \"a\"", ce.Kind, ce.Rule, ce.Var, KindUnbound)
+	}
+	if ce.Fix != "write the head as mine(?a) and add ?a to the goal's call, so the rule's head carries ?a out" {
+		t.Errorf("fix %q, want the head carried out of the rule", ce.Fix)
+	}
+	if pos, ok := Locate(text, ce); !ok || pos.Line != 1 || pos.Column != 16 {
+		t.Errorf("Locate = %+v %v, want the ?a the rule's body binds, line 1 column 16", pos, ok)
+	}
+}
+
+// A head with its own arguments keeps them in the fix: writing mine(?y) in place of mine(?x) would
+// drop ?x, so the fix spells mine(?x, ?y) and moves the goal's call to the new arity with it.
+func TestAHeadDropFixKeepsTheHeadsOwnArgs(t *testing.T) {
+	text := "mine(?x) :- node(?x), edge(?x, ?y);\nmine(?x) => ?y"
+	ce := checkErrorOf(t, text)
+	want := `query: rule "mine" binds ?y in its body but its head drops it, so the answer cannot project it`
+	if ce.Error() != want {
+		t.Errorf("message:\n got %s\nwant %s", ce.Error(), want)
+	}
+	if ce.Kind != KindUnbound || ce.Rule != "mine" || ce.Var != "y" {
+		t.Errorf("got kind %q rule %q var %q\nwant kind %q rule \"mine\" var \"y\"", ce.Kind, ce.Rule, ce.Var, KindUnbound)
+	}
+	if ce.Fix != "write the head as mine(?x, ?y) and add ?y to the goal's call, so the rule's head carries ?y out" {
+		t.Errorf("fix %q, want the head's own args kept", ce.Fix)
+	}
+}
+
+// The fix spells the head through the package's printer, so it keeps what the surface syntax keeps:
+// an aggregate's distinct, a constant's unit (folded, as the engine holds it), and a string as
+// written rather than escaped.
+func TestAHeadDropFixUsesThePrinter(t *testing.T) {
+	text := `mine(?n, count(distinct ?x), 2km, "a\"b") :- node(?n), node(?x), weight(?n, ?w);` + "\n" +
+		`mine(?c, ?d, ?e, ?f) => ?w`
+	ce := checkErrorOf(t, text)
+	want := `query: rule "mine" binds ?w in its body but its head drops it, so the answer cannot project it`
+	if ce.Error() != want {
+		t.Errorf("message:\n got %s\nwant %s", ce.Error(), want)
+	}
+	wantFix := `write the head as mine(?n, count(distinct ?x), 2000m, "a\"b", ?w) and add ?w to the goal's call, so the rule's head carries ?w out`
+	if ce.Fix != wantFix {
+		t.Errorf("fix:\n got %s\nwant %s", ce.Fix, wantFix)
+	}
+}
+
+// A relation with two clauses needs the new argument in every head, and the fix says so.
+func TestAHeadDropFixNamesEveryClause(t *testing.T) {
+	text := "mine(?x) :- node(?x), edge(?x, ?y);\nmine(?x) :- node(?x), weight(?x, ?y);\nmine(?x) => ?y"
+	ce := checkErrorOf(t, text)
+	want := `write the head as mine(?x, ?y) and add ?y to the goal's call, so the rule's head carries ?y out; mine has 2 clauses, so add ?y to every head`
+	if ce.Fix != want {
+		t.Errorf("fix:\n got %s\nwant %s", ce.Fix, want)
 	}
 }
 
