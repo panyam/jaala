@@ -4,8 +4,8 @@ go 1.26.9
 
 require (
 	github.com/panyam/chakra v0.3.0
-	github.com/panyam/jaala v0.1.93
-	github.com/panyam/jaala/frontends/nl v0.1.93
+	github.com/panyam/jaala v0.1.94
+	github.com/panyam/jaala/frontends/nl v0.1.94
 )
 
 require (
@@ -15,7 +15,7 @@ require (
 	github.com/invopop/jsonschema v0.14.0 // indirect
 	github.com/panyam/gocurrent v0.1.2 // indirect
 	github.com/panyam/goutils v0.1.13 // indirect
-	github.com/panyam/jaala/frontends/cypher v0.1.93
+	github.com/panyam/jaala/frontends/cypher v0.1.94
 	github.com/panyam/mcpkit v0.8.16 // indirect
 	github.com/panyam/servicekit v0.2.2 // indirect
 	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect
