@@ -66,6 +66,9 @@ type Prompts struct {
 	// "program" or "query"; what it was told the first time; the grounded values (Grounded, or "");
 	// the part to change.
 	Reask string
+	// Without heads what an empty answer's goal gives without its culprit literal. Placeholders: the
+	// literal, then the variables shown.
+	Without string
 	// Grounded heads the grounded values listed after the question.
 	Grounded string
 	// Pick opens the prompt asking the model to pick one of Pack.Callables (#484).
@@ -114,6 +117,7 @@ func DefaultPrompts() Prompts {
 		EmptyFallback: "A program written for this answered nothing; the question may need other members or values.",
 		Reask: "That is the same %[1]s you sent before, and it answers nothing for the same reason:\n\n%[2]s%[3]s" +
 			"\n\nDon't send it again. Change %[4]s to other members or values, and write the whole %[1]s again.",
+		Without:        "Without %[1]s, the rest of the goal gives %[2]s values such as:",
 		Grounded:       "Values the question's names may stand for, likeliest first (use them exactly as written):",
 		Pick:           pickInstructions,
 		PickRetry:      "Call another relation, or this one with other values, or reply none.",
@@ -142,7 +146,7 @@ func (p *Pack) prompts() Prompts {
 		{&h.AskedAgain, &d.AskedAgain}, {&h.LastLook, &d.LastLook}, {&h.TriedAgain, &d.TriedAgain},
 		{&h.LookFound, &d.LookFound}, {&h.LookNothing, &d.LookNothing}, {&h.Stuck, &d.Stuck}, {&h.ToolLook, &d.ToolLook},
 		{&h.ToolValues, &d.ToolValues}, {&h.ToolTry, &d.ToolTry}, {&h.ToolFind, &d.ToolFind}, {&h.Fix, &d.Fix}, {&h.FixEmpty, &d.FixEmpty},
-		{&h.EmptyFallback, &d.EmptyFallback}, {&h.Reask, &d.Reask}, {&h.Grounded, &d.Grounded},
+		{&h.EmptyFallback, &d.EmptyFallback}, {&h.Reask, &d.Reask}, {&h.Grounded, &d.Grounded}, {&h.Without, &d.Without},
 		{&h.Pick, &d.Pick}, {&h.PickRetry, &d.PickRetry}, {&h.CompactFound, &d.CompactFound},
 		{&h.CompactRefused, &d.CompactRefused}, {&h.LedgerFound, &d.LedgerFound}, {&h.LedgerTried, &d.LedgerTried}, {&h.LedgerHeader, &d.LedgerHeader},
 		{&h.Extract, &d.Extract}, {&h.ExtractFix, &d.ExtractFix},
@@ -164,7 +168,7 @@ func (t Prompts) templates() []struct {
 		name, text string
 		n          int
 	}{{"Actions", t.Actions, 2}, {"ToolValues", t.ToolValues, 1}, {"Fix", t.Fix, 1}, {"FixEmpty", t.FixEmpty, 1}, {"Reask", t.Reask, 4},
-		{"LookFound", t.LookFound, 1}, {"Stuck", t.Stuck, 1}, {"Dropped", t.Dropped, 2}}
+		{"LookFound", t.LookFound, 1}, {"Stuck", t.Stuck, 1}, {"Dropped", t.Dropped, 2}, {"Without", t.Without, 2}}
 }
 
 // checkTemplates refuses a template that drops one of its placeholders or reads one it isn't given:

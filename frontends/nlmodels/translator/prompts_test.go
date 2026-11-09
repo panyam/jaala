@@ -45,6 +45,7 @@ func hostPrompts() *nl.Prompts {
 		LedgerFound:          "H-LEDGERFOUND",
 		LedgerTried:          "H-LEDGERTRIED",
 		LedgerHeader:         "H-LEDGERHEADER",
+		Without:              "H-WITHOUT %[2]s|%[1]s",
 		Extract:              "\nH-EXTRACT\n",
 		ExtractFix:           "H-EXTRACTFIX",
 	}
@@ -122,6 +123,9 @@ func TestAPacksPromptsReplaceJaalasText(t *testing.T) {
 			return want(m.descs[nl.ActionAdd], "H-TOOLADD") + want(m.descs[nl.ActionDrop], "H-TOOLDROP") +
 				want(tr.Steps[1].Result, "\n\nH-NOTADDED") + want(tr.Steps[2].Result, `H-DROPPED edge("a", ?b)|(empty)`) +
 				want(tr.Steps[3].Result, "H-DROPNOTHING")
+		}},
+		{"the rest without the culprit", nl.Options{Base: b}, nil, []string{`edge(?a, ?b), edge(?b, "zz") => ?a`, `edge(?a, ?b) => ?a`}, func(m *scripted, _ nl.Trace) string {
+			return want(m.asked[1].Turns[2].Text, `H-WITHOUT ?b|edge(?b, "zz")`)
 		}},
 		{"the ledger", nl.Options{Base: b, Actions: &nl.Actions{Steps: 2, Ledger: true}}, nil, []string{"values edge.0", "try\n" + `edge("zz", ?b) => ?b`, `edge("a", ?b) => ?b`}, func(m *scripted, _ nl.Trace) string {
 			ledger := m.asked[2].Turns[len(m.asked[2].Turns)-1].Text
