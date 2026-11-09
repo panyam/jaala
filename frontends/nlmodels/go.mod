@@ -3,7 +3,7 @@ module github.com/panyam/jaala/frontends/nlmodels
 go 1.26.9
 
 require (
-	github.com/panyam/chakra v0.3.2
+	github.com/panyam/chakra v0.3.3
 	github.com/panyam/jaala v0.1.98
 	github.com/panyam/jaala/frontends/nl v0.1.98
 )
@@ -16,7 +16,7 @@ require (
 	github.com/panyam/gocurrent v0.1.2 // indirect
 	github.com/panyam/goutils v0.1.13 // indirect
 	github.com/panyam/jaala/frontends/cypher v0.1.98
-	github.com/panyam/mcpkit v0.8.17 // indirect
+	github.com/panyam/mcpkit v0.8.19 // indirect
 	github.com/panyam/servicekit v0.2.2 // indirect
 	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3 // indirect
