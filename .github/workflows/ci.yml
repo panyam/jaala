@@ -230,9 +230,14 @@ jobs:
         with:
           go-version-file: go.mod
       - name: install Soufflé 2.5
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           deb=x86_64-ubuntu-2404-souffle-2.5-Linux.deb
-          curl -fsSL -o "$deb" "https://github.com/souffle-lang/souffle/releases/download/2.5/$deb"
+          # gh asks with the job's token: on 2026-11-09 GitHub timed out anonymous release downloads
+          # (504) while authenticated ones went through. curl with retries is the fallback.
+          gh release download 2.5 -R souffle-lang/souffle -p "$deb" ||
+            curl -fsSL --retry 5 --retry-all-errors -o "$deb" "https://github.com/souffle-lang/souffle/releases/download/2.5/$deb"
           echo "6b86e554f6aa5abf8a8b55d8312ae37c0957c5bd6c9edeea89246db9406f645ec5e600b84fe6636b1c163da556f0da6c3d2dad46c1083413f2fcf4f95b9ac62c  $deb" | sha512sum -c -
           sudo apt-get update -qq
           sudo apt-get install -y -qq "./$deb"
