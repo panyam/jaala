@@ -2,6 +2,7 @@ package nl
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -35,6 +36,11 @@ type Actions struct {
 	// what it has found: each action with its result, each refused answer on a line, and the last
 	// refusal whole. A small model's drafts get worse as its context grows (#393).
 	Compact bool
+	// Ledger shows the model, on every call after the conversation, what its actions found and each
+	// draft it tried with what that did (Conversation.Ledger, #514), so a small model keeps them in
+	// view without rereading the transcript. With Compact, the one turn leaves those lines to it. The
+	// translator shows it; a host's own loop reads Conversation.Ledger.
+	Ledger bool
 	// AsTools says the caller offers the actions as tools of its own (Session.Tools), as nlmodels'
 	// translator does on a chakra Runner (#496), rather than reading them from a reply: the prefix
 	// leaves out Prompts.Actions, and ActionGrammar is Grammar.
@@ -154,25 +160,34 @@ func act(ctx context.Context, action, arg string, v *ns.Vocabulary, o Options) (
 		if err != nil {
 			return err.Error(), nil
 		}
-		return run(ctx, probe, v, o, "values of "+arg)
+		return run(ctx, probe, v, o, "values of "+arg, o.Actions.sample())
 	}
-	return run(ctx, arg, v, o, "it")
+	return run(ctx, arg, v, o, "it", o.Actions.sample())
 }
 
-// run runs a draft as an answer is judged, with at most Sample rows, and writes what came back: the
+// run runs a draft as an answer is judged, with at most limit rows, and writes what came back: the
 // rows, or why there were none, in the draft's language, with the text values in the rows.
-func run(ctx context.Context, text string, v *ns.Vocabulary, o Options, what string) (string, []string) {
-	o.Pack = nil // a look at the data isn't an answer the pack's Check judges
-	try, prog, err := check(ctx, Try{Text: text, explain: func(err error) string { return Explain(text, err) }}, v, o, o.Actions.sample())
+func run(ctx context.Context, text string, v *ns.Vocabulary, o Options, what string, limit int) (string, []string) {
+	out, seen, err := runRows(ctx, text, v, o, what, limit)
 	if err != nil {
-		return strings.TrimRight(try.explain(err), "\n"), nil
+		return err.Error(), nil
+	}
+	return out, seen
+}
+
+// runRows is run with a refusal as its error, whose text is the draft's explanation.
+func runRows(ctx context.Context, text string, v *ns.Vocabulary, o Options, what string, limit int) (string, []string, error) {
+	o.Pack = nil // a look at the data isn't an answer the pack's Check judges
+	try, prog, err := check(ctx, Try{Text: text, explain: func(err error) string { return Explain(text, err) }}, v, o, limit)
+	if err != nil {
+		return "", nil, errors.New(strings.TrimRight(try.explain(err), "\n"))
 	}
 	if o.Base == nil {
-		return "it checks; with no data to run on, there are no rows to show", nil
+		return "it checks; with no data to run on, there are no rows to show", nil, nil
 	}
 	var seen []string
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s answered %s:", what, rowCount(len(prog.Rows), o.Actions.sample()))
+	fmt.Fprintf(&b, "%s answered %s:", what, rowCount(len(prog.Rows), limit))
 	cols := prog.Query.Columns()
 	for _, r := range prog.Rows {
 		vals := make([]string, len(cols))
@@ -184,7 +199,7 @@ func run(ctx context.Context, text string, v *ns.Vocabulary, o Options, what str
 		}
 		b.WriteString("\n  " + strings.Join(vals, ", "))
 	}
-	return b.String(), seen
+	return b.String(), seen, nil
 }
 
 func rowCount(n, sample int) string {

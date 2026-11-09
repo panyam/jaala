@@ -140,6 +140,13 @@ GOARCH=wasm go test ./ns` (#417 ran `ns` that way).
   exactly one other spelling (`spelling`: letters and digits, lower-cased) rewritten, from those and
   the refused argument's Domain (`domainOf`); the rewrite is kept only if it then passes, as a `Try`
   with `Repair`. `Actions.Compact` sends `memory.compact`'s one turn instead of the conversation.
+  `Actions.Ledger` (#514) adds `Conversation.Ledger` as a system note on every step's call (a request
+  stage, so chakra's guided finalizing call carries none): findings and drafts apart, `memory.drafts`
+  marking which; with `Compact` the one turn leaves those lines to it. `Pack.Preview` (#514,
+  `preview.go`) names a question's relations or values targets; `Session.Preview` reads `PreviewRows`
+  of each once per Session (jaala's programs unless the front end is a Prober) and feeds `memory.see`,
+  and the translator's `preview` stage wraps chakra's `NewRetrievalStage`, keeping the block in
+  `loop.shown` so Compact's stage and a vote's history (`withPreview`) carry it.
   `Pack.Callables` (#484, `callable.go`) are relations answering a question alone: the translator first
   asks the first model to pick one (`Session.Pick`: About, Card and the catalogue, a grammar of `none`
   or a listed call, `pickTries` 2), a bare call being a program whose rows bind its variables; a `none` is a
@@ -212,8 +219,12 @@ GOARCH=wasm go test ./ns` (#417 ran `ns` that way).
   tools, `Session.TextActions`' prefix and grammar, its replies read with `nl.ReadAction` in the
   `TurnEnd` hook, and once its steps run out the request stage sets `StepView.Guided` to
   `Session.FinalGrammar` (chakra#259, v0.2.9): the draft's, a `try⏎` line allowed before it and dropped by
-  `Session.reply` (#512: under the draft's grammar alone `try` ran into the first name). A repeated `try`
-  isn't run and takes no step (`Conversation.tried`); chakra's `NewStuckDetector` (v0.3.0) runs first among
+  `Session.reply` (#512: under the draft's grammar alone `try` ran into the first name). A repeated action
+  isn't run and takes no step (`Conversation.asked`, `Repeats`, #517), and the translator marks it a
+  free refusal (a `ToolDeniedError` with `Free` from the `repeated` middleware, since a FuncSource
+  tool's error becomes a result; `TurnEndVerdict.Free` for a text reply), the `MaxRepeats`-th ending
+  the actions, with `MaxFreeRefusals` the same. `Role.Penalties` go out filtered to the kinds
+  `CapabilitiesOf` lists (`sendable`); chakra's `NewStuckDetector` (v0.3.0) runs first among
   the request stages, keyed by `actionKey` (a tool call, or a text reply read with `ReadAction`), and
   sends `Prompts.Stuck` at the fallback's temperature on the second repeat or alternation, then
   `Conversation.EndActions`. A `look` naming nothing lists members mentioning the word (`lookFor`), else

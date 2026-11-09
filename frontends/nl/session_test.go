@@ -3,6 +3,7 @@ package nl_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -230,8 +231,9 @@ func TestAPickStopsOnNone(t *testing.T) {
 	}
 }
 
-// A conversation counts its actions: the same one asked twice opens with AskedAgain, the last one
-// MaxSteps allows ends with LastLook, and a new conversation starts the count again.
+// A conversation counts its actions: the same one asked twice isn't run again and opens with
+// AskedAgain over what it answered first, taking no step; the last one MaxSteps allows ends with
+// LastLook; and a new conversation starts the count again.
 func TestAConversationCountsItsActions(t *testing.T) {
 	v, b := guide.Deps(t)
 	d := nl.DefaultPrompts()
@@ -241,12 +243,87 @@ func TestAConversationCountsItsActions(t *testing.T) {
 	if strings.HasPrefix(first, d.AskedAgain) || strings.HasSuffix(first, d.LastLook) || c.Steps() != 1 {
 		t.Errorf("first look %q, steps %d", first, c.Steps())
 	}
+	if !c.Repeats(nl.ActionLook, "pkg") || c.Repeats(nl.ActionValues, "pkg.license") {
+		t.Errorf("Repeats: the look %v, values %v", c.Repeats(nl.ActionLook, "pkg"), c.Repeats(nl.ActionValues, "pkg.license"))
+	}
 	again := c.Act(context.Background(), nl.ActionLook, "pkg")
-	if again != d.AskedAgain+" "+first+"\n\n"+d.LastLook || c.Steps() != 2 {
+	if again != d.AskedAgain+" "+first || c.Steps() != 1 {
 		t.Errorf("second look %q, steps %d", again, c.Steps())
+	}
+	values := c.Act(context.Background(), nl.ActionValues, "pkg.license")
+	if !strings.HasSuffix(values, "\n\n"+d.LastLook) || c.Steps() != 2 {
+		t.Errorf("values %q, steps %d", values, c.Steps())
 	}
 	if c := s.NewConversation(nil, true); c.Steps() != 0 || strings.HasPrefix(c.Act(context.Background(), nl.ActionLook, "pkg"), d.AskedAgain) {
 		t.Errorf("a new conversation carried the count")
+	}
+}
+
+// The MaxRepeats-th repeat ends the actions and says so with LastLook (#517); the repeats before it
+// leave the steps alone. control: a conversation with as many distinct actions keeps its steps.
+func TestRepeatsEndTheActionsAtTheCap(t *testing.T) {
+	v, b := guide.Deps(t)
+	d := nl.DefaultPrompts()
+	s, _ := nl.NewSession(context.Background(), mitQ, v, nil, nl.Options{Base: b, Actions: &nl.Actions{Steps: 10}})
+	c := s.NewConversation(nil, true)
+	nope := `pkg(?p, "nope") => ?p`
+	c.Act(context.Background(), nl.ActionTry, nope)
+	c.Act(context.Background(), nl.ActionLook, "pkg")
+	for i := 1; i < nl.MaxRepeats; i++ {
+		action, arg := nl.ActionTry, nope
+		if i%2 == 0 {
+			action, arg = nl.ActionLook, "pkg"
+		}
+		if r := c.Act(context.Background(), action, arg); strings.HasSuffix(r, d.LastLook) || c.Steps() != 2 {
+			t.Fatalf("repeat %d answered %q, steps %d", i, r, c.Steps())
+		}
+	}
+	last := c.Act(context.Background(), nl.ActionTry, nope)
+	if !strings.HasPrefix(last, d.TriedAgain) || !strings.HasSuffix(last, "\n\n"+d.LastLook) || c.Steps() != 10 {
+		t.Errorf("repeat %d answered %q, steps %d", nl.MaxRepeats, last, c.Steps())
+	}
+	ctl := s.NewConversation(nil, true)
+	for i := range nl.MaxRepeats + 2 {
+		ctl.Act(context.Background(), nl.ActionTry, fmt.Sprintf(`pkg(?p, "n%d") => ?p`, i))
+	}
+	if ctl.Steps() != nl.MaxRepeats+2 {
+		t.Errorf("control: %d distinct tries took %d steps", nl.MaxRepeats+2, ctl.Steps())
+	}
+}
+
+// The Ledger lists what the actions found and each draft with what it did, under their headings, and
+// a list with nothing in it is left out. Compact under Ledger leaves those lines to it. control:
+// without Ledger, Compact lists them.
+func TestTheLedgerSplitsFindingsFromDrafts(t *testing.T) {
+	v, b := guide.Deps(t)
+	d := nl.DefaultPrompts()
+	s, _ := nl.NewSession(context.Background(), mitQ, v, nil, nl.Options{Base: b, Actions: &nl.Actions{Ledger: true, Compact: true}})
+	c := s.NewConversation(nil, true)
+	if c.Ledger() != "" {
+		t.Errorf("an empty ledger %q", c.Ledger())
+	}
+	c.Act(context.Background(), nl.ActionValues, "pkg.license")
+	if l := c.Ledger(); !strings.HasPrefix(l, d.LedgerFound+"\n- values pkg.license") || strings.Contains(l, d.LedgerTried) {
+		t.Errorf("after values, the ledger %q", l)
+	}
+	nope := `pkg(?p, "nope") => ?p`
+	c.Act(context.Background(), nl.ActionTry, nope)
+	if vd := c.Judge(context.Background(), reply(`pkg(?p, "none") => ?p`)); vd.Continue == "" {
+		t.Fatalf("the answer wasn't refused: %+v", vd)
+	}
+	l := c.Ledger()
+	found, tried, ok := strings.Cut(l, "\n\n"+d.LedgerTried+"\n")
+	if !ok || strings.Contains(found, nope) || !strings.Contains(tried, "- try "+nope) || !strings.Contains(tried, `- pkg(?p, "none") => ?p`) {
+		t.Errorf("the ledger %q", l)
+	}
+	if turn := c.Compact()[0].Text; strings.Contains(turn, d.CompactFound) || !strings.Contains(turn, d.CompactRefused) {
+		t.Errorf("Compact under Ledger %q", turn)
+	}
+	plain, _ := nl.NewSession(context.Background(), mitQ, v, nil, nl.Options{Base: b, Actions: &nl.Actions{Compact: true}})
+	pc := plain.NewConversation(nil, true)
+	pc.Act(context.Background(), nl.ActionValues, "pkg.license")
+	if turn := pc.Compact()[0].Text; !strings.Contains(turn, d.CompactFound+"\n- values pkg.license") {
+		t.Errorf("control: Compact without Ledger %q", turn)
 	}
 }
 

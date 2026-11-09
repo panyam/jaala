@@ -182,7 +182,7 @@ func arms() []arm {
 			opts: func(b *datalog.Base) nl.Options { return nl.Options{Base: b} }},
 		{name: "actions and a repair", actions: true, small: map[string][]string{mitQ: {"look pkg", "values pkg.license", `pkg(?p, "mit") => ?p`}},
 			cases: mitCase, wantPassed: 1, opts: actions(nl.Actions{})},
-		{name: "an action asked twice, then out of steps", actions: true, small: map[string][]string{mitQ: {"look pkg", "look pkg", "look pkg", mit}},
+		{name: "an action asked twice, then out of steps", actions: true, small: map[string][]string{mitQ: {"look pkg", "look pkg", "values pkg.license", "look pkg", mit}},
 			cases: mitCase, wantPassed: 1, opts: actions(nl.Actions{Steps: 2})},
 		{name: "a try, compacted", actions: true, small: map[string][]string{mitQ: {"try\n" + `pkg(?p, "nope") => ?p`, `pkg(?p, "nope") => ?p`, mit}},
 			cases: mitCase, wantPassed: 1, opts: actions(nl.Actions{Compact: true})},
@@ -230,7 +230,7 @@ func TestTheDifferentialsArmsReachTheirPaths(t *testing.T) {
 		t.Errorf("actions and a repair: %d steps, tries %+v", len(trace.Steps), trace.Tries)
 	}
 	trace, _ = run(byName["an action asked twice, then out of steps"])
-	if len(trace.Steps) != 2 || !strings.HasPrefix(trace.Steps[1].Result, nl.DefaultPrompts().AskedAgain) || len(trace.Tries) != 2 || trace.Tries[0].Kind != nl.KindParse {
+	if len(trace.Steps) != 3 || !strings.HasPrefix(trace.Steps[1].Result, nl.DefaultPrompts().AskedAgain) || len(trace.Tries) != 2 || trace.Tries[0].Kind != nl.KindParse {
 		t.Errorf("out of steps: steps %+v, tries %+v", trace.Steps, trace.Tries)
 	}
 	trace, small := run(byName["a try, compacted"])

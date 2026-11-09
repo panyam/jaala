@@ -41,6 +41,12 @@ type Role struct {
 	Temperature *float64
 	// MaxTokens replaces the role's default (MaxTokens, or ThinkingMaxTokens when Thinking).
 	MaxTokens int
+	// Penalties turn on chakra's sampling penalties for the role's calls (#517): repeat, frequency,
+	// presence and DRY, for a model that repeats itself until its token limit
+	// (find(interfaceinterfaceinterface(...). As with Temperature, only the kinds agent.CapabilitiesOf
+	// lists for the provider are sent, and the rest are left off, so one Role serves llama.cpp (all
+	// four kinds), Ollama (frequency and presence) and Anthropic (none). nil sends none.
+	Penalties *agent.SamplingPenalties
 	// Thinking is for a reasoning model: no grammar, which would hold the reply to a program from its
 	// first token, a line asking it to think the question through and put the program in a fenced
 	// block, and only the last fenced block, outside any <think> section, read as the draft.

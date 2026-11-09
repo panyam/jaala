@@ -27,6 +27,11 @@ type Session struct {
 	finalGrammar                        string // the draft's, a try line allowed before it (FinalGrammar)
 	tries                               int
 	pick                                bool
+
+	question   string   // as the host asked it, for Pack.Preview
+	previewed  bool     // Preview has read the targets
+	preview    []Sample // what Preview read
+	previewErr error    // the targets Preview couldn't read
 }
 
 // NewSession prepares question over v, as the translator does before asking any model: it checks the
@@ -49,7 +54,7 @@ func NewSession(ctx context.Context, question string, v *ns.Vocabulary, g Ground
 	if o.Actions.replies() {
 		prefix = head + actions + tail
 	}
-	s := &Session{v: v, o: o, pr: pr, prefix: prefix, textPrefix: head + actions + tail, ask: question,
+	s := &Session{v: v, o: o, pr: pr, prefix: prefix, textPrefix: head + actions + tail, ask: question, question: question,
 		mem: &memory{found: pr.CompactFound, refused: pr.CompactRefused}}
 	if g != nil {
 		if s.cands, err = g.Ground(ctx, question); err != nil {
@@ -200,17 +205,23 @@ type Conversation struct {
 	reasked bool              // a repeated empty draft was asked again (#483)
 	tries   int
 	steps   int               // actions taken
-	asked   map[string]bool   // each action taken, as action and argument
-	tried   map[string]string // what each try's draft answered
+	repeats int               // actions asked again, which took no step
+	asked   map[string]string // what each action answered, keyed by action and argument
 }
+
+// MaxRepeats is how many repeated actions a Conversation answers before it ends the model's actions
+// (#517). A repeat isn't run and takes no step, so a greedy model cycling through actions it took
+// already would otherwise never reach its answer. nlmodels' translator gives chakra's
+// RunnerConfig.MaxFreeRefusals the same number, so a repeat costs the Runner no step either.
+const MaxRepeats = 3
 
 // NewConversation starts a model's turn. after is why the previous model's turn ended, nil for the
 // first, and last says no model follows this one: an empty answer then goes back to this model
 // rather than ending its turn.
 func (s *Session) NewConversation(after error, last bool) *Conversation {
-	c := &Conversation{s: s, ask: s.ask, last: last, refused: map[string]error{}, why: map[string]string{}, asked: map[string]bool{}, tried: map[string]string{}}
+	c := &Conversation{s: s, ask: s.ask, last: last, refused: map[string]error{}, why: map[string]string{}, asked: map[string]string{}}
 	if !s.pick {
-		s.mem.facts, s.mem.last = nil, ""
+		s.mem.facts, s.mem.drafts, s.mem.last = nil, nil, ""
 		if after != nil && errors.Is(after, errEmpty) {
 			c.ask += "\n\n" + s.pr.EmptyFallback
 		}
@@ -223,38 +234,60 @@ func (s *Session) NewConversation(after error, last bool) *Conversation {
 func (c *Conversation) Ask() string { return c.ask }
 
 // Compact is the one message Actions.Compact sends in place of the conversation so far: the question,
-// what the actions found, each refused answer on a line, and the last refusal whole.
-func (c *Conversation) Compact() []Turn { return c.s.mem.compact(c.ask) }
+// what the actions found, each refused answer on a line, and the last refusal whole. With
+// Actions.Ledger it leaves the found and refused lines to Ledger.
+func (c *Conversation) Compact() []Turn {
+	return c.s.mem.compact(c.ask, c.s.o.Actions == nil || !c.s.o.Actions.Ledger)
+}
 
-// Act runs an action this conversation's model asked for and returns what goes back to it: the
-// Session's Act, opened with Prompts.AskedAgain when the model asked the same before, and ended with
-// Prompts.LastLook when it was the last MaxSteps allows. It is kept for Compact as the reply that
-// would have asked for it ("values pkg.license"). Steps counts it, and the caller stops offering
-// actions once Steps reaches MaxSteps.
+// Ledger is what Actions.Ledger shows the model on every call, after the conversation (#514): what
+// its look, values and find actions found, under Prompts.LedgerFound, then each draft it tried or
+// answered with and what that did, under Prompts.LedgerTried. It is "" before anything happened, and
+// a list with nothing in it is left out. A loop shows it whether or not Actions.Ledger is set; the
+// option only says the translator should.
+func (c *Conversation) Ledger() string { return c.s.mem.ledger(c.s.pr) }
+
+// Act runs an action this conversation's model asked for and returns what goes back to it, ended
+// with Prompts.LastLook when it was the last MaxSteps allows. It is kept for Compact and the Ledger as
+// the reply that would have asked for it ("values pkg.license"). Steps counts it, and the caller stops
+// offering actions once Steps reaches MaxSteps.
 //
-// A try of a draft the conversation tried before isn't run again and takes no step (#512): it gets
-// Prompts.TriedAgain and what the draft answered then. A greedy model sent the same draft six times
-// and got the same rows-or-why each time, spending a step on every one.
+// An action the conversation took before isn't run again and takes no step (#512, #517): it gets
+// Prompts.TriedAgain (a try) or Prompts.AskedAgain (any other) and what it answered then. A greedy
+// model cycled through try, look, try, find, spending a step on every repeat until its steps ran out.
+// The MaxRepeats-th repeat ends the actions, and its result ends with Prompts.LastLook. Repeats
+// says, before Act, whether an action is one.
 func (c *Conversation) Act(ctx context.Context, action, arg string) string {
 	s := c.s
-	if before, ok := c.tried[arg]; ok && action == ActionTry {
-		return s.pr.TriedAgain + "\n" + before
+	key := action + "\x00" + arg
+	if before, ok := c.asked[key]; ok {
+		c.repeats++
+		result := s.pr.AskedAgain + " " + before
+		if action == ActionTry {
+			result = s.pr.TriedAgain + "\n" + before
+		}
+		if c.repeats >= MaxRepeats && c.steps < s.MaxSteps() {
+			c.EndActions()
+			result += "\n\n" + s.pr.LastLook
+		}
+		return result
 	}
 	result := s.Act(ctx, action, arg)
-	if action == ActionTry {
-		c.tried[arg] = result
-	}
-	key := action + "\x00" + arg
-	if c.asked[key] {
-		result = s.pr.AskedAgain + " " + result
-	}
-	c.asked[key] = true
+	c.asked[key] = result
 	c.steps++
+	s.mem.add(action == ActionTry, fact(ActionText(action, arg), result))
 	if c.steps == s.MaxSteps() {
 		result += "\n\n" + s.pr.LastLook
 	}
-	s.mem.facts = append(s.mem.facts, fact(ActionText(action, arg), result))
 	return result
+}
+
+// Repeats says the conversation took action with arg before, so Act would answer it from then,
+// without running it or taking a step. A loop marks such a reply free (chakra's DenyToolFree, or a
+// TurnEndVerdict with Free).
+func (c *Conversation) Repeats(action, arg string) bool {
+	_, ok := c.asked[action+"\x00"+arg]
+	return ok
 }
 
 // EndActions spends the steps left, so the caller stops offering actions and the model's next reply
@@ -362,7 +395,7 @@ func (c *Conversation) Judge(ctx context.Context, try Try) Verdict {
 		c.reasked = true
 		try.Reasked = true
 		msg := reask(s.pr, what, c.why[try.Text], err, s.o.FrontEnd != nil, s.cands)
-		s.mem.facts = append(s.mem.facts, fact(try.Text, "repeated, and answered nothing again"))
+		s.mem.add(true, fact(try.Text, "repeated, and answered nothing again"))
 		s.mem.last = try.Text + "\n" + msg
 		return c.next(append(tries, try), msg, err)
 	}
@@ -376,7 +409,7 @@ func (c *Conversation) Judge(ctx context.Context, try Try) Verdict {
 	}
 	told := strings.TrimRight(try.explain(err), "\n")
 	c.why[try.Text] = told
-	s.mem.facts = append(s.mem.facts, fact(try.Text, "refused ("+try.Kind+"): "+strings.Join(strings.Fields(told), " ")))
+	s.mem.add(true, fact(try.Text, "refused ("+try.Kind+"): "+strings.Join(strings.Fields(told), " ")))
 	s.mem.last = try.Text + "\n" + told + "\n\n" + fix
 	return c.next(append(tries, try), told+"\n\n"+fix, err)
 }

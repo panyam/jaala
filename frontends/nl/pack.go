@@ -56,6 +56,15 @@ type Pack struct {
 	// the instructions after the card, the action loop's, the feedback lines, the pick's and Extract's.
 	// nil, or a field left "", keeps jaala's (DefaultPrompts).
 	Prompts *Prompts
+	// Preview, when set, names what the model is shown a few rows of before its first draft (#514),
+	// for the question it is given: a relation, whose first PreviewRows rows are shown under its
+	// arguments' names, or a values target (pkg.license, or Label.property under a front end that
+	// is a Prober), whose first PreviewRows values are. A small model guesses ids, kinds and keys
+	// from their names; rows show it how the data spells them. The host picks what to show, from the
+	// question's words or its own pick; jaala reads it over Options.Base (Session.Preview), and
+	// nlmodels' translator puts it before the question for every draft, through chakra's retrieval
+	// stage. Nothing is shown without a Base.
+	Preview func(ctx context.Context, question string) []string
 	// ExtractExamples are texts with the lines Extract should write for them, which follow the pack's
 	// About and Card in Extract's prefix. The translator doesn't read them.
 	ExtractExamples []ExtractExample

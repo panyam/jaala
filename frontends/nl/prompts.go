@@ -25,7 +25,8 @@ type Prompts struct {
 	Actions string
 	// Find is Actions' line for the find action, when there is a Grounder.
 	Find string
-	// AskedAgain opens an action's result when the model asked the same action before.
+	// AskedAgain opens what an action sends back when the model asked the same action before, which
+	// isn't run again (#517); what it answered then follows.
 	AskedAgain string
 	// LastLook ends the last action's result the model may ask for.
 	LastLook string
@@ -63,6 +64,9 @@ type Prompts struct {
 	PickRetry string
 	// CompactFound and CompactRefused head the memory's lists in Actions.Compact's one turn.
 	CompactFound, CompactRefused string
+	// LedgerFound and LedgerTried head Conversation.Ledger's two lists (#514): what the actions found,
+	// and the drafts tried with what each did.
+	LedgerFound, LedgerTried string
 	// Extract follows the relations in every Extract prompt.
 	Extract string
 	// ExtractFix ends a refused extraction's feedback.
@@ -95,6 +99,8 @@ func DefaultPrompts() Prompts {
 		PickRetry:      "Call another relation, or this one with other values, or reply none.",
 		CompactFound:   "What you have found so far:",
 		CompactRefused: "Your last answer was refused:",
+		LedgerFound:    "What your actions found so far:",
+		LedgerTried:    "Drafts you have tried, and what each did (don't send one again):",
 		Extract:        extractInstructions,
 		ExtractFix:     "Write all the lines again, fixed.",
 	}
@@ -115,7 +121,8 @@ func (p *Pack) prompts() Prompts {
 		{&h.ToolValues, &d.ToolValues}, {&h.ToolTry, &d.ToolTry}, {&h.ToolFind, &d.ToolFind}, {&h.Fix, &d.Fix}, {&h.FixEmpty, &d.FixEmpty},
 		{&h.EmptyFallback, &d.EmptyFallback}, {&h.Reask, &d.Reask}, {&h.Grounded, &d.Grounded},
 		{&h.Pick, &d.Pick}, {&h.PickRetry, &d.PickRetry}, {&h.CompactFound, &d.CompactFound},
-		{&h.CompactRefused, &d.CompactRefused}, {&h.Extract, &d.Extract}, {&h.ExtractFix, &d.ExtractFix},
+		{&h.CompactRefused, &d.CompactRefused}, {&h.LedgerFound, &d.LedgerFound}, {&h.LedgerTried, &d.LedgerTried},
+		{&h.Extract, &d.Extract}, {&h.ExtractFix, &d.ExtractFix},
 	} {
 		if *f.host != "" {
 			*f.def = *f.host

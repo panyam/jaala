@@ -20,7 +20,8 @@ import (
 //	JAALA_LLAMACPP_URL=http://127.0.0.1:18089 go test ./translator -run RealServer -v
 //
 // The test model writes nonsense, so every answer is refused and its tries run out; each refused
-// answer must still be text the grammar accepts, as a prefix when the model was cut off.
+// answer must still be text the grammar accepts, as a prefix when the model was cut off. The role
+// sets every kind of penalty (#517), which a server refusing them fails as a model error.
 func TestARealServerHoldsTheRunnersAnswersToTheGrammar(t *testing.T) {
 	url := os.Getenv("JAALA_LLAMACPP_URL")
 	if url == "" {
@@ -49,8 +50,9 @@ func TestARealServerHoldsTheRunnersAnswersToTheGrammar(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	warm := 1.2
-	tr, err := New(v, nil, Config{Model: Role{Provider: p, Temperature: &warm, MaxTokens: 80}, Base: b,
+	warm, rep, freq, pres, dry, last, allowed := 1.2, 1.1, 0.1, 0.1, 0.8, 64, 2
+	pen := &agent.SamplingPenalties{Repeat: &rep, RepeatLastN: &last, Frequency: &freq, Presence: &pres, DRYMultiplier: &dry, DRYAllowedLength: &allowed}
+	tr, err := New(v, nil, Config{Model: Role{Provider: p, Temperature: &warm, MaxTokens: 80, Penalties: pen}, Base: b,
 		Options: func(o *nl.Options) { o.MaxTries = 3 }})
 	if err != nil {
 		t.Fatal(err)
