@@ -145,7 +145,7 @@ func (t *typer) argTypes(rel string, seen map[string]bool) ([]string, []ns.ArgTy
 		if rel != t.ignoreDecl && j < len(declared) && !declared[j].IsZero() {
 			types[j] = declared[j]
 		} else {
-			types[j] = t.ofHead(rel, j, seen)
+			types[j], _ = t.ofHead(rel, j, seen)
 		}
 	}
 	if !t.recursive[rel] {
@@ -156,8 +156,11 @@ func (t *typer) argTypes(rel string, seen map[string]bool) ([]string, []ns.ArgTy
 
 // ofHead infers argument j of a derived relation from every rule defining it, in the relation's own
 // labels. It is agni's headKind, generalized to carry a per-row kind and an owner when the head
-// holds the argument they point at.
-func (t *typer) ofHead(rel string, j int, seen map[string]bool) ns.ArgType {
+// holds the argument they point at. A head's constant is a row of data, not a closed set (#479): the
+// type keeps a Domain only when every rule takes the column from a declared one. values is every
+// value the rules can write when they are all known, constants included, for a declaration to be
+// checked against.
+func (t *typer) ofHead(rel string, j int, seen map[string]bool) (_ ns.ArgType, values []string) {
 	next := make(map[string]bool, len(seen)+1)
 	for k := range seen {
 		next[k] = true
@@ -169,7 +172,7 @@ func (t *typer) ofHead(rel string, j int, seen map[string]bool) ns.ArgType {
 	found, untyped := false, false
 	gotBare := false // only bare numeric literals have contributed so far
 	var domain []string
-	closed := true
+	closed, rows := true, false
 	for _, r := range t.rules[rel] {
 		if j >= len(r.Head.Args) {
 			continue
@@ -186,7 +189,7 @@ func (t *typer) ofHead(rel string, j int, seen map[string]bool) ns.ArgType {
 			continue // absent fits any type and any domain: an optional's empty clause abstains (#282)
 		}
 		if hv.Const != nil {
-			domain = unionSorted(domain, []string{hv.Const.S})
+			domain, rows = unionSorted(domain, []string{hv.Const.S}), true
 			if hv.Const.Num == nil {
 				untyped = true // a text constant names a value, not a kind
 				continue
@@ -235,10 +238,13 @@ func (t *typer) ofHead(rel string, j int, seen map[string]bool) ns.ArgType {
 	if untyped || !found {
 		got = ns.ArgType{}
 	}
-	if closed && len(domain) > 0 {
+	if !closed {
+		return got, nil
+	}
+	if !rows {
 		got.Domain = domain
 	}
-	return got
+	return got, domain
 }
 
 // aggregateType is what an aggregate yields over a variable of type vt: list a string, count a
@@ -338,9 +344,11 @@ func (t *typer) signature(rel string) ([]ns.ArgSig, error) {
 	}
 	out := make([]ns.ArgSig, len(labels))
 	for j, name := range labels {
-		inferred := t.ofHead(rel, j, nil)
+		inferred, values := t.ofHead(rel, j, nil)
 		if j < len(declared) && !declared[j].IsZero() {
-			if why := contradicts(declared[j], inferred); why != "" {
+			written := inferred
+			written.Domain = values
+			if why := contradicts(declared[j], written); why != "" {
 				return nil, checkErr(KindType, fmt.Sprintf("query: %s declares ?%s: %s, but its rules make it %s", displayName(rel), name, declared[j], why)).inRule(rel).about(Var(name))
 			}
 			out[j] = ns.ArgSig{Name: name, ArgType: declared[j]}

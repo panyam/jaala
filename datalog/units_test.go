@@ -313,8 +313,8 @@ func rows0(rows []Row) []string {
 	return nil
 }
 
-// A module's head is folded before its signature is inferred, so the Domain and unit a host reads
-// are the values the module answers.
+// A module's head is folded before its signature is inferred, so the unit a host reads is the one
+// the module answers in.
 func TestAUnitInAModuleRuleHeadIsFolded(t *testing.T) {
 	v := std(rails())
 	if err := v.AddModule("lim", LanguageName, prefixedHeads, ""); err != nil {
@@ -324,7 +324,7 @@ func TestAUnitInAModuleRuleHeadIsFolded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := ns.ArgSig{Name: "arg0", ArgType: ns.ArgType{Type: ns.TypeNumber, Unit: "V", Domain: []string{"1000", "3.3"}}, Inferred: true}
+	want := ns.ArgSig{Name: "arg0", ArgType: ns.ArgType{Type: ns.TypeNumber, Unit: "V"}, Inferred: true}
 	if got := e.Args[0]; !reflect.DeepEqual(got, want) {
 		t.Errorf("signature = %#v, want %#v", got, want)
 	}

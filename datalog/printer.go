@@ -73,7 +73,8 @@ func (b Body) String() string {
 }
 
 // String renders the rule as query text, head types included: `x(?n: net) :- y(?n)`. Parse reads
-// it back as the same rule.
+// it back as the same rule. A fact, a rule with no body, renders as its head, which ParseRules reads
+// back.
 func (r Rule) String() string {
 	args := make([]string, len(r.Head.Args))
 	for i, t := range r.Head.Args {
@@ -82,5 +83,9 @@ func (r Rule) String() string {
 			args[i] += ": " + r.HeadTypes[i].String()
 		}
 	}
-	return r.Head.Relation + "(" + strings.Join(args, ", ") + ") :- " + r.Body.String()
+	head := r.Head.Relation + "(" + strings.Join(args, ", ") + ")"
+	if len(r.Body.Literals) == 0 {
+		return head // a fact (#479)
+	}
+	return head + " :- " + r.Body.String()
 }

@@ -139,7 +139,7 @@ const power = `
 # Nets that carry a test point.
 has_test_point(?n) :- component.net(?tp, ?n), component.class(?tp, "test_point");
 
-# A net's role: declared closed, both values from constant heads.
+# A net's role: both values from constant heads, rows rather than a closed set.
 role(?n, "source") :- net.ground(?n);
 role(?n, "sink") :- has_test_point(?n);
 
@@ -157,7 +157,7 @@ func TestSignaturesAreDeclaredOrInferredAndMarked(t *testing.T) {
 	}
 	for path, want := range map[string]string{
 		"net.has_test_point": "net.has_test_point(n: net)",
-		"net.role":           `net.role(n: net, arg1: {"sink", "source"})`,
+		"net.role":           `net.role(n: net, arg1)`,
 		"net.part":           "net.part(m: part)",
 		"net.grounded":       "net.grounded(x: net)",
 	} {
@@ -240,34 +240,34 @@ func TestNumericHeadSignatures(t *testing.T) {
 			want:    ns.ArgSig{Name: "c", ArgType: ns.ArgType{Type: ns.TypeNumber}},
 		},
 		{
-			name: "numeric domain", member: "bit",
+			name: "numeric heads are rows, not a domain", member: "bit",
 			program: `bit(0) :- net.ground(?n); bit(1) :- net.ground(?n);`,
-			want:    ns.ArgSig{Name: "arg0", ArgType: ns.ArgType{Type: ns.TypeNumber, Domain: []string{"0", "1"}}, Inferred: true},
+			want:    ns.ArgSig{Name: "arg0", ArgType: ns.ArgType{Type: ns.TypeNumber}, Inferred: true},
 		},
 		{
 			name: "control: recursive constant heads stay numeric", member: "bit",
 			program: `bit(0) :- net.ground(?n); bit(1) :- bit(0);`,
-			want:    ns.ArgSig{Name: "arg0", ArgType: ns.ArgType{Type: ns.TypeNumber, Domain: []string{"0", "1"}}, Inferred: true},
+			want:    ns.ArgSig{Name: "arg0", ArgType: ns.ArgType{Type: ns.TypeNumber}, Inferred: true},
 		},
 		{
-			name: "control: quoted numeric domain", member: "bit",
+			name: "control: quoted numeric heads", member: "bit",
 			program: `bit("0") :- net.ground(?n); bit("1") :- net.ground(?n);`,
-			want:    ns.ArgSig{Name: "arg0", ArgType: ns.ArgType{Domain: []string{"0", "1"}}, Inferred: true},
+			want:    ns.ArgSig{Name: "arg0", Inferred: true},
 		},
 		{
-			name: "control: text domain", member: "role",
+			name: "control: text heads", member: "role",
 			program: `role("source") :- net.ground(?n); role("sink") :- net.ground(?n);`,
-			want:    ns.ArgSig{Name: "arg0", ArgType: ns.ArgType{Domain: []string{"sink", "source"}}, Inferred: true},
+			want:    ns.ArgSig{Name: "arg0", Inferred: true},
 		},
 		{
-			name: "control: mixed numeric and text domain", member: "bit",
+			name: "control: mixed numeric and text heads", member: "bit",
 			program: `bit(0) :- net.ground(?n); bit("1") :- net.ground(?n);`,
-			want:    ns.ArgSig{Name: "arg0", ArgType: ns.ArgType{Domain: []string{"0", "1"}}, Inferred: true},
+			want:    ns.ArgSig{Name: "arg0", Inferred: true},
 		},
 		{
-			name: "control: mixed text and numeric domain", member: "bit",
+			name: "control: mixed text and numeric heads", member: "bit",
 			program: `bit("1") :- net.ground(?n); bit(0) :- net.ground(?n);`,
-			want:    ns.ArgSig{Name: "arg0", ArgType: ns.ArgType{Domain: []string{"0", "1"}}, Inferred: true},
+			want:    ns.ArgSig{Name: "arg0", Inferred: true},
 		},
 		{
 			name: "control: an untyped clause stays untyped", member: "value",
@@ -523,10 +523,12 @@ func TestNumericHeadDeclarationUnits(t *testing.T) {
 
 func TestADeclarationItsRulesContradictIsRefused(t *testing.T) {
 	for text, frag := range map[string]string{
-		`x(?n: component) :- net.ground(?n);`:                               `net.x declares ?n: component, but its rules make it net`,
-		`x(?v: number[A]) :- net.max_voltage(_, ?v);`:                       `declares ?v: number[A], but its rules make it number[V]`,
-		`x(?r: {"a", "b"}) :- entity(_, ?r);`:                               `able to hold "bus"`,
-		`x(?n: net) :- net.ground(?n); x(?n: component) :- net.ground(?n);`: `declares its "n" argument as both "net" and "component"`,
+		`x(?n: component) :- net.ground(?n);`:                                      `net.x declares ?n: component, but its rules make it net`,
+		`x(?v: number[A]) :- net.max_voltage(_, ?v);`:                              `declares ?v: number[A], but its rules make it number[V]`,
+		`x(?r: {"a", "b"}) :- entity(_, ?r);`:                                      `able to hold "bus"`,
+		`x(?r: {"a", "b"}) :- net.ground(?n), ?r = "c";`:                           `able to hold "c"`,
+		`x(?r: {"a", "b"}) :- net.ground(?n), ?r = "a"; x("c") :- net.ground(?n);`: `able to hold "c"`,
+		`x(?n: net) :- net.ground(?n); x(?n: component) :- net.ground(?n);`:        `declares its "n" argument as both "net" and "component"`,
 	} {
 		r := circuit()
 		if err := r.AddModule("net", LanguageName, text, ""); err != nil {
@@ -538,14 +540,31 @@ func TestADeclarationItsRulesContradictIsRefused(t *testing.T) {
 	}
 }
 
-func TestADerivedVocabularyIsEnforcedInQueries(t *testing.T) {
+func TestADeclaredDerivedVocabularyIsEnforcedInQueries(t *testing.T) {
 	r := circuit()
-	if err := r.AddModule("net", LanguageName, power, ""); err != nil {
+	if err := r.AddModule("net", LanguageName, `role(?n, ?r: {"sink", "source"}) :- net.ground(?n), ?r = "source";`, ""); err != nil {
 		t.Fatal(err)
 	}
 	_, err := Naive{}.Eval(bg, mustParse(t, `net.role(?n, "sorce")`), baseFor(r))
 	if err == nil || !strings.Contains(err.Error(), `net.role's "arg1" argument cannot be "sorce", did you mean "source"?`) {
 		t.Errorf("err = %v, want the vocabulary enforced with a suggestion", err)
+	}
+}
+
+// A relation's constant heads are its rows (#479): a value no rule writes answers nothing, as a
+// fact the data lacks does, rather than failing the program.
+func TestAValueNoRuleWritesAnswersNothing(t *testing.T) {
+	r := circuit()
+	if err := r.AddModule("net", LanguageName, `role(?n, "power") :- entity(?n, "net");`, ""); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := Naive{}.Eval(bg, mustParse(t, `net.role(?n, "ground") => ?n`), baseFor(r))
+	if err != nil || len(rows) != 0 {
+		t.Errorf("rows = %v, err = %v, want no rows and no error", rows, err)
+	}
+	rows, err = Naive{}.Eval(bg, mustParse(t, `net.role(?n, "power") => ?n`), baseFor(r))
+	if err != nil || col(rows, "n") != "VBUS" {
+		t.Errorf("control: rows = %v, err = %v, want VBUS", rows, err)
 	}
 }
 
@@ -572,14 +591,14 @@ func TestLookupDrillsFromModuleToMemberToDefinition(t *testing.T) {
 		"derived net.has_test_point(n: net)",
 		"base net.max_voltage(net: net, volts: number[V])",
 		"derived net.part(m: part)",
-		`derived net.role(n: net, arg1: {"sink", "source"})`,
+		`derived net.role(n: net, arg1)`,
 	}
 	if !reflect.DeepEqual(listed, want) {
 		t.Errorf("Members(net) =\n %s\nwant\n %s", strings.Join(listed, "\n "), strings.Join(want, "\n "))
 	}
 	e, _ := r.Lookup("net.role")
 	wantDef := []string{`role(?n, "source") :- net.ground(?n)`, `role(?n, "sink") :- has_test_point(?n)`}
-	if e.Doc != "A net's role: declared closed, both values from constant heads." || e.Module != "net" || !reflect.DeepEqual(e.Definition, wantDef) {
+	if e.Doc != "A net's role: both values from constant heads, rows rather than a closed set." || e.Module != "net" || !reflect.DeepEqual(e.Definition, wantDef) {
 		t.Errorf("net.role = %+v, want its doc and its two rules as written", e)
 	}
 	if e, _ := r.Lookup("component.net"); e.Kind != ns.EntryBase || e.Doc != "a component is on a net" {
