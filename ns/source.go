@@ -85,6 +85,14 @@ type ContextSource interface {
 // is not kept, and the next query needing the relation reads it again. A relation read in full is
 // kept, as Tuples is, except one only the goal reads, which the engine solves as it arrives and doesn't
 // keep (#264), so a limit stops the read; such a relation may be read once per query.
+//
+// While TuplesSeq yields, the engine is solving the rest of the body for that tuple, so it may call
+// Lookup, LookupBatch or TuplesSeq on this Source before asking for the next tuple (#126, #264). The
+// sequence must not hold anything those calls need across a yield. A store with one database
+// connection that keeps it in an open cursor while it yields waits on itself forever: declaire#370's
+// `calls(?a, ?b), str.prefix(?b, "b"), edge(?b, ?k, ?c) => ?a, ?c limit 2` did, streaming calls and
+// looking edge up. Read a page, release the connection, then yield it. CheckStreamReentrant tests a
+// store for this (#539).
 type StreamSource interface {
 	TuplesSeq(ctx context.Context, rel string) iter.Seq2[Tuple, error]
 }
