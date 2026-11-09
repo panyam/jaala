@@ -1,11 +1,13 @@
 package bolt
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/panyam/jaala/frontends/cypher"
 	"github.com/panyam/jaala/ns"
@@ -223,6 +225,27 @@ func TestALookupNeverLeavesOutAMatch(t *testing.T) {
 
 // Indexed is true for a key, an endpoint or a Props node, and false for what scans a label or type:
 // a fixed kind alone, or a number.
+// The engine looks a relation up, or reads another, between two tuples of a stream (#539), so the
+// store's stream must not hold what those reads need while it yields.
+func TestAStreamLetsTheStoreBeReadBetweenItsTuples(t *testing.T) {
+	for _, sv := range servers(t) {
+		t.Run(sv.name, func(t *testing.T) {
+			g, src := code()
+			s := open(t, sv.driver, g, schemasOf(src))
+			if err := s.Apply(bg, load(src)); err != nil {
+				t.Fatal(err)
+			}
+			for _, rel := range src.Relations() {
+				ctx, cancel := context.WithTimeout(bg, 30*time.Second)
+				if err := ns.CheckStreamReentrant(ctx, s, rel); err != nil {
+					t.Error(err)
+				}
+				cancel()
+			}
+		})
+	}
+}
+
 func TestIndexedNamesTheLookupsTheNodeIndexAnswers(t *testing.T) {
 	sv := servers(t)[0]
 	g, src := code()
