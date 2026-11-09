@@ -251,7 +251,28 @@ func (c *Conversation) Compact() []Turn {
 // answered with and what that did, under Prompts.LedgerTried. It is "" before anything happened, and
 // a list with nothing in it is left out. A loop shows it whether or not Actions.Ledger is set; the
 // option only says the translator should.
-func (c *Conversation) Ledger() string { return c.s.mem.ledger(c.s.pr) }
+func (c *Conversation) Ledger() string {
+	var out []string
+	for _, p := range c.LedgerParts() {
+		if p.Lines != "" {
+			out = append(out, p.Heading+"\n"+p.Lines)
+		}
+	}
+	return strings.Join(out, "\n\n")
+}
+
+// A LedgerPart is one of the Ledger's two lists: its heading, and its lines, "" while it is empty.
+type LedgerPart struct {
+	Heading, Lines string
+}
+
+// LedgerParts are the Ledger's two lists, findings then drafts, for a loop that shows each its own
+// way: nlmodels' translator writes each to a chakra slot, under LedgerHeader.
+func (c *Conversation) LedgerParts() []LedgerPart { return c.s.mem.ledger(c.s.pr) }
+
+// LedgerHeader is Prompts.LedgerHeader, the line a loop opens the ledger's lists with when it shows
+// them apart (LedgerParts).
+func (s *Session) LedgerHeader() string { return s.pr.LedgerHeader }
 
 // Act runs an action this conversation's model asked for and returns what goes back to it, ended
 // with Prompts.LastLook when it was the last MaxSteps allows. It is kept for Compact and the Ledger as

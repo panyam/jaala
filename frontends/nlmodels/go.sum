@@ -10,8 +10,8 @@ github.com/gorilla/websocket v1.5.3 h1:saDtZ6Pbx/0u+bgYQ3q96pZgCzfhKXGPqt7kZ72aN
 github.com/gorilla/websocket v1.5.3/go.mod h1:YR8l580nyteQvAITg2hZ9XVh4b55+EU/adAjf1fMHhE=
 github.com/invopop/jsonschema v0.14.0 h1:MHQqLhvpNUZfw+hM3AZDYK7jxO8FZoQeQM77g8iyZjg=
 github.com/invopop/jsonschema v0.14.0/go.mod h1:ygm6C2EaVNMBDPpaPlnOA2pFAxBnxGjFlMZABxm9n2I=
-github.com/panyam/chakra v0.3.1 h1:lZyYWnxh0YAb9qAVWAoHRbC5tuj6+W9y8djlMwqJJYA=
-github.com/panyam/chakra v0.3.1/go.mod h1:UmNkH+hdeJDQZWoVR5T2Aop1af3iASuDdEQ7vwuUbXQ=
+github.com/panyam/chakra v0.3.2 h1:6whm0OD8lAHBRVDZtZLU+Le3lZa9Qg+RrN8MWYQU75Y=
+github.com/panyam/chakra v0.3.2/go.mod h1:UmNkH+hdeJDQZWoVR5T2Aop1af3iASuDdEQ7vwuUbXQ=
 github.com/panyam/gocurrent v0.1.2 h1:MtD98xJKVvGGdMrxIvUqhVA7AxA6rr9eU1ZUo5pNoyc=
 github.com/panyam/gocurrent v0.1.2/go.mod h1:jIIhcNfNnnIe2JXH8aY2+ba+/5G1fzwCWoZXdcMNw6o=
 github.com/panyam/goutils v0.1.13 h1:V819IdZTEJ3rpu33ZqohC6O9ou7KOu6cxfigoYT12OQ=

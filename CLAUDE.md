@@ -140,13 +140,14 @@ GOARCH=wasm go test ./ns` (#417 ran `ns` that way).
   exactly one other spelling (`spelling`: letters and digits, lower-cased) rewritten, from those and
   the refused argument's Domain (`domainOf`); the rewrite is kept only if it then passes, as a `Try`
   with `Repair`. `Actions.Compact` sends `memory.compact`'s one turn instead of the conversation.
-  `Actions.Ledger` (#514) adds `Conversation.Ledger` as a system note on every step's call (a request
-  stage, so chakra's guided finalizing call carries none): findings and drafts apart, `memory.drafts`
+  `Actions.Ledger` (#514) shows `Conversation.LedgerParts` on every step's call, each list written to
+  a chakra slot (`NewSlotsWith`, v0.3.2, header `Prompts.LedgerHeader`, as the user's) by a request
+  stage, so chakra's guided finalizing call carries none: findings and drafts apart, `memory.drafts`
   marking which; with `Compact` the one turn leaves those lines to it. `Pack.Preview` (#514,
   `preview.go`) names a question's relations or values targets; `Session.Preview` reads `PreviewRows`
   of each once per Session (jaala's programs unless the front end is a Prober) and feeds `memory.see`,
-  and the translator's `preview` stage wraps chakra's `NewRetrievalStage`, keeping the block in
-  `loop.shown` so Compact's stage and a vote's history (`withPreview`) carry it.
+  and the translator's `preview` stage is chakra's `NewRetrievalStage`; `loop.emit` keeps its block
+  (`RetrievalInfo.Block`) in `loop.shown` so Compact's stage and a vote's history (`withPreview`) carry it.
   `Actions.Build` (#514 piece 4) adds `add LITERAL` and `drop`: `Conversation.build` keeps a
   literal whose body checks (an empty answer included) in `Conversation.body`, refuses one that
   doesn't, and an answer of a tail alone (`=> ?p`) follows the body (`withBody`, in `Judge`, and in
@@ -226,10 +227,11 @@ GOARCH=wasm go test ./ns` (#417 ran `ns` that way).
   `Session.FinalGrammar` (chakra#259, v0.2.9): the draft's, a `try⏎` line allowed before it and dropped by
   `Session.reply` (#512: under the draft's grammar alone `try` ran into the first name). A repeated action
   isn't run and takes no step (`Conversation.asked`, `Repeats`, #517), and the translator marks it a
-  free refusal (a `ToolDeniedError` with `Free` from the `repeated` middleware, since a FuncSource
-  tool's error becomes a result; `TurnEndVerdict.Free` for a text reply), the `MaxRepeats`-th ending
-  the actions, with `MaxFreeRefusals` the same. `Role.Penalties` go out filtered to the kinds
-  `CapabilitiesOf` lists (`sendable`); chakra's `NewStuckDetector` (v0.3.0) runs first among
+  free result (the tool returns chakra's `FreeResultError`, v0.3.2, read as the call's result;
+  `TurnEndVerdict.Free` for a text reply), the `MaxRepeats`-th ending the actions, with
+  `MaxFreeRefusals` the same. chakra's `NewRepeatCache` isn't used: the Conversation also serves text
+  roles, ends the actions at the cap, and repeats an add only when its literal is in the body.
+  `Role.Penalties` go out filtered by `Capabilities.Sendable`; chakra's `NewStuckDetector` (v0.3.0) runs first among
   the request stages, keyed by `actionKey` (a tool call, or a text reply read with `ReadAction`), and
   sends `Prompts.Stuck` at the fallback's temperature on the second repeat or alternation, then
   `Conversation.EndActions`. A `look` naming nothing lists members mentioning the word (`lookFor`), else

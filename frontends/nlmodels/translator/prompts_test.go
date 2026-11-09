@@ -44,6 +44,7 @@ func hostPrompts() *nl.Prompts {
 		ToolDrop:             "H-TOOLDROP",
 		LedgerFound:          "H-LEDGERFOUND",
 		LedgerTried:          "H-LEDGERTRIED",
+		LedgerHeader:         "H-LEDGERHEADER",
 		Extract:              "\nH-EXTRACT\n",
 		ExtractFix:           "H-EXTRACTFIX",
 	}
@@ -124,7 +125,7 @@ func TestAPacksPromptsReplaceJaalasText(t *testing.T) {
 		}},
 		{"the ledger", nl.Options{Base: b, Actions: &nl.Actions{Steps: 2, Ledger: true}}, nil, []string{"values edge.0", "try\n" + `edge("zz", ?b) => ?b`, `edge("a", ?b) => ?b`}, func(m *scripted, _ nl.Trace) string {
 			ledger := m.asked[2].Turns[len(m.asked[2].Turns)-1].Text
-			return want(ledger, "H-LEDGERFOUND\n- values edge.0", "\n\nH-LEDGERTRIED\n- try ")
+			return want(ledger, "H-LEDGERHEADER\n\n[H-LEDGERFOUND]\n- values edge.0", "\n\n[H-LEDGERTRIED]\n- try ")
 		}},
 		{"a try tried again and the stuck note", nl.Options{Base: b, Actions: &nl.Actions{}}, nil, []string{"try\n" + `edge("zz", ?b) => ?b`, "try\n" + `edge("zz", ?b) => ?b`, `edge("a", ?b) => ?b`}, func(m *scripted, tr nl.Trace) string {
 			if r := tr.Steps[1].Result; !strings.HasPrefix(r, "H-TRIED\n") {
