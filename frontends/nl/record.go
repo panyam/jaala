@@ -41,10 +41,56 @@ type Cost struct {
 
 // Cost is what the case spent, priced by p. TokensIn counts the prompt tokens read fresh and from
 // the cache together, as Try.TokensIn does, and TokensCached the cached part, which p.Cached prices.
-func (r Result) Cost(p Prices) Cost {
+func (r Result) Cost(p Prices) Cost { return r.cost(p, nil) }
+
+// TierCost is what each tier spent under Options.Tiers (#538), keyed by Try.Tier: its tokens, calls
+// and dollars as Cost counts them, and as Seconds the latency of its tries, steps and votes, since a
+// case's wall time isn't split by tier. A case run without tiers has none.
+func (r Result) TierCost(p Prices) map[string]Cost {
+	out := map[string]Cost{}
+	for _, tier := range r.tiers() {
+		out[tier] = r.cost(p, &tier)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// tiers are the tiers named in r's trace, in order of first appearance.
+func (r Result) tiers() []string {
+	var ts []string
+	see := func(t string) {
+		if t != "" && !slices.Contains(ts, t) {
+			ts = append(ts, t)
+		}
+	}
+	for _, t := range r.Trace.Tries {
+		see(t.Tier)
+	}
+	for _, s := range r.Trace.Steps {
+		see(s.Tier)
+	}
+	for _, t := range r.Trace.Votes {
+		see(t.Tier)
+	}
+	return ts
+}
+
+// cost is Cost over the entries of one tier when tier is set, with their latency as Seconds.
+func (r Result) cost(p Prices, tier *string) Cost {
 	c := Cost{Seconds: r.Took.Seconds()}
+	if tier != nil {
+		c.Seconds = 0
+	}
 	unpriced := map[string]bool{}
-	charge := func(model string, in, cached, out, calls int) {
+	charge := func(model, of string, in, cached, out, calls int, took time.Duration) {
+		if tier != nil {
+			if of != *tier {
+				return
+			}
+			c.Seconds += took.Seconds()
+		}
 		c.TokensIn += in
 		c.TokensCached += cached
 		c.TokensOut += out
@@ -63,13 +109,13 @@ func (r Result) Cost(p Prices) Cost {
 		c.Dollars += (float64(in-cached)*pr.In + float64(cached)*pr.Cached + float64(out)*pr.Out) / 1e6
 	}
 	for _, t := range r.Trace.Tries {
-		charge(t.Model, t.TokensIn, t.TokensCached, t.TokensOut, t.Calls)
+		charge(t.Model, t.Tier, t.TokensIn, t.TokensCached, t.TokensOut, t.Calls, t.Latency)
 	}
 	for _, s := range r.Trace.Steps {
-		charge(s.Model, s.TokensIn, s.TokensCached, s.TokensOut, s.Calls)
+		charge(s.Model, s.Tier, s.TokensIn, s.TokensCached, s.TokensOut, s.Calls, s.Latency)
 	}
 	for _, t := range r.Trace.Votes {
-		charge(t.Model, t.TokensIn, t.TokensCached, t.TokensOut, t.Calls)
+		charge(t.Model, t.Tier, t.TokensIn, t.TokensCached, t.TokensOut, t.Calls, t.Latency)
 	}
 	for m := range unpriced {
 		c.Unpriced = append(c.Unpriced, m)
@@ -120,6 +166,11 @@ type Summary struct {
 	// the run's Tally alone.
 	Tags map[string]Tally `json:",omitempty"`
 	Cost Cost
+	// Tiers is the Cost per tier under Options.Tiers (Result.TierCost), and Answered how many cases
+	// each tier answered (Trace.Tier), so a local-then-frontier run says what each tier spent and
+	// what it bought.
+	Tiers    map[string]Cost `json:",omitempty"`
+	Answered map[string]int  `json:",omitempty"`
 }
 
 // PerCorrect is the cost and time per passing case: Cost's Dollars and Seconds over Pass. ok is false
@@ -147,6 +198,20 @@ func (rep Report) Summary(p Prices) Summary {
 			s.Tags[tag] = t
 		}
 		s.Cost.add(r.Cost(p))
+		for tier, c := range r.TierCost(p) {
+			if s.Tiers == nil {
+				s.Tiers = map[string]Cost{}
+			}
+			tc := s.Tiers[tier]
+			tc.add(c)
+			s.Tiers[tier] = tc
+		}
+		if r.Trace.Tier != "" {
+			if s.Answered == nil {
+				s.Answered = map[string]int{}
+			}
+			s.Answered[r.Trace.Tier]++
+		}
 	}
 	return s
 }
@@ -180,10 +245,13 @@ type CaseRecord struct {
 	Abstained string `json:",omitempty"`
 	Class     string `json:",omitempty"`
 	// Program is the text of the program the translator answered with, in its language.
-	Program  string     `json:",omitempty"`
-	Language string     `json:",omitempty"`
-	Err      string     `json:",omitempty"`
-	Got      [][]string `json:",omitempty"`
+	Program string `json:",omitempty"`
+	// Tier is the tier that answered (Trace.Tier), and Tiers what each tier spent (Result.TierCost).
+	Tier     string          `json:",omitempty"`
+	Tiers    map[string]Cost `json:",omitempty"`
+	Language string          `json:",omitempty"`
+	Err      string          `json:",omitempty"`
+	Got      [][]string      `json:",omitempty"`
 	Cost     Cost
 	Tries    []TryRecord  `json:",omitempty"`
 	Steps    []StepRecord `json:",omitempty"`
@@ -201,6 +269,7 @@ type TryRecord struct {
 	Mode                              string `json:",omitempty"`
 	Repair                            string `json:",omitempty"`
 	Reasked                           bool   `json:",omitempty"`
+	Tier                              string `json:",omitempty"`
 	TokensIn, TokensCached, TokensOut int
 	Calls                             int     `json:",omitempty"`
 	Seconds                           float64 `json:",omitempty"`
@@ -209,6 +278,7 @@ type TryRecord struct {
 // A StepRecord is a Step, less what the action showed the model.
 type StepRecord struct {
 	Model, Action, Text               string
+	Tier                              string `json:",omitempty"`
 	After                             int
 	TokensIn, TokensCached, TokensOut int
 	Calls                             int     `json:",omitempty"`
@@ -221,7 +291,8 @@ func NewRecord(rep Report, p Prices) Record {
 	rec := Record{Summary: rep.Summary(p)}
 	for _, r := range rep.Cases {
 		cr := CaseRecord{Name: r.Name, Tags: r.Tags, Outcome: r.Outcome(), Abstained: r.AbstainReason(), Class: r.Class(),
-			Program: r.Program.Text, Language: r.Program.Language, Got: r.Got, Cost: r.Cost(p)}
+			Program: r.Program.Text, Language: r.Program.Language, Got: r.Got, Cost: r.Cost(p),
+			Tier: r.Trace.Tier, Tiers: r.TierCost(p)}
 		if r.Err != nil {
 			cr.Err = r.Err.Error()
 		}
@@ -232,7 +303,7 @@ func NewRecord(rep Report, p Prices) Record {
 			cr.Votes = append(cr.Votes, tryRecord(t))
 		}
 		for _, s := range r.Trace.Steps {
-			cr.Steps = append(cr.Steps, StepRecord{Model: s.Model, Action: s.Action, Text: s.Text, After: s.After,
+			cr.Steps = append(cr.Steps, StepRecord{Model: s.Model, Action: s.Action, Text: s.Text, Tier: s.Tier, After: s.After,
 				TokensIn: s.TokensIn, TokensCached: s.TokensCached, TokensOut: s.TokensOut, Calls: s.Calls, Seconds: s.Latency.Seconds()})
 		}
 		rec.Cases = append(rec.Cases, cr)
@@ -242,7 +313,7 @@ func NewRecord(rep Report, p Prices) Record {
 
 func tryRecord(t Try) TryRecord {
 	tr := TryRecord{Model: t.Model, Text: t.Text, Language: t.Language, Kind: t.Kind, Class: t.Class(), Mode: t.Mode,
-		Repair: t.Repair, Reasked: t.Reasked, TokensIn: t.TokensIn, TokensCached: t.TokensCached, TokensOut: t.TokensOut,
+		Repair: t.Repair, Reasked: t.Reasked, Tier: t.Tier, TokensIn: t.TokensIn, TokensCached: t.TokensCached, TokensOut: t.TokensOut,
 		Calls: t.Calls, Seconds: t.Latency.Seconds()}
 	if t.Err != nil {
 		tr.Err = t.Err.Error()

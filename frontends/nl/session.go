@@ -245,7 +245,15 @@ func (s *Session) NewConversation(after error, last bool) *Conversation {
 // one-shot draft of Actions.DraftFirst (#521). The draft counts as refused here too, so the model
 // sending it again is a repeat, and Ask carries it with its refusal (Prompts.DraftFirst). It counts
 // no try: the loop keeps all of its own. A draft with no error, or whose model failed, is ignored.
-func (c *Conversation) From(draft Try) {
+func (c *Conversation) From(draft Try) { c.from(draft, c.s.pr.DraftFirst) }
+
+// Handoff starts the conversation from draft, the closest draft of the local tier, for the frontier
+// tier's model (Options.Tiers, #538), with Prompts.Handoff. Like From, the draft counts as refused, so
+// the frontier model sending it back is a repeat, and a draft with no error or text is ignored. For an
+// answer the local tier's vote disputed, Err carries the diagnosis.
+func (c *Conversation) Handoff(draft Try) { c.from(draft, c.s.pr.Handoff) }
+
+func (c *Conversation) from(draft Try, prompt string) {
 	if draft.Err == nil || draft.Text == "" || draft.Kind == KindModel {
 		return
 	}
@@ -263,7 +271,7 @@ func (c *Conversation) From(draft Try) {
 	c.why[draft.Text] = told
 	s.mem.add(true, fact(draft.Text, "refused ("+draft.Kind+"): "+strings.Join(strings.Fields(told), " ")))
 	s.mem.last = draft.Text + "\n" + told
-	c.ask += "\n\n" + fmt.Sprintf(s.pr.DraftFirst, draft.Text, told, what)
+	c.ask += "\n\n" + fmt.Sprintf(prompt, draft.Text, told, what)
 }
 
 // Ask is the conversation's first message: the session's, and after an empty answer ended the last

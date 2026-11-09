@@ -78,6 +78,10 @@ type Options struct {
 	// Abstain, when set, says when the translator returns an *Abstained, "not confident" with the closest
 	// draft, in place of an answer its vote disputes or a failure to answer (#482). Off by default.
 	Abstain *Abstain
+	// Tiers, when its Policy is set, says which models answer and in what order (#538): the local
+	// model alone, the frontier model alone, or the local one and then the frontier one, which starts
+	// from the local one's closest draft. It replaces the translator's own choice of models.
+	Tiers *Tiers
 
 	grounder Grounder // the Grounder a find action asks
 }
@@ -105,6 +109,9 @@ type Trace struct {
 	Votes []Try
 	// Escalations are the answers moved on from for agreeing too little (Options.Escalate).
 	Escalations []Escalation
+	// Tier is the tier that answered under Options.Tiers (TierLocal, TierFrontier), "" when none did
+	// or no tiers were set.
+	Tier string
 }
 
 // A Try is one draft: the model, its text, why it was refused (nil and "" when accepted), what it cost
@@ -126,6 +133,8 @@ type Try struct {
 	// Calls is how many model calls the try's tokens came from: its reply's, and a guided call that
 	// rewrote it. A loop that leaves it 0 has a try with tokens counted as one call (Cost).
 	Calls int
+	// Tier is the tier whose model wrote it under Options.Tiers, "" without tiers.
+	Tier string
 	// Report is what evaluating the draft over Options.Base did (datalog.Explain), when it was
 	// evaluated: its work per rule and literal, and for an empty answer, Report.Empty.
 	Report *datalog.Report

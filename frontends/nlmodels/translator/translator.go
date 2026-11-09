@@ -8,6 +8,7 @@ package translator
 import (
 	"context"
 	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 
@@ -84,6 +85,9 @@ type Config struct {
 	Escalate float64
 	Abstain  *nl.Abstain
 	Budget   nl.Budget
+	// Tiers, when set, is the default tier policy (#538): Model is the local tier and Fallback the
+	// frontier one. Translate's options can set their own.
+	Tiers *nl.Tiers
 	// Options, when set, edits the nl.Options Ask uses after everything above is filled in, for what
 	// Config doesn't name (a front end, a goal-only grammar, Eval options). What it sets wins.
 	Options func(*nl.Options)
@@ -104,7 +108,7 @@ func New(v *ns.Vocabulary, pack *nl.Pack, cfg Config) (*Translator, error) {
 		return nil, errors.New("translator: Config.Model needs a Provider")
 	}
 	t := &Translator{v: v, model: cfg.Model.runtime("model", ModelTemperature), grounder: cfg.Grounder}
-	o := nl.Options{Pack: pack, Base: cfg.Base, Actions: cfg.Actions, Vote: cfg.Vote, Escalate: cfg.Escalate, Abstain: cfg.Abstain, Budget: cfg.Budget}
+	o := nl.Options{Pack: pack, Base: cfg.Base, Actions: cfg.Actions, Vote: cfg.Vote, Escalate: cfg.Escalate, Abstain: cfg.Abstain, Budget: cfg.Budget, Tiers: cfg.Tiers}
 	if cfg.Fallback.Provider != nil {
 		t.fallback = cfg.Fallback.runtime("fallback", FallbackTemperature)
 	}
@@ -128,8 +132,17 @@ func (t *Translator) Ask(ctx context.Context, question string) (nl.Program, nl.T
 // (mcp.Translator): the server writes o for each call (its Base, Eval options, pack, front end and
 // Abstain) and picks the models from the call's mode. The Config's roles and their tuning still
 // apply. Asking for a fallback the Config names none of asks the model alone, and asking for neither
-// fails.
+// fails. With o.Tiers set, its Policy picks the models instead and model and fallback are ignored:
+// Model is the local tier and Fallback the frontier one, which a policy asking for it needs.
 func (t *Translator) Translate(ctx context.Context, question string, o nl.Options, model, fallback bool) (nl.Program, nl.Trace, error) {
+	if o.Actions != nil {
+		a := *o.Actions
+		a.AsTools = true
+		o.Actions = &a
+	}
+	if o.Tiers != nil {
+		return t.tiered(ctx, question, o)
+	}
 	var roles []*role
 	if model {
 		roles = append(roles, t.model)
@@ -140,12 +153,49 @@ func (t *Translator) Translate(ctx context.Context, question string, o nl.Option
 	if len(roles) == 0 {
 		return nl.Program{}, nl.Trace{}, errors.New("translator: Translate asked no model")
 	}
-	if o.Actions != nil {
-		a := *o.Actions
-		a.AsTools = true
-		o.Actions = &a
+	p, tr, err := t.run(ctx, question, o, roles, nil)
+	return o.Abstain.Judge(p, tr, err)
+}
+
+// tiered runs o.Tiers' policy (#538): the local tier under its own cap, judged by o.Abstain, then,
+// under local-then-frontier when it didn't answer, the frontier tier from its closest draft. A
+// cancelled context ends the question at the local tier.
+func (t *Translator) tiered(ctx context.Context, question string, o nl.Options) (nl.Program, nl.Trace, error) {
+	pol := *o.Tiers
+	if err := pol.Check(); err != nil {
+		return nl.Program{}, nl.Trace{}, err
 	}
-	p, tr, err := t.run(ctx, question, o, roles)
+	if pol.Policy != nl.TierLocal && t.fallback == nil {
+		return nl.Program{}, nl.Trace{}, fmt.Errorf("translator: tier policy %q needs a Config.Fallback, the frontier tier", pol.Policy)
+	}
+	var tr nl.Trace
+	var handoff *nl.Try
+	if pol.Policy != nl.TierFrontier {
+		lo := o
+		lo.Budget = pol.For(nl.TierLocal, o.Budget)
+		p, ltr, err := t.run(ctx, question, lo, []*role{t.model}, nil)
+		p, ltr, err = o.Abstain.Judge(p, ltr, err)
+		ltr.Stamp(nl.TierLocal)
+		tr = ltr
+		if err == nil {
+			tr.Tier = nl.TierLocal
+			return p, tr, nil
+		}
+		if pol.Policy == nl.TierLocal || ctx.Err() != nil {
+			return p, tr, err
+		}
+		if d, ok := nl.HandoffDraft(ltr, err); ok {
+			handoff = &d
+		}
+	}
+	fo := o
+	fo.Budget = pol.For(nl.TierFrontier, o.Budget)
+	p, ftr, err := t.run(ctx, question, fo, []*role{t.fallback}, handoff)
+	ftr.Stamp(nl.TierFrontier)
+	if err == nil {
+		ftr.Tier = nl.TierFrontier
+	}
+	tr.Then(ftr)
 	return o.Abstain.Judge(p, tr, err)
 }
 

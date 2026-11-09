@@ -96,6 +96,9 @@ type Options struct {
 	// answered "not confident", with the reason and the closest draft for the caller to finish, as
 	// an ordinary answer rather than a tool error. A model that fails is still a tool error.
 	Abstain *nl.Abstain
+	// Tiers caps the ask tool's tiers (#538): Local the first model's tokens, calls and time, Frontier
+	// the fallback's. Its Policy is ignored, since each call's mode picks it.
+	Tiers nl.Tiers
 	// Limit is the most rows a call returns, 100 when 0; a call may ask for fewer.
 	Limit int
 	// MaxWork caps every call's work (datalog.Budget), and a call may ask for less; 0 is no cap.

@@ -71,6 +71,8 @@ type Budget struct {
 	// Time caps how long the translator runs. A deadline on its context stops it too, with the context's
 	// error rather than a BudgetSpent.
 	Time time.Duration
+	// Calls caps the model calls (#538): every reply, a guided call rewriting one, and a vote's draws.
+	Calls int
 }
 
 // A BudgetSpent is the translator's error when its Budget ran out before an answer was accepted. The
