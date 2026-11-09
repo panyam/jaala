@@ -94,7 +94,8 @@ jobs:
       - name: standard library, jaala and chakra only
         run: |
           deps() { go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' "$@" | grep -v '^github.com/panyam/jaala' | sort -u; }
-          extra=$(comm -23 <(deps ./...) <(deps github.com/panyam/chakra))
+          # chakra's presets package (#528) is chakra's too, though its root package doesn't import it
+          extra=$(comm -23 <(deps ./...) <(deps github.com/panyam/chakra github.com/panyam/chakra/presets))
           if [ -n "$extra" ]; then echo "dependencies outside jaala and chakra:"; echo "$extra"; exit 1; fi
 
   # The Cypher front end is a module of its own (#352), so no core package can import it and what it
