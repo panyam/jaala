@@ -51,6 +51,9 @@ func hostPrompts() *nl.Prompts {
 		PathsFound:           "H-FOUNDPATHS %s|%s",
 		PathsNone:            "H-NOPATHS %s|%s|%s",
 		ToolPaths:            "H-TOOLPATHS",
+		PathsUsage:           "H-PATHSUSAGE",
+		PathsNoKind:          "H-PATHSNOKIND %s",
+		PathsUnbound:         "H-PATHSUNBOUND %s",
 		Without:              "H-WITHOUT %[2]s|%[1]s",
 		Extract:              "\nH-EXTRACT\n",
 		ExtractFix:           "H-EXTRACTFIX",
@@ -216,6 +219,7 @@ func TestAPacksPromptTemplatesKeepTheirPlaceholders(t *testing.T) {
 		{nl.Prompts{Reask: "%[5]s"}, "prompt Reask isn't a template of 4 placeholders"},
 		{nl.Prompts{LookFound: "Nothing here."}, "prompt LookFound isn't a template of 1 placeholders"},
 		{nl.Prompts{Stuck: "Stop."}, "prompt Stuck isn't a template of 1 placeholders"},
+		{nl.Prompts{PathsUnbound: "Write them over ?x."}, "prompt PathsUnbound isn't a template of 1 placeholders"},
 		{nl.Prompts{DraftFirst: "%[1]s %[2]s"}, "prompt DraftFirst leaves out placeholder 3 of 3"},
 	} {
 		pack := &nl.Pack{Prompts: &c.pr}
@@ -279,6 +283,29 @@ func TestAPacksPathsPromptsReplaceJaalasText(t *testing.T) {
 			tr.Steps[1].Result == `H-NOPATHS func ?x = "nope"|func|3`
 		if got != host {
 			t.Errorf("host %v: tool %q, steps %q and %q", host, m.descs[nl.ActionPaths], tr.Steps[0].Result, tr.Steps[1].Result)
+		}
+	}
+}
+
+// A host's text replaces jaala's for an end whose literals never mention ?x (#532). control: jaala's
+// own text has none of it. nl's TestParseEndsSaysWhichRefusal covers the other two, which a reply
+// read as a text action can't reach.
+func TestAPacksPathsRefusalsReplaceJaalasText(t *testing.T) {
+	b := guide.Code(t)
+	shape := nl.Shape{Kinds: "node", Edges: []string{"calls", "contains"}, Refs: []nl.Ref{{Relation: "attr", Key: "callee"}}}
+	replies := []string{`paths func ?y = "a" => func`, `node(?f, "func") => ?f`}
+	for _, host := range []bool{true, false} {
+		pack := &nl.Pack{Shape: &shape}
+		if host {
+			pack.Prompts = hostPrompts()
+		}
+		m := model("small", replies...)
+		_, tr, err := translate(context.Background(), "q", b.Vocabulary(), nil, m, nl.Options{Base: b, Pack: pack, Actions: &nl.Actions{}})
+		if err != nil || len(tr.Steps) != 1 {
+			t.Fatalf("host %v: %v, steps %+v", host, err, tr.Steps)
+		}
+		if got := tr.Steps[0].Result == "H-PATHSUNBOUND func"; got != host {
+			t.Errorf("host %v: the step sent back %q", host, tr.Steps[0].Result)
 		}
 	}
 }
