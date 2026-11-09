@@ -256,7 +256,7 @@ var unsafeName = regexp.MustCompile(`[^A-Za-z0-9.-]+`)
 // its own, named for when it ran, its bench and its arm, never appended to one, so runs on two
 // branches or machines never conflict.
 func (r Record) Write(dir string) (string, error) {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return "", err
 	}
 	data, err := json.MarshalIndent(r, "", "  ")
@@ -284,7 +284,7 @@ func ReadRecords(dir string) ([]Record, error) {
 	}
 	var recs []Record
 	for _, f := range files {
-		data, err := os.ReadFile(f)
+		data, err := os.ReadFile(f) // #nosec G304 -- f is a Glob match inside the directory the caller named
 		if err != nil {
 			return nil, err
 		}
