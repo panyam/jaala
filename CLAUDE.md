@@ -187,7 +187,11 @@ GOARCH=wasm go test ./ns` (#417 ran `ns` that way).
   or `Stop`), shaped like chakra's `TurnEndVerdict` without importing it. `Conversation.Act` counts
   the actions (`AskedAgain`, `LastLook`), and `Session.Tools` describes them for a loop offering them
   as tools (`Actions.AsTools`, `Prompts.ToolLook` and its siblings). A change to how a reply is judged
-  goes in `session.go`. `nlmodels/translator`'s `Ask` runs the Session on
+  goes in `session.go`. Each turn's `RunnerConfig` is chakra's `presets.GraphQuery` (#528, `loop.preset`):
+  `Check` the judging hook, `StuckKey` `actionKey`, `StillStuck` `EndActions`, `RepeatMax` -1 (the
+  Conversation answers repeats), `Penalties` empty unless the role sets some (not the preset's DRY),
+  `presets.Replace` putting jaala's `actions` stage in `StageActions`' place, and compaction and the
+  label (`jaala.translator`) appended. `nlmodels/translator`'s `Ask` runs the Session on
   chakra Runners (`loop.go`, #496): a turn per model, `Conversation.Judge` as its `TurnEnd` hook
   (`Continue` with `AsUser`), the actions a `FuncSource` that a request stage drops once `MaxSteps` are
   used, compaction a turn stage (chakra's guided finalizing call reads the working messages, never a

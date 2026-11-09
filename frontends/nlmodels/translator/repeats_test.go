@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	agent "github.com/panyam/chakra"
+	"github.com/panyam/chakra/presets"
 	"github.com/panyam/jaala/frontends/nl"
 	"github.com/panyam/jaala/internal/guide"
 )
@@ -54,7 +55,7 @@ func TestARepeatedActionCostsNoStep(t *testing.T) {
 		}
 		for i, req := range rec.reqs {
 			for _, m := range req.Messages {
-				if m.Role == agent.RoleSystem {
+				if isStuckNote(m) {
 					t.Errorf("text %v: request %d has a note %q", text, i, m.Text)
 				}
 			}
@@ -223,5 +224,87 @@ func TestAModelPicksAJoinFromPaths(t *testing.T) {
 	}
 	if _, trace, _ := tr.Ask(context.Background(), q); len(trace.Steps) == 1 && strings.Contains(trace.Steps[0].Result, "oneauth/acct.Get") {
 		t.Errorf("control: without a Shape, paths answered %q", trace.Steps[0].Result)
+	}
+}
+
+// isStuckNote says m is the stuck detector's note, Prompts.Stuck's text in whatever role it went as.
+func isStuckNote(m agent.Message) bool {
+	head, _, _ := strings.Cut(nl.DefaultPrompts().Stuck, "%s")
+	return strings.HasPrefix(m.Text, head)
+}
+
+// The turn's Runner comes from chakra's graph-query preset (#528): its retrieval, stuck and ledger
+// stages, jaala's actions stage in place of the preset's, then jaala's compaction and label, with
+// the repeat cache left out (the Conversation answers repeats) and no penalties unless the role sets
+// them. control: without a preview or a ledger, those stages are left out.
+func TestTheTurnIsBuiltFromThePreset(t *testing.T) {
+	v, b := guide.Deps(t)
+	pack := &nl.Pack{Preview: func(context.Context, string) []string { return []string{"pkg"} }}
+	stages := func(o nl.Options, tr *Translator) (agent.RunnerConfig, []string) {
+		s, err := nl.NewSession(context.Background(), mitQ, v, nil, o)
+		if err != nil {
+			t.Fatal(err)
+		}
+		l := &loop{t: tr, o: o}
+		cfg, err := l.preset(s, s.NewConversation(nil, true), tr.model, s.Prefix(), s.Grammar(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var names []string
+		for _, st := range cfg.StepStages {
+			names = append(names, st.Name)
+		}
+		return cfg, names
+	}
+	caps := llamaCaps
+	caps.Penalties = []string{agent.PenaltyRepeat, agent.PenaltyFrequency, agent.PenaltyPresence, agent.PenaltyDRY}
+	tr, err := New(v, pack, Config{Model: Role{Provider: capped{&recordingProvider{Provider: scripted("small", nil)}, caps}}, Base: b})
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := nl.Options{Base: b, Pack: pack, Actions: &nl.Actions{Ledger: true, Compact: true}}
+	cfg, names := stages(o, tr)
+	want := []string{presets.StageRetrieval, presets.StageStuck, "jaala.translator.actions", presets.StageLedger, "jaala.translator.compact", "jaala.translator"}
+	if strings.Join(names, " ") != strings.Join(want, " ") {
+		t.Errorf("stages %v, want %v", names, want)
+	}
+	if len(cfg.ToolMiddleware) != 0 || cfg.Generation.Penalties != nil || cfg.MaxFreeRefusals != nl.MaxRepeats {
+		t.Errorf("middleware %d, penalties %+v, free refusals %d", len(cfg.ToolMiddleware), cfg.Generation.Penalties, cfg.MaxFreeRefusals)
+	}
+	_, plain := stages(nl.Options{Base: b, Actions: &nl.Actions{}}, tr)
+	if strings.Join(plain, " ") != presets.StageStuck+" jaala.translator.actions jaala.translator" {
+		t.Errorf("control: without a preview or a ledger, stages %v", plain)
+	}
+}
+
+// x04's pattern brings one try back three times in five steps, between other actions: neither a
+// repeat in a row nor an alternation, so only the preset's window catches it, and the note goes with
+// the next call. control: the same script with the third try changed draws no note.
+func TestAWindowOfRepeatsDrawsTheStuckNote(t *testing.T) {
+	v, b := guide.Deps(t)
+	nope := "try\n" + `pkg(?p, "nope") => ?p`
+	run := func(script []string) bool {
+		rec := &recordingProvider{Provider: scripted("small", map[string][]string{mitQ: script})}
+		tr, err := New(v, nil, Config{Model: Role{Provider: rec}, Base: b, Actions: &nl.Actions{Steps: 8}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p, _, err := tr.Ask(context.Background(), mitQ); err != nil || p.Text != mit {
+			t.Fatalf("Ask = %q, %v", p.Text, err)
+		}
+		for _, req := range rec.reqs {
+			for _, m := range req.Messages {
+				if isStuckNote(m) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	if !run([]string{nope, "look pkg", nope, "values pkg.license", nope, mit}) {
+		t.Errorf("a try back three times in five steps drew no note")
+	}
+	if run([]string{nope, "look pkg", nope, "values pkg.license", "try\n" + `pkg(?p, "none") => ?p`, mit}) {
+		t.Errorf("control: two tries of one draft drew the note")
 	}
 }

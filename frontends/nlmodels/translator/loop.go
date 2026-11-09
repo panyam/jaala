@@ -11,6 +11,7 @@ import (
 	"time"
 
 	agent "github.com/panyam/chakra"
+	"github.com/panyam/chakra/presets"
 	"github.com/panyam/jaala/frontends/nl"
 )
 
@@ -181,36 +182,28 @@ func (l *loop) turn(ctx context.Context, s *nl.Session, c *nl.Conversation, r *r
 	if r.text {
 		prefix, grammar = s.TextActions()
 	}
-	cfg := agent.RunnerConfig{
-		Provider:        r.provider,
-		Instructions:    prefix + r.think,
-		MaxSteps:        s.MaxTries() + s.MaxSteps() + 1,
-		MaxFreeRefusals: nl.MaxRepeats,
-		Generation:      r.gen,
-		ResponseGuided:  r.guided(grammar),
-		TurnEnd: []agent.TurnEndHook{func(ctx context.Context, info agent.TurnEndInfo) (agent.TurnEndVerdict, error) {
-			if err := l.timeUp(ctx); err != nil {
-				return agent.TurnEndVerdict{}, err
-			}
-			if result, repeat, ok := l.textAction(ctx, s, c, r, info); ok {
-				return agent.TurnEndVerdict{Continue: result, AsUser: true, Free: repeat}, nil
-			}
-			vd := c.Judge(ctx, l.try(r, r.answer(info.Text), info.Usage))
-			l.tr.Tries = append(l.tr.Tries, vd.Tries...)
-			switch {
-			case vd.Program != nil:
-				accepted = vd.Program
-				return agent.TurnEndVerdict{}, nil
-			case vd.Stop != nil:
-				l.stop = vd.Stop
-				return agent.TurnEndVerdict{Stop: vd.Stop.Error()}, nil
-			}
-			return agent.TurnEndVerdict{Continue: vd.Continue, AsUser: true}, nil
-		}},
-		StepStages: l.stages(s, c, r),
+	check := func(ctx context.Context, info agent.TurnEndInfo) (agent.TurnEndVerdict, error) {
+		if err := l.timeUp(ctx); err != nil {
+			return agent.TurnEndVerdict{}, err
+		}
+		if result, repeat, ok := l.textAction(ctx, s, c, r, info); ok {
+			return agent.TurnEndVerdict{Continue: result, AsUser: true, Free: repeat}, nil
+		}
+		vd := c.Judge(ctx, l.try(r, r.answer(info.Text), info.Usage))
+		l.tr.Tries = append(l.tr.Tries, vd.Tries...)
+		switch {
+		case vd.Program != nil:
+			accepted = vd.Program
+			return agent.TurnEndVerdict{}, nil
+		case vd.Stop != nil:
+			l.stop = vd.Stop
+			return agent.TurnEndVerdict{Stop: vd.Stop.Error()}, nil
+		}
+		return agent.TurnEndVerdict{Continue: vd.Continue, AsUser: true}, nil
 	}
-	if tools := s.Tools(); tools != nil && !r.text {
-		cfg.Tools = l.tools(tools, c, r)
+	cfg, err := l.preset(s, c, r, prefix, grammar, check)
+	if err != nil {
+		return nl.Program{}, nil, err
 	}
 	l.shown = nil
 	history := []agent.Message{{Role: agent.RoleUser, Text: c.Ask()}}
@@ -332,36 +325,63 @@ func (l *loop) try(r *role, text string, turn agent.Usage) nl.Try {
 	return try
 }
 
-// stages name each call for the turn's usage, watch for a model repeating its actions (stuck), stop
-// offering the actions once the model has taken MaxSteps of them (for a TextActions role, by holding
-// the call to the draft's grammar, a try line allowed), and send Compact's one message in place of the conversation when Actions.Compact
-// asks for it. Compacting is a turn stage, since it rewrites the working messages, which chakra's
-// guided finalizing call reads too; a request stage's messages reach only the step's own call.
-func (l *loop) stages(s *nl.Session, c *nl.Conversation, r *role) []agent.StepStage {
-	st := []agent.StepStage{{Name: "jaala.translator", Scope: agent.ScopeRequest, Run: func(ctx context.Context, _ agent.StepInfo, v agent.StepView) (agent.StepView, error) {
-		if err := l.timeUp(ctx); err != nil {
-			return v, err
-		}
-		v.ProviderName = r.label
-		l.mu.Lock()
-		out := c.Steps() >= s.MaxSteps()
-		l.mu.Unlock()
-		if out {
-			v.Tools = nil
-			if r.text {
-				v.Guided = r.guided(s.FinalGrammar())
-			}
-		}
-		return v, nil
-	}}}
-	if l.o.Actions != nil {
-		st = append([]agent.StepStage{l.stuck(s, c, r)}, st...)
+// preset builds the turn's RunnerConfig from chakra's graph-query preset (#528) with jaala's parts:
+// the prefix and grammar, the actions as tools, the Conversation's judging as Check, the preview as
+// its retriever, the ledger's slots synced from the Conversation, and the stuck detector keyed by
+// actionKey with Prompts.Stuck as its note. The Conversation answers repeats itself (#517), so the
+// preset's repeat cache is off. jaala's own stages then go in: actions replaces StageActions, since
+// jaala counts the Conversation's steps and holds a text role to FinalGrammar, and compaction, the
+// time limit and the call's label are added after.
+func (l *loop) preset(s *nl.Session, c *nl.Conversation, r *role, prefix, grammar string, check agent.TurnEndHook) (agent.RunnerConfig, error) {
+	g := presets.GraphQuery{
+		Provider:     r.provider,
+		Instructions: prefix + r.think,
+		Check:        check,
+		StuckKey:     func(rec agent.StepRecord) (agent.StuckKey, bool) { return actionKey(r, rec) },
+		StuckNote:    func(f agent.StuckFinding) string { return s.StuckNote(f.String()) },
+		StillStuck: func(_ context.Context, _ agent.StepInfo, v agent.StepView, _ agent.StuckFinding) (agent.StepView, error) {
+			l.mu.Lock()
+			c.EndActions() // the actions stage after this one holds the model to its answer
+			l.mu.Unlock()
+			return v, nil
+		},
+		Tuning: presets.GraphQueryTuning{
+			MaxTokens:        r.gen.MaxTokens,
+			MaxSteps:         s.MaxTries() + s.MaxSteps() + 1,
+			MaxFreeRefusals:  nl.MaxRepeats,
+			RepeatMax:        -1,
+			NudgeTemperature: FallbackTemperature,
+			Penalties:        &agent.SamplingPenalties{}, // none unless the role sets them, not the preset's DRY
+		},
+	}
+	if r.guide {
+		g.Grammar = grammar
+	}
+	if t := r.gen.Temperature; t != nil {
+		g.Tuning.Temperature = *t
+	}
+	if r.gen.Penalties != nil {
+		g.Tuning.Penalties = r.gen.Penalties
+	}
+	if tools := s.Tools(); tools != nil && !r.text {
+		g.Tools = l.tools(tools, c, r)
 	}
 	if p := l.o.Pack; p != nil && p.Preview != nil && l.o.Base != nil {
-		st = append(st, l.preview(s))
+		g.Retrievers = []agent.Retriever{l.preview(s)}
+	}
+	if l.o.Actions != nil && l.o.Actions.Ledger {
+		g.Ledger, g.LedgerSync = l.ledger(s, c)
+	}
+	cfg, err := g.Config()
+	if err != nil {
+		return cfg, err
+	}
+	stages, ok := presets.Replace(cfg.StepStages, presets.StageActions, l.actions(s, c, r))
+	if !ok {
+		return cfg, fmt.Errorf("translator: chakra's graph-query preset has no %s stage", presets.StageActions)
 	}
 	if l.o.Actions != nil && l.o.Actions.Compact {
-		st = append(st, agent.StepStage{Name: "jaala.translator.compact", Scope: agent.ScopeTurn, Run: func(_ context.Context, _ agent.StepInfo, v agent.StepView) (agent.StepView, error) {
+		stages = append(stages, agent.StepStage{Name: "jaala.translator.compact", Scope: agent.ScopeTurn, Run: func(_ context.Context, _ agent.StepInfo, v agent.StepView) (agent.StepView, error) {
 			l.mu.Lock()
 			defer l.mu.Unlock()
 			v.Messages = nil
@@ -372,19 +392,41 @@ func (l *loop) stages(s *nl.Session, c *nl.Conversation, r *role) []agent.StepSt
 			return v, nil
 		}})
 	}
-	if l.o.Actions != nil && l.o.Actions.Ledger {
-		st = append(st, l.ledger(s, c))
-	}
-	return st
+	cfg.StepStages = append(stages, agent.StepStage{Name: "jaala.translator", Scope: agent.ScopeRequest, Run: func(ctx context.Context, _ agent.StepInfo, v agent.StepView) (agent.StepView, error) {
+		if err := l.timeUp(ctx); err != nil {
+			return v, err
+		}
+		v.ProviderName = r.label
+		return v, nil
+	}})
+	return cfg, nil
+}
+
+// actions takes the actions away once the model has taken MaxSteps of them, by the Conversation's
+// count, so a free repeat and a text role's action count as nl counts them; a text role is then held
+// to FinalGrammar, the draft's with a try line allowed (#512).
+func (l *loop) actions(s *nl.Session, c *nl.Conversation, r *role) agent.StepStage {
+	return agent.StepStage{Name: "jaala.translator.actions", Scope: agent.ScopeRequest, Run: func(_ context.Context, _ agent.StepInfo, v agent.StepView) (agent.StepView, error) {
+		l.mu.Lock()
+		out := c.Steps() >= s.MaxSteps()
+		l.mu.Unlock()
+		if out {
+			v.Tools = nil
+			if r.text {
+				v.Guided = r.guided(s.FinalGrammar())
+			}
+		}
+		return v, nil
+	}}
 }
 
 // ledgerBytes caps each of the ledger's slots; past it the oldest lines go.
 const ledgerBytes = 8000
 
-// ledger shows the conversation's ledger (#514) in chakra's slots, one per list, under the session's
-// LedgerHeader and as the user's: before each call it writes both lists into their slots, and the
-// slots' stage puts them after the history for that call alone.
-func (l *loop) ledger(s *nl.Session, c *nl.Conversation) agent.StepStage {
+// ledger is the conversation's ledger (#514) as chakra's slots, one per list, under the session's
+// LedgerHeader and as the user's, and the sync the preset runs before each call to write both lists
+// into them.
+func (l *loop) ledger(s *nl.Session, c *nl.Conversation) (*agent.Slots, func(context.Context, *agent.Slots) error) {
 	var names []string
 	var specs []agent.SlotSpec
 	for i, p := range c.LedgerParts() {
@@ -399,18 +441,17 @@ func (l *loop) ledger(s *nl.Session, c *nl.Conversation) agent.StepStage {
 	if err != nil {
 		panic("translator: the ledger's slots: " + err.Error()) // the names are made distinct above
 	}
-	show := slots.StepStage()
-	return agent.StepStage{Name: "jaala.translator.ledger", Scope: agent.ScopeRequest, Run: func(ctx context.Context, info agent.StepInfo, v agent.StepView) (agent.StepView, error) {
+	return slots, func(ctx context.Context, slots *agent.Slots) error {
 		l.mu.Lock()
 		parts := c.LedgerParts()
 		l.mu.Unlock()
 		for i, p := range parts {
 			if _, err := slots.Write(ctx, names[i], newest(p.Lines, ledgerBytes)); err != nil {
-				return v, err
+				return err
 			}
 		}
-		return show.Run(ctx, info, v)
-	}}
+		return nil
+	}
 }
 
 // newest is text's last lines that fit in n bytes, whole lines only.
@@ -425,53 +466,24 @@ func newest(text string, n int) string {
 	return text
 }
 
-// preview is chakra's retrieval stage over the session's Preview (#514): before the turn's first
-// call it puts a block of the pack's samples before the question, the pack's first target ranked
-// first, and keeps the block out of the turn's record. emit keeps the block from the stage's event
-// (RetrievalInfo.Block) in l.shown, so Compact's stage, which rewrites the messages on every call,
-// puts it back, and a vote's history carries it. It goes as the user's, since a chat template may
-// refuse a system message after the first.
-func (l *loop) preview(s *nl.Session) agent.StepStage {
-	return agent.NewRetrievalStage(agent.RetrievalConfig{AsUser: true, Retrievers: []agent.Retriever{
-		agent.NewRetriever("jaala.preview", func(ctx context.Context, _ agent.RetrievalQuery) ([]agent.Snippet, error) {
-			l.mu.Lock()
-			samples, err := s.Preview(ctx)
-			l.mu.Unlock()
-			if len(samples) == 0 {
-				return nil, err
-			}
-			out := make([]agent.Snippet, len(samples))
-			for i, sm := range samples {
-				out[i] = agent.Snippet{Source: sm.Target, Text: sm.Text, Score: float64(len(samples) - i)}
-			}
-			return out, nil
-		})}})
-}
-
-// stuck is chakra's stuck detector over the turn's actions (#512): the same action twice in a row, or
-// two taking turns twice, with Prompts.Stuck as the note and, where the provider takes one, the
-// fallback's temperature for that call, since a greedy model given the same input writes the same
-// reply. If the model is still stuck at the next call, its actions end, and the stage after this one
-// holds it to its answer. It runs first, so that stage sees the steps spent.
-func (l *loop) stuck(s *nl.Session, c *nl.Conversation, r *role) agent.StepStage {
-	warm := FallbackTemperature
-	nudge := agent.StuckGeneration(agent.GenerationParams{Temperature: &warm})
-	return agent.NewStuckDetector(agent.StuckConfig{
-		Key:     func(rec agent.StepRecord) (agent.StuckKey, bool) { return actionKey(r, rec) },
-		Repeats: 2, Alternations: 2, Errors: -1,
-		Policy: func(ctx context.Context, info agent.StepInfo, v agent.StepView, f agent.StuckFinding) (agent.StepView, error) {
-			if f.Count > 2 {
-				l.mu.Lock()
-				c.EndActions()
-				l.mu.Unlock()
-				return v, nil
-			}
-			v.Messages = append(slices.Clip(v.Messages), agent.Message{Role: agent.RoleSystem, Text: s.StuckNote(f.String())})
-			if r.gen.Temperature != nil {
-				return nudge(ctx, info, v, f)
-			}
-			return v, nil
-		},
+// preview is the session's Preview (#514) as a retriever for the preset's retrieval stage: before
+// the turn's first call the pack's samples go before the question, the first target ranked first,
+// kept out of the turn's record. emit keeps the block from the stage's event (RetrievalInfo.Block) in
+// l.shown, so Compact's stage, which rewrites the messages on every call, puts it back, and a vote's
+// history carries it.
+func (l *loop) preview(s *nl.Session) agent.Retriever {
+	return agent.NewRetriever("jaala.preview", func(ctx context.Context, _ agent.RetrievalQuery) ([]agent.Snippet, error) {
+		l.mu.Lock()
+		samples, err := s.Preview(ctx)
+		l.mu.Unlock()
+		if len(samples) == 0 {
+			return nil, err
+		}
+		out := make([]agent.Snippet, len(samples))
+		for i, sm := range samples {
+			out[i] = agent.Snippet{Source: sm.Target, Text: sm.Text, Score: float64(len(samples) - i)}
+		}
+		return out, nil
 	})
 }
 

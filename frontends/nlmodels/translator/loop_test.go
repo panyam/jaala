@@ -309,7 +309,7 @@ func TestATextRoleStuckOnATryIsNudgedThenMadeToAnswer(t *testing.T) {
 	for i, req := range rec.reqs {
 		note := false
 		for _, m := range req.Messages {
-			note = note || m.Role == agent.RoleSystem && strings.HasPrefix(m.Text, "You have repeated try 2 times")
+			note = note || m.Role == agent.RoleUser && strings.HasPrefix(m.Text, "You have repeated try 2 times")
 		}
 		warm := req.Temperature != nil && *req.Temperature == FallbackTemperature
 		if want := i == 2; note != want || warm != want {
@@ -331,7 +331,7 @@ func TestATextRoleStuckOnATryIsNudgedThenMadeToAnswer(t *testing.T) {
 	}
 	for i, req := range ctl.reqs {
 		for _, m := range req.Messages {
-			if m.Role == agent.RoleSystem {
+			if isStuckNote(m) {
 				t.Errorf("control: request %d has a note %q", i, m.Text)
 			}
 		}
@@ -353,7 +353,7 @@ func TestAToolRoleAlternatingTriesGetsTheNote(t *testing.T) {
 	noted := -1
 	for i, req := range rec.reqs {
 		for _, m := range req.Messages {
-			if m.Role == agent.RoleSystem && strings.Contains(m.Text, "alternated") && noted < 0 {
+			if m.Role == agent.RoleUser && strings.Contains(m.Text, "alternated") && noted < 0 {
 				noted = i
 			}
 		}
