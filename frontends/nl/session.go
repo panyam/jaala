@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/panyam/jaala/ns"
@@ -28,6 +29,7 @@ type Session struct {
 	tries                               int
 	pick                                bool
 
+	built      []string // the body of the last conversation to answer, for a vote's tail-only draws (Build)
 	question   string   // as the host asked it, for Pack.Preview
 	previewed  bool     // Preview has read the targets
 	preview    []Sample // what Preview read
@@ -78,9 +80,12 @@ func NewSession(ctx context.Context, question string, v *ns.Vocabulary, g Ground
 	if err != nil {
 		return nil, err
 	}
+	if o.Actions.builds(o.FrontEnd) {
+		s.answerGrammar = buildGrammar(s.answerGrammar)
+	}
 	s.grammar, s.textGrammar, s.finalGrammar = s.answerGrammar, s.answerGrammar, s.answerGrammar
 	if o.Actions != nil && s.answerGrammar != "" {
-		s.textGrammar = actionGrammar(s.answerGrammar, g != nil)
+		s.textGrammar = actionGrammar(s.answerGrammar, g != nil, o.Actions.builds(o.FrontEnd))
 		s.finalGrammar = finalGrammar(s.answerGrammar)
 	}
 	if o.Actions.replies() {
@@ -172,7 +177,7 @@ func (s *Session) Act(ctx context.Context, action, arg string) string {
 // try's Text is checked, compiled and run as an answer is, and the try comes back with Err and Kind
 // set when it was refused. try carries the model's reply: Model, Text and what it cost.
 func (s *Session) Draw(ctx context.Context, try Try) (Try, Program, error) {
-	try = s.reply(try)
+	try = withBody(s.reply(try), s.built)
 	return check(ctx, try, s.v, s.o, 0)
 }
 
@@ -207,6 +212,7 @@ type Conversation struct {
 	steps   int               // actions taken
 	repeats int               // actions asked again, which took no step
 	asked   map[string]string // what each action answered, keyed by action and argument
+	body    []string          // the literals add built (Actions.Build), in order
 }
 
 // MaxRepeats is how many repeated actions a Conversation answers before it ends the model's actions
@@ -260,6 +266,16 @@ func (c *Conversation) Ledger() string { return c.s.mem.ledger(c.s.pr) }
 func (c *Conversation) Act(ctx context.Context, action, arg string) string {
 	s := c.s
 	key := action + "\x00" + arg
+	if (action == ActionAdd || action == ActionDrop) && !c.Repeats(action, arg) {
+		result := c.build(ctx, action, arg)
+		c.asked[key] = result
+		c.steps++
+		s.mem.add(true, fact(ActionText(action, arg), result))
+		if c.steps == s.MaxSteps() {
+			result += "\n\n" + s.pr.LastLook
+		}
+		return result
+	}
 	if before, ok := c.asked[key]; ok {
 		c.repeats++
 		result := s.pr.AskedAgain + " " + before
@@ -286,8 +302,71 @@ func (c *Conversation) Act(ctx context.Context, action, arg string) string {
 // without running it or taking a step. A loop marks such a reply free (chakra's DenyToolFree, or a
 // TurnEndVerdict with Free).
 func (c *Conversation) Repeats(action, arg string) bool {
+	switch action {
+	case ActionAdd:
+		return slices.Contains(c.body, arg)
+	case ActionDrop:
+		return false
+	}
 	_, ok := c.asked[action+"\x00"+arg]
 	return ok
+}
+
+// Body is the program add has built so far (Actions.Build), its literals joined as a goal's are, ""
+// before the first.
+func (c *Conversation) Body() string { return strings.Join(c.body, ", ") }
+
+// build runs an add or a drop (Actions.Build, #514) and says what came of it. An add whose body then
+// checks keeps the literal and answers with the body's rows, or why it has none, as try does; one
+// that doesn't check is refused with the reason and leaves the body as it was. A drop takes the last
+// literal off.
+func (c *Conversation) build(ctx context.Context, action, arg string) string {
+	s := c.s
+	if !s.o.Actions.builds(s.o.FrontEnd) {
+		return fmt.Sprintf("%s needs Actions.Build in jaala's language", action)
+	}
+	if action == ActionDrop {
+		if len(c.body) == 0 {
+			return s.pr.DropNothing
+		}
+		last := c.body[len(c.body)-1]
+		c.body = c.body[:len(c.body)-1]
+		body := c.Body()
+		if body == "" {
+			body = "(empty)"
+		}
+		return fmt.Sprintf(s.pr.Dropped, last, body)
+	}
+	body := strings.Join(append(slices.Clip(c.body), arg), ", ")
+	o := s.o
+	o.Pack = nil // a look at the data isn't an answer the pack's Check judges
+	try, prog, err := check(ctx, Try{Text: body, explain: func(err error) string { return Explain(body, err) }}, s.v, o, o.Actions.sample())
+	switch {
+	case err != nil && try.Kind != KindEmpty:
+		return strings.TrimRight(try.explain(err), "\n") + "\n\n" + s.pr.NotAdded
+	case err != nil:
+		c.body = append(c.body, arg)
+		return strings.TrimRight(try.explain(err), "\n")
+	}
+	c.body = append(c.body, arg)
+	if s.o.Base == nil {
+		return "it checks; with no data to run on, there are no rows to show"
+	}
+	text, seen := answeredText(body, prog, o.Actions.sample())
+	s.mem.see(seen)
+	return text
+}
+
+// withBody is try with a reply that is a goal's tail alone (=> ?p) put after body, the program the
+// adds built (Actions.Build); try as it was when body is empty or the reply is a whole program.
+func withBody(try Try, body []string) Try {
+	if len(body) == 0 || !strings.HasPrefix(strings.TrimSpace(try.Text), "=>") {
+		return try
+	}
+	text := strings.Join(body, ", ") + " " + strings.TrimSpace(try.Text)
+	try.Text = text
+	try.explain = func(err error) string { return Explain(text, err) }
+	return try
 }
 
 // EndActions spends the steps left, so the caller stops offering actions and the model's next reply
@@ -300,8 +379,11 @@ func (c *Conversation) Steps() int { return c.steps }
 // ActionText is the reply that asks for an action, as a model writes one when actions come in its
 // reply (look NAME, values TARGET, find NAME, or try then the draft on the next lines).
 func ActionText(action, arg string) string {
-	if action == ActionTry {
+	switch action {
+	case ActionTry:
 		return ActionTry + "\n" + arg
+	case ActionDrop:
+		return ActionDrop
 	}
 	return action + " " + arg
 }
@@ -331,6 +413,9 @@ func (s *Session) Tools() []Tool {
 	if s.o.grounder != nil {
 		ts = append(ts, Tool{ActionFind, "name", s.pr.ToolFind})
 	}
+	if s.o.Actions.builds(s.o.FrontEnd) {
+		ts = append(ts, Tool{ActionAdd, "literal", s.pr.ToolAdd}, Tool{ActionDrop, "", s.pr.ToolDrop})
+	}
 	return ts
 }
 
@@ -358,6 +443,9 @@ var ErrNoCall = errors.New("nl: no callable answers the question")
 func (c *Conversation) Judge(ctx context.Context, try Try) Verdict {
 	s := c.s
 	try = s.reply(try)
+	if !s.pick {
+		try = withBody(try, c.body)
+	}
 	if s.pick {
 		return c.judgePick(ctx, try)
 	}
@@ -383,6 +471,7 @@ func (c *Conversation) Judge(ctx context.Context, try Try) Verdict {
 		}
 	}
 	if err == nil {
+		s.built = slices.Clone(c.body)
 		return Verdict{Program: &p, Tries: append(tries, try)}
 	}
 	what := "program"

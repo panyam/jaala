@@ -41,6 +41,12 @@ type Actions struct {
 	// view without rereading the transcript. With Compact, the one turn leaves those lines to it. The
 	// translator shows it; a host's own loop reads Conversation.Ledger.
 	Ledger bool
+	// Build lets the model write its program a literal at a time (#514): add LITERAL appends one to
+	// the conversation's body and answers with the body's rows so far, or why it has none, and drop
+	// takes the last one off. An answer may then be the goal's tail alone (=> ?p), which follows the
+	// body. A small model finds a wrong value at the literal that wrote it, before it builds on it.
+	// Each add or drop is a step. It needs jaala's own language: a FrontEnd turns it off.
+	Build bool
 	// AsTools says the caller offers the actions as tools of its own (Session.Tools), as nlmodels'
 	// translator does on a chakra Runner (#496), rather than reading them from a reply: the prefix
 	// leaves out Prompts.Actions, and ActionGrammar is Grammar.
@@ -74,10 +80,15 @@ const (
 	ActionValues = "values"
 	ActionTry    = "try"
 	ActionFind   = "find"
+	ActionAdd    = "add"  // Actions.Build: append a literal to the body
+	ActionDrop   = "drop" // Actions.Build: take the body's last literal off
 )
 
 // replies says the model asks for an action in its reply: Actions are set and not AsTools.
 func (a *Actions) replies() bool { return a != nil && !a.AsTools }
+
+// builds says the model may write its program a literal at a time: Actions.Build in jaala's language.
+func (a *Actions) builds(fe FrontEnd) bool { return a != nil && a.Build && fe == nil }
 
 func (a *Actions) steps() int {
 	if a.Steps > 0 {
@@ -112,11 +123,16 @@ func readAction(text string) (action, arg string, ok bool) {
 	case ActionTry:
 		draft := strings.TrimSpace(strings.TrimSpace(inline) + "\n" + rest)
 		return word, draft, draft != ""
-	case ActionFind:
+	case ActionFind, ActionAdd:
 		if rest != "" || strings.TrimSpace(inline) == "" {
 			return "", "", false
 		}
 		return word, strings.TrimSpace(inline), true
+	case ActionDrop:
+		if rest != "" || strings.TrimSpace(inline) != "" {
+			return "", "", false
+		}
+		return word, "", true
 	}
 	return "", "", false
 }
@@ -129,6 +145,11 @@ const actionInstructions = `
 #   try             on its own line, then a draft: it runs on a few rows, and says why when none come back
 %s# Any other reply is your answer.
 `
+
+// buildInstruction is actionInstructions' lines for add and drop, under Actions.Build.
+const buildInstruction = "#   add LITERAL     add one literal to the program you are building, and see its rows so far\n" +
+	"#   drop            take the last literal off it\n" +
+	"# Once the body is right, answer with => and the columns alone, such as => ?p\n"
 
 // findInstruction is actionInstructions' line for find, when there is a Grounder.
 const findInstruction = "#   find NAME       the ids or values a name from the question may stand for\n"
@@ -185,6 +206,13 @@ func runRows(ctx context.Context, text string, v *ns.Vocabulary, o Options, what
 	if o.Base == nil {
 		return "it checks; with no data to run on, there are no rows to show", nil, nil
 	}
+	text, seen := answeredText(what, prog, limit)
+	return text, seen, nil
+}
+
+// answeredText writes what a draft answered: what was run, how many rows, and the rows, with the text
+// values in them.
+func answeredText(what string, prog Program, limit int) (string, []string) {
 	var seen []string
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s answered %s:", what, rowCount(len(prog.Rows), limit))
@@ -199,7 +227,7 @@ func runRows(ctx context.Context, text string, v *ns.Vocabulary, o Options, what
 		}
 		b.WriteString("\n  " + strings.Join(vals, ", "))
 	}
-	return b.String(), seen, nil
+	return b.String(), seen
 }
 
 func rowCount(n, sample int) string {
@@ -384,12 +412,15 @@ func valuesProgram(v *ns.Vocabulary, target string, limit int) (string, error) {
 // actionGrammar wraps a draft's grammar so a reply is an action or a draft: the draft grammar's root
 // becomes program, a NAME or TARGET is a dotted name of nameMax characters at most, which look and
 // values check, and with find a phrase of words, which the Grounder reads.
-func actionGrammar(grammar string, find bool) string {
+func actionGrammar(grammar string, find, build bool) string {
 	if grammar == "" {
 		return ""
 	}
 	root := gbnf.Alt{gbnf.Seq{gbnf.Lit("look "), gbnf.Ref("target")}, gbnf.Seq{gbnf.Lit("values "), gbnf.Ref("target")},
 		gbnf.Seq{gbnf.Lit("try\n"), gbnf.Ref("program")}}
+	if build {
+		root = append(root, gbnf.Seq{gbnf.Lit("add "), gbnf.Ref("literal")}, gbnf.Lit("drop"))
+	}
 	rules := []gbnf.Rule{
 		{Name: "target", E: gbnf.Seq{gbnf.Class{Spec: "A-Za-z_", Sample: "aPx_"}, gbnf.UpTo(gbnf.Class{Spec: "A-Za-z0-9_.", Sample: "ae1._"}, nameMax-1)}},
 	}
@@ -424,9 +455,22 @@ func withoutTry(text string) string {
 
 var rootRule = regexp.MustCompile(`(?m)^root ::=`)
 
+// buildGrammar is a draft's grammar under Actions.Build (#514): a whole program, or a goal's tail
+// alone (=> ?p), which Conversation.Judge puts after the body the adds built. It reads the draft
+// grammar's own column and tail rules, so the tail is one a goal could end with.
+func buildGrammar(grammar string) string {
+	if grammar == "" {
+		return ""
+	}
+	item := gbnf.Alt{gbnf.Ref("column"), gbnf.Ref("string"), gbnf.Ref("unumber")}
+	tail := gbnf.Seq{gbnf.Lit("=> "), item, gbnf.Star(gbnf.Seq{gbnf.Lit(", "), item}), gbnf.Ref("tail")}
+	root := gbnf.Alt{gbnf.Ref("whole"), tail}
+	return gbnf.Render([]gbnf.Rule{{Name: "root", E: root}}) + rootRule.ReplaceAllString(grammar, "whole ::=")
+}
+
 // actionsPrefix is actionInstructions with a values target written as the model's language writes one,
 // and find's line when there is a Grounder to find with.
-func actionsPrefix(fe FrontEnd, find bool, pr Prompts) string {
+func actionsPrefix(fe FrontEnd, find, build bool, pr Prompts) string {
 	target := "relation.argument"
 	if p, ok := fe.(Prober); ok {
 		target = p.ValuesTarget()
@@ -434,6 +478,9 @@ func actionsPrefix(fe FrontEnd, find bool, pr Prompts) string {
 	line := ""
 	if find {
 		line = pr.Find
+	}
+	if build {
+		line += pr.Build
 	}
 	return fmt.Sprintf(pr.Actions, target, line)
 }

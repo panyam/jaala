@@ -505,6 +505,9 @@ type (
 	draftArg struct {
 		Draft string `json:"draft"`
 	}
+	literalArg struct {
+		Literal string `json:"literal"`
+	}
 )
 
 // tools are the session's actions as chakra tools, each a Step in the Trace.
@@ -522,6 +525,15 @@ func (l *loop) tools(ts []nl.Tool, c *nl.Conversation, r *role) agent.ToolSource
 			err = agent.AddFunc(src, t.Action, t.Description, func(ctx context.Context, in draftArg) (string, error) {
 				return act(ctx, nl.ActionTry, in.Draft), nil
 			}, agent.ReadOnly())
+		case nl.ActionAdd:
+			// add and drop change the body, so they aren't read-only: a step's calls run in order
+			err = agent.AddFunc(src, t.Action, t.Description, func(ctx context.Context, in literalArg) (string, error) {
+				return act(ctx, nl.ActionAdd, in.Literal), nil
+			})
+		case nl.ActionDrop:
+			err = agent.AddFunc(src, t.Action, t.Description, func(ctx context.Context, _ struct{}) (string, error) {
+				return act(ctx, nl.ActionDrop, ""), nil
+			})
 		default:
 			action := t.Action
 			err = agent.AddFunc(src, action, t.Description, func(ctx context.Context, in nameArg) (string, error) {

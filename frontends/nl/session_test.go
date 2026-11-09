@@ -10,6 +10,7 @@ import (
 	"github.com/panyam/jaala/datalog"
 	"github.com/panyam/jaala/frontends/nl"
 	"github.com/panyam/jaala/internal/guide"
+	"github.com/panyam/jaala/ns"
 )
 
 func reply(text string) nl.Try { return nl.Try{Model: "small", Text: text} }
@@ -463,4 +464,97 @@ func TestALookForAPlainWordSearches(t *testing.T) {
 	if got := s.Act(context.Background(), nl.ActionLook, "pkg"); strings.Contains(got, "mention") || !strings.Contains(got, "pkg(name, license)") {
 		t.Errorf("control: look pkg: %q", got)
 	}
+}
+
+// Under Build an add keeps a literal whose body checks and answers with the body's rows, or why none;
+// one that doesn't check is refused and leaves the body alone; drop takes the last off; an add of a
+// literal the body holds is a repeat; and an answer of a tail alone follows the body, for Judge and
+// for a vote's Draw after it. control: without Build, the tail alone doesn't parse.
+func TestBuildingAProgramALiteralAtATime(t *testing.T) {
+	v, b := guide.Deps(t)
+	d := nl.DefaultPrompts()
+	ctx := context.Background()
+	s, _ := nl.NewSession(ctx, mitQ, v, nil, nl.Options{Base: b, Actions: &nl.Actions{Build: true, Steps: 10}})
+	c := s.NewConversation(nil, true)
+	if r := c.Act(ctx, nl.ActionAdd, "pkg(?p, ?l)"); !strings.HasPrefix(r, "pkg(?p, ?l) answered 4 rows:") || c.Body() != "pkg(?p, ?l)" {
+		t.Errorf("the first add sent back %q, body %q", r, c.Body())
+	}
+	if r := c.Act(ctx, nl.ActionAdd, `?l = "nope"`); !strings.Contains(r, "no rows") || c.Body() != `pkg(?p, ?l), ?l = "nope"` {
+		t.Errorf("an add matching nothing sent back %q, body %q", r, c.Body())
+	}
+	if r := c.Act(ctx, nl.ActionDrop, ""); r != fmt.Sprintf(d.Dropped, `?l = "nope"`, "pkg(?p, ?l)") || c.Body() != "pkg(?p, ?l)" {
+		t.Errorf("drop sent back %q, body %q", r, c.Body())
+	}
+	if r := c.Act(ctx, nl.ActionAdd, "imports(?p"); !strings.HasSuffix(r, d.NotAdded) || c.Body() != "pkg(?p, ?l)" {
+		t.Errorf("an add that doesn't parse sent back %q, body %q", r, c.Body())
+	}
+	steps := c.Steps()
+	if !c.Repeats(nl.ActionAdd, "pkg(?p, ?l)") || !strings.HasPrefix(c.Act(ctx, nl.ActionAdd, "pkg(?p, ?l)"), d.AskedAgain) || c.Steps() != steps || c.Body() != "pkg(?p, ?l)" {
+		t.Errorf("an add of a literal the body holds: steps %d to %d, body %q", steps, c.Steps(), c.Body())
+	}
+	if r := c.Act(ctx, nl.ActionAdd, `?l = "MIT"`); !strings.Contains(r, `"app", "MIT"`) {
+		t.Errorf("the last add sent back %q", r)
+	}
+	vd := c.Judge(ctx, reply("=> ?p"))
+	if vd.Program == nil || vd.Program.Text != `pkg(?p, ?l), ?l = "MIT" => ?p` || len(vd.Program.Rows) != 1 {
+		t.Fatalf("the tail answer: %+v", vd)
+	}
+	if _, p, err := s.Draw(ctx, reply("=> ?p")); err != nil || p.Text != vd.Program.Text {
+		t.Errorf("a vote's tail-only draw: %q, %v", p.Text, err)
+	}
+	if r := c.Act(ctx, nl.ActionDrop, ""); r == d.DropNothing {
+		t.Errorf("control: drop said the body was empty")
+	}
+	empty := s.NewConversation(nil, true)
+	if r := empty.Act(ctx, nl.ActionDrop, ""); r != d.DropNothing {
+		t.Errorf("a drop on an empty body sent back %q", r)
+	}
+	plain, _ := nl.NewSession(ctx, mitQ, v, nil, nl.Options{Base: b, Actions: &nl.Actions{Steps: 10}})
+	pc := plain.NewConversation(nil, true)
+	pc.Act(ctx, nl.ActionAdd, "pkg(?p, ?l)")
+	if vd := pc.Judge(ctx, reply("=> ?p")); vd.Program != nil || pc.Body() != "" {
+		t.Errorf("control: without Build the tail answered %+v, body %q", vd.Program, pc.Body())
+	}
+}
+
+// Build offers add and drop as tools and lists them in the text actions, in jaala's language only.
+// control: without Build, or under a front end, neither is offered.
+func TestBuildOffersAddAndDrop(t *testing.T) {
+	v := vocabulary(t)
+	names := func(s *nl.Session) string {
+		var out []string
+		for _, tl := range s.Tools() {
+			out = append(out, tl.Action)
+		}
+		return strings.Join(out, " ")
+	}
+	s, _ := nl.NewSession(context.Background(), "q", v, nil, nl.Options{Actions: &nl.Actions{Build: true}})
+	prefix, grammar := s.TextActions()
+	if names(s) != "look values try add drop" || !strings.Contains(prefix, "#   add LITERAL") || !strings.Contains(grammar, `"add "`) {
+		t.Errorf("tools %q; the text actions list add: %v", names(s), strings.Contains(prefix, "#   add LITERAL"))
+	}
+	if !strings.Contains(s.Grammar(), `"=> "`) || !strings.Contains(s.FinalGrammar(), `"=> "`) {
+		t.Errorf("the answer grammar under Build takes no tail alone")
+	}
+	plain, _ := nl.NewSession(context.Background(), "q", v, nil, nl.Options{Actions: &nl.Actions{}})
+	if pp, pg := plain.TextActions(); names(plain) != "look values try" || strings.Contains(pp, "add LITERAL") || strings.Contains(pg, `"add "`) || strings.Contains(plain.Grammar(), `"=> "`) {
+		t.Errorf("control: without Build, tools %q", names(plain))
+	}
+	fe, _ := nl.NewSession(context.Background(), "q", v, nil, nl.Options{FrontEnd: plainFront{}, Actions: &nl.Actions{Build: true}})
+	if names(fe) != "look values try" {
+		t.Errorf("control: under a front end, tools %q", names(fe))
+	}
+}
+
+// plainFront is a front end that writes jaala itself, under another name.
+type plainFront struct{}
+
+func (plainFront) Language() string                         { return "plain" }
+func (plainFront) Card(v *ns.Vocabulary) (string, error)    { return nl.Card(v) }
+func (plainFront) Instructions() string                     { return "" }
+func (plainFront) Examples() []nl.Example                   { return nil }
+func (plainFront) Grammar(v *ns.Vocabulary) (string, error) { return "", nil }
+func (plainFront) Compile(_ *ns.Vocabulary, text string) (nl.Compiled, error) {
+	q, err := datalog.Parse(text)
+	return nl.Compiled{Program: text, Query: q}, err
 }

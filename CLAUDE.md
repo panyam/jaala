@@ -147,6 +147,11 @@ GOARCH=wasm go test ./ns` (#417 ran `ns` that way).
   of each once per Session (jaala's programs unless the front end is a Prober) and feeds `memory.see`,
   and the translator's `preview` stage wraps chakra's `NewRetrievalStage`, keeping the block in
   `loop.shown` so Compact's stage and a vote's history (`withPreview`) carry it.
+  `Actions.Build` (#514 piece 4) adds `add LITERAL` and `drop`: `Conversation.build` keeps a
+  literal whose body checks (an empty answer included) in `Conversation.body`, refuses one that
+  doesn't, and an answer of a tail alone (`=> ?p`) follows the body (`withBody`, in `Judge`, and in
+  `Draw` through `Session.built`); `buildGrammar` lets the answer grammar take that tail. An add of a
+  literal the body holds is a repeat; a drop never is. Off under a FrontEnd.
   `Pack.Callables` (#484, `callable.go`) are relations answering a question alone: the translator first
   asks the first model to pick one (`Session.Pick`: About, Card and the catalogue, a grammar of `none`
   or a listed call, `pickTries` 2), a bare call being a program whose rows bind its variables; a `none` is a

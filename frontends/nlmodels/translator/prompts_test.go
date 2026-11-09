@@ -36,6 +36,12 @@ func hostPrompts() *nl.Prompts {
 		PickRetry:            "H-PICKRETRY",
 		CompactFound:         "H-FOUND",
 		CompactRefused:       "H-REFUSED",
+		Build:                "H-BUILD\n",
+		Dropped:              "H-DROPPED %s|%s",
+		DropNothing:          "H-DROPNOTHING",
+		NotAdded:             "H-NOTADDED",
+		ToolAdd:              "H-TOOLADD",
+		ToolDrop:             "H-TOOLDROP",
 		LedgerFound:          "H-LEDGERFOUND",
 		LedgerTried:          "H-LEDGERTRIED",
 		Extract:              "\nH-EXTRACT\n",
@@ -107,6 +113,14 @@ func TestAPacksPromptsReplaceJaalasText(t *testing.T) {
 				return fmt.Sprintf("the last step's result %q", r)
 			}
 			return ""
+		}},
+		{"building a literal at a time", nl.Options{Base: b, Actions: &nl.Actions{Steps: 6, Build: true}}, nil, []string{`add edge("a", ?b)`, "add edge(", "drop", "drop", `edge("a", ?b) => ?b`}, func(m *scripted, tr nl.Trace) string {
+			if len(tr.Steps) != 4 {
+				return fmt.Sprintf("%d steps", len(tr.Steps))
+			}
+			return want(m.descs[nl.ActionAdd], "H-TOOLADD") + want(m.descs[nl.ActionDrop], "H-TOOLDROP") +
+				want(tr.Steps[1].Result, "\n\nH-NOTADDED") + want(tr.Steps[2].Result, `H-DROPPED edge("a", ?b)|(empty)`) +
+				want(tr.Steps[3].Result, "H-DROPNOTHING")
 		}},
 		{"the ledger", nl.Options{Base: b, Actions: &nl.Actions{Steps: 2, Ledger: true}}, nil, []string{"values edge.0", "try\n" + `edge("zz", ?b) => ?b`, `edge("a", ?b) => ?b`}, func(m *scripted, _ nl.Trace) string {
 			ledger := m.asked[2].Turns[len(m.asked[2].Turns)-1].Text

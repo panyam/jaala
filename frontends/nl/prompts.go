@@ -25,6 +25,14 @@ type Prompts struct {
 	Actions string
 	// Find is Actions' line for the find action, when there is a Grounder.
 	Find string
+	// Build is Actions' lines for add and drop, under Actions.Build (#514).
+	Build string
+	// Dropped is what a drop sends back. Placeholders: the literal taken off, then the body left.
+	Dropped string
+	// DropNothing is what a drop sends back when the body is empty.
+	DropNothing string
+	// NotAdded follows the reason an add's body didn't check, which leaves the body as it was.
+	NotAdded string
 	// AskedAgain opens what an action sends back when the model asked the same action before, which
 	// isn't run again (#517); what it answered then follows.
 	AskedAgain string
@@ -45,6 +53,8 @@ type Prompts struct {
 	// (Actions.AsTools, Session.Tools). ToolValues' placeholder is the values target, as the model's
 	// language writes one.
 	ToolLook, ToolValues, ToolTry, ToolFind string
+	// ToolAdd and ToolDrop describe add and drop as tools, under Actions.Build.
+	ToolAdd, ToolDrop string
 	// Fix ends a refused draft's feedback. Placeholder: "program", or "query" under a front end.
 	Fix string
 	// FixEmpty ends the feedback of a draft that answered nothing. Placeholder as Fix.
@@ -79,6 +89,12 @@ func DefaultPrompts() Prompts {
 		Instructions:  instructions,
 		Actions:       actionInstructions,
 		Find:          findInstruction,
+		Build:         buildInstruction,
+		Dropped:       "Dropped %s. The body is now: %s",
+		DropNothing:   "The body is empty; there is nothing to drop.",
+		NotAdded:      "That literal wasn't added; the body is as it was.",
+		ToolAdd:       "Add one literal to the program you are building, and see the rows the body answers so far, or why none. literal is one atom, negation or comparison. Answer with => and the columns once the body is right.",
+		ToolDrop:      "Take the last literal off the program you are building.",
 		AskedAgain:    "You asked that already.",
 		LastLook:      "That was the last look: reply with your answer alone, not another action.",
 		TriedAgain:    "You tried that draft already, so it wasn't run again. Last time:",
@@ -116,6 +132,8 @@ func (p *Pack) prompts() Prompts {
 	h := *p.Prompts
 	for _, f := range []struct{ host, def *string }{
 		{&h.Instructions, &d.Instructions}, {&h.Actions, &d.Actions}, {&h.Find, &d.Find},
+		{&h.Build, &d.Build}, {&h.Dropped, &d.Dropped}, {&h.DropNothing, &d.DropNothing}, {&h.NotAdded, &d.NotAdded},
+		{&h.ToolAdd, &d.ToolAdd}, {&h.ToolDrop, &d.ToolDrop},
 		{&h.AskedAgain, &d.AskedAgain}, {&h.LastLook, &d.LastLook}, {&h.TriedAgain, &d.TriedAgain},
 		{&h.LookFound, &d.LookFound}, {&h.LookNothing, &d.LookNothing}, {&h.Stuck, &d.Stuck}, {&h.ToolLook, &d.ToolLook},
 		{&h.ToolValues, &d.ToolValues}, {&h.ToolTry, &d.ToolTry}, {&h.ToolFind, &d.ToolFind}, {&h.Fix, &d.Fix}, {&h.FixEmpty, &d.FixEmpty},
@@ -141,7 +159,7 @@ func (t Prompts) templates() []struct {
 		name, text string
 		n          int
 	}{{"Actions", t.Actions, 2}, {"ToolValues", t.ToolValues, 1}, {"Fix", t.Fix, 1}, {"FixEmpty", t.FixEmpty, 1}, {"Reask", t.Reask, 4},
-		{"LookFound", t.LookFound, 1}, {"Stuck", t.Stuck, 1}}
+		{"LookFound", t.LookFound, 1}, {"Stuck", t.Stuck, 1}, {"Dropped", t.Dropped, 2}}
 }
 
 // checkTemplates refuses a template that drops one of its placeholders or reads one it isn't given:

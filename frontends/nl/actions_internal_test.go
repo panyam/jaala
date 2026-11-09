@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/panyam/jaala/datalog"
 	"github.com/panyam/jaala/internal/gbnf"
 )
 
@@ -24,7 +25,7 @@ func testActionGrammar(t *testing.T, find bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	g := mustGBNF(t, actionGrammar(grammar, find))
+	g := mustGBNF(t, actionGrammar(grammar, find, false))
 	rules, err := vocabRules(grammarVocabulary(t), grammarOpts{})
 	if err != nil {
 		t.Fatal(err)
@@ -88,6 +89,58 @@ func TestTheFinalGrammarTakesATryLineBeforeTheDraft(t *testing.T) {
 	for _, reply := range []string{"look pkg", "values pkg.license", "try\n"} {
 		if g.Accepts(reply) {
 			t.Errorf("the final grammar accepts %q", reply)
+		}
+	}
+}
+
+// Under Build the actions' grammar takes add with any literal the draft grammar writes, and drop, and
+// each reads as its action; the answer may be a goal's tail alone, and a sampled literal with that
+// tail after it parses, as Judge reads it. control: without Build the grammar refuses all three.
+func TestEveryBuildReplyReadsAsItsAction(t *testing.T) {
+	grammar, err := GrammarFor(grammarVocabulary(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := mustGBNF(t, actionGrammar(buildGrammar(grammar), false, true))
+	plain := mustGBNF(t, actionGrammar(grammar, false, false))
+	rules, err := vocabRules(grammarVocabulary(t), grammarOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := gbnf.NewSampler(table(rules), 3, 4)
+	tails := 0
+	for i := 0; i < 200; i++ {
+		lit := s.Sample("literal")
+		reply := "add " + lit
+		if action, arg, ok := readAction(reply); !g.Accepts(reply) || !ok || action != ActionAdd || arg != strings.TrimSpace(lit) {
+			t.Fatalf("%q: accepted %v, read as %q %q", reply, g.Accepts(reply), action, arg)
+		}
+		if plain.Accepts(reply) {
+			t.Fatalf("control: without Build the grammar accepts %q", reply)
+		}
+		goal := s.Sample("goal")
+		_, tail, ok := strings.Cut(goal, " => ")
+		if !ok {
+			continue
+		}
+		tails++
+		tail = "=> " + tail
+		if !g.Accepts(tail) || plain.Accepts(tail) {
+			t.Fatalf("the tail %q: accepted %v under Build, %v without", tail, g.Accepts(tail), plain.Accepts(tail))
+		}
+		if _, err := datalog.Parse(withBody(Try{Text: tail}, []string{lit}).Text); err != nil {
+			t.Fatalf("%q after %q doesn't parse: %v", tail, lit, err)
+		}
+	}
+	if tails == 0 {
+		t.Fatalf("control: no sampled goal had a tail")
+	}
+	if action, _, ok := readAction("drop"); !g.Accepts("drop") || !ok || action != ActionDrop || plain.Accepts("drop") {
+		t.Errorf("drop: accepted %v (%v without Build), read as %q", g.Accepts("drop"), plain.Accepts("drop"), action)
+	}
+	for _, reply := range []string{"add ", "drop it", "add pkg(?p, ?l)\npkg(?q, ?l)"} {
+		if g.Accepts(reply) {
+			t.Errorf("the grammar accepts %q", reply)
 		}
 	}
 }

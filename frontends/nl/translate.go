@@ -188,7 +188,7 @@ func promptPrefix(v *ns.Vocabulary, o Options) (head, actions, tail string, err 
 		}
 		head = card + o.Pack.prompts().Instructions
 		if o.Actions != nil {
-			actions = actionsPrefix(nil, o.grounder != nil, o.Pack.prompts())
+			actions = actionsPrefix(nil, o.grounder != nil, o.Actions.builds(nil), o.Pack.prompts())
 		}
 		if o.Pack != nil {
 			if err := o.Pack.Validate(v); err != nil {
@@ -218,7 +218,7 @@ func promptPrefix(v *ns.Vocabulary, o Options) (head, actions, tail string, err 
 	}
 	head = card + instr
 	if o.Actions != nil {
-		actions = actionsPrefix(fe, o.grounder != nil, o.Pack.prompts())
+		actions = actionsPrefix(fe, o.grounder != nil, false, o.Pack.prompts())
 	}
 	if o.Pack != nil {
 		p := *o.Pack
