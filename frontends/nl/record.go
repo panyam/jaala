@@ -188,6 +188,11 @@ type CaseRecord struct {
 	Tries    []TryRecord  `json:",omitempty"`
 	Steps    []StepRecord `json:",omitempty"`
 	Votes    []TryRecord  `json:",omitempty"`
+	// Reads is the Case's, and Relations the accepted program's (Result.Relations), which a model
+	// profile's schema choice compares (#537). WouldPass is the Result's.
+	Reads     []string `json:",omitempty"`
+	Relations []string `json:",omitempty"`
+	WouldPass *bool    `json:",omitempty"`
 }
 
 // A TryRecord is a Try as text: Err's message, and Class.
@@ -235,6 +240,8 @@ func NewRecord(rep Report, p Prices) Record {
 			cr.Steps = append(cr.Steps, StepRecord{Model: s.Model, Action: s.Action, Text: s.Text, After: s.After,
 				TokensIn: s.TokensIn, TokensCached: s.TokensCached, TokensOut: s.TokensOut, Calls: s.Calls, Seconds: s.Latency.Seconds()})
 		}
+		cr.Reads, cr.WouldPass = r.Reads, r.WouldPass
+		cr.Relations = r.Relations()
 		rec.Cases = append(rec.Cases, cr)
 	}
 	return rec

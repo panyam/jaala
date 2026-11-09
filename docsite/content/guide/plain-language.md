@@ -188,3 +188,15 @@ A case ends one of three ways ([#536](https://github.com/panyam/jaala/issues/536
 `Case.Tags` names the kinds of query a question needs, such as `closure` or `join across kinds`, in the host's words. `Report.Summary(prices)` counts pass, wrong and abstain for the run and for each tag. It also gives the run's `Cost`, which covers tokens in, cached and out, model calls, wall time and dollars. `Eval` times each case (`Result.Took`), and the translator counts the model calls behind each try and step (`Try.Calls`, `Step.Calls`). `nl.Prices` maps a model's label to its price per million tokens. A model with tokens and no price is listed in `Cost.Unpriced` rather than counted as free, so a local model is priced at zero explicitly. `Summary.PerCorrect` gives the dollars and seconds per passing case.
 
 `nl.NewRecord(report, prices)` turns a run into a `Record`. A record holds each case's outcome, tags, cost, program, rows and tries, and the `Summary`. The host fills in when it ran, its commit, the question set, the arm, the model and its settings. `Record.Write(dir)` writes a new JSON file per run, so runs from two branches never touch one file. `nl.ReadRecords(dir)` reads a directory back, earliest first, and `nl.HistoryTable` prints a row per run as CSV or Markdown with cost and time per correct answer. A cost with an unpriced model is marked with a `+`, since it is then a lower bound.
+
+### A profile per model
+
+`nl.Profile(records, prices)` reads a directory's worth of records into a `ModelProfile` per `Record.Model` ([#537](https://github.com/panyam/jaala/issues/537)). We use it to say which model suits a host's questions with numbers rather than a feeling. A profile adds up its records' outcomes, per tag too, and their cost, and puts the model's price beside them. It also rates five skills, each as how many cases showed it out of how many could:
+
+- `Syntax`: the first try parsed, compiled and checked.
+- `Grounding`: the first try that ran answered something, rather than nothing from a guessed value or id.
+- `Schema`: the accepted program reads every relation in the case's `Case.Reads`. A case without `Reads` is left out.
+- `Repair`: a refused try was followed by an accepted one the model wrote itself.
+- `Calibration`: an abstention fell on a case the model would have got wrong. `Eval` runs the closest draft an abstention offers over its base and keeps the verdict in `Result.WouldPass`. It runs a draft in jaala's language, or scores one that already ran, and a front end's draft is skipped.
+
+A fallback's tries count toward the model whose run asked it, since a record names one model. `nl.ProfileTable` prints a row per model as CSV or Markdown.
