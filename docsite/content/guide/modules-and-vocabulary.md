@@ -21,6 +21,20 @@ A module lives at a path, and its members are named under it: `deps.depends_on`.
 
 The comment lines above a member's first rule are its doc, and `Lookup` returns it with the member's signature and the origin the host gave when adding the module, usually a file name. A signature lists the member's arguments with their types, declared in a rule head or inferred through its rules, which is what a host shows when it lists what's available to query.
 
+## Facts and closed values
+
+A module can state facts as well as rules ([#479](https://github.com/panyam/jaala/issues/479)). A clause of one atom whose arguments are all constants is a fact, so a library can keep a small table beside the rules that read it:
+
+```
+pattern("rail", "^VCC");
+pattern("ground", "^GND");
+wanted(?n, ?role) :- entity(?n, "net"), pattern(?role, ?p), str.match(?n, ?p);
+```
+
+A clause with a variable, a `=>` or more than one literal is still a goal, and `Check` refuses it. The facts are rows of data. A call naming a value no fact holds, such as `pattern("signal", ?p)`, answers nothing, as a missing fact in a source does. The same goes for constants in rule heads, written or set by `?r = "rail"`. So a host can add or drop a row without breaking a program that names it.
+
+A member keeps a closed set of values only when a head declares one, as in `role(?n, ?r: {"sink", "source"})`. A query naming another value is then refused before it runs, with a suggestion when the value is a likely typo. `Check` refuses a member whose rules write a value outside its declared set.
+
 ## Arguments from the caller
 
 A rule can take an argument from whoever calls it ([#200](https://github.com/panyam/jaala/issues/200)). A head variable no relation in the body binds, which a comparison or a `not` reads instead, is an input: the rule has no answer of its own for it, and each call supplies one. Here the caller says how many lines a package needs:

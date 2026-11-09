@@ -25,7 +25,7 @@ A query has exactly one goal. A missing `:-` turns a rule into a second goal.
 
 `query: … is a goal; rules-only text defines relations and asks nothing`
 
-Raised by `ParseRules`, which reads rules for a module and refuses a goal among them.
+Raised by `ParseRules`, which reads rules for a module and refuses a goal among them. A fact, one atom whose arguments are all constants, is accepted as a rule with no body.
 
 `query: more than one … projection separator`
 
@@ -551,7 +551,7 @@ A number argument compared with text that isn't a number.
 
 `query: …'s … argument cannot be … (it holds one of: …)`
 
-A constant outside an argument's closed set of values. Raised for a host relation that declares one.
+A constant outside an argument's closed set of values. Raised for a host relation that declares one, or a module member whose head declares one (`?r: {"sink", "source"}`). A module's facts and constant heads are rows, not a closed set, so a value none of them holds answers nothing.
 
 `query: …'s type … names ?…, which is not in its head`
 

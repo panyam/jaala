@@ -351,7 +351,8 @@ func parseHavingOne(piece span) (Compare, error) {
 }
 
 // ParseRules reads text that holds rules only, such as a derived module's body (see
-// Language). It accepts the same clause syntax as Parse and refuses a goal clause, since
+// Language). It accepts the same clause syntax as Parse, and a fact too: one atom of constants,
+// pattern("rail", "^VCC"), is a rule with no body (#479). Any other goal clause is refused, since
 // rules with nothing to ask are a definition rather than a query. Its errors are *ParseError, as
 // Parse's are.
 func ParseRules(s string) ([]Rule, error) {
@@ -359,10 +360,38 @@ func ParseRules(s string) ([]Rule, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(goals) > 0 {
-		return nil, goals[0].errorf("query: %q is a goal; rules-only text defines relations and asks nothing", goals[0].text())
+	for _, g := range goals {
+		f, ok := fact(g)
+		if !ok {
+			return nil, g.errorf("query: %q is a goal; rules-only text defines relations and asks nothing", g.text())
+		}
+		rules = append(rules, f)
 	}
 	return rules, nil
+}
+
+// asked reports whether a goal clause was written ?- body: clauses hands over the body alone.
+func (s span) asked() bool {
+	t := s.src.toks
+	return s.lo >= 2 && t[s.lo-2].text == "?" && t[s.lo-1].text == "-" && t[s.lo-1].pos == t[s.lo-2].end
+}
+
+// fact reads a clause as a fact: one atom whose every argument is a constant. A clause with a
+// variable, an aggregate, an expression or anything past the atom is a goal.
+func fact(sp span) (Rule, bool) {
+	if len(sp.occurrences("=>")) > 0 || sp.asked() {
+		return Rule{}, false
+	}
+	head, err := parseHeadAtom(sp)
+	if err != nil || len(head.Args) == 0 {
+		return Rule{}, false
+	}
+	for _, a := range head.Args {
+		if a.Const == nil || a.Agg != nil || a.Expr != nil {
+			return Rule{}, false
+		}
+	}
+	return Rule{Head: head}, true
 }
 
 // clauses separates the text into its rule definitions and its goal clauses. A clause ends at a ";"

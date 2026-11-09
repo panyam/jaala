@@ -363,3 +363,49 @@ func TestACycleAcrossModulesNamesNoModule(t *testing.T) {
 		t.Errorf("err = %v (module error: %v), want a plain stratification error", err, me)
 	}
 }
+
+// A module states a fact as a bare atom of constants (#479), and a generic rule reads the table.
+func TestAModuleStatesFacts(t *testing.T) {
+	r := withModules(t, "rp", `pattern("start", "^a$"); pattern("middle", "^[bc]$");
+		wanted(?n, ?k) :- node(?n), pattern(?k, ?p), str.match(?n, ?p);`)
+	if got := col(evalReg(t, r, `rp.wanted(?n, "middle") => ?n`), "n"); got != "b,c" {
+		t.Errorf("middle = %s, want b,c", got)
+	}
+	if got := col(evalReg(t, r, `rp.pattern(?k, _) => ?k`), "k"); got != "middle,start" {
+		t.Errorf("the facts = %s, want middle,start", got)
+	}
+}
+
+// A table kept as rules writing constants is its rows, not a closed set (#479): a sibling rule
+// asking for a value no row holds loads and answers nothing.
+func TestAModuleReadingARowItLacksAnswersNothing(t *testing.T) {
+	for name, text := range map[string]string{
+		"rules": `pattern(?a, ?b) :- ?a = "start", ?b = "^a$";`,
+		"facts": `pattern("start", "^a$");`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := withModules(t, "rp", text+`
+				wanted(?n) :- node(?n), pattern("end", ?p), str.match(?n, ?p);
+				started(?n) :- node(?n), pattern("start", ?p), str.match(?n, ?p);`)
+			if rows := evalReg(t, r, `rp.wanted(?n) => ?n`); len(rows) != 0 {
+				t.Errorf("rows = %v, want none", rows)
+			}
+			if got := col(evalReg(t, r, `rp.started(?n) => ?n`), "n"); got != "a" {
+				t.Errorf("control: started = %s, want a", got)
+			}
+		})
+	}
+}
+
+func TestAModuleStillRefusesAGoal(t *testing.T) {
+	for _, goal := range []string{`pattern("start", ?p)`, `pattern("start", _)`, `pattern("a", "b") => ?x`, `not pattern("a", "b")`, `pattern("a", "b"), pattern("c", "d")`, `?- pattern("a", "b")`} {
+		r := std(graph())
+		err := r.AddModule("rp", LanguageName, goal+";", "")
+		if err == nil {
+			err = r.Check()
+		}
+		if err == nil || !strings.Contains(err.Error(), "is a goal; rules-only text defines relations and asks nothing") {
+			t.Errorf("%s: err = %v, want it refused as a goal", goal, err)
+		}
+	}
+}
