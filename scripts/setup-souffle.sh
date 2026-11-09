@@ -14,7 +14,10 @@ elif [ "$(uname -s)" = Darwin ]; then
 elif command -v apt-get >/dev/null 2>&1 && [ "$(uname -m)" = x86_64 ]; then
     tmp=$(mktemp -d)
     trap 'rm -rf "$tmp"' EXIT
-    curl -fsSL -o "$tmp/$DEB" "https://github.com/souffle-lang/souffle/releases/download/2.5/$DEB"
+    # gh downloads with the user's token, which got through when GitHub timed out anonymous
+    # downloads (2026-11-09); curl with retries is the fallback.
+    gh release download 2.5 -R souffle-lang/souffle -p "$DEB" -D "$tmp" 2>/dev/null ||
+        curl -fsSL --retry 5 --retry-all-errors -o "$tmp/$DEB" "https://github.com/souffle-lang/souffle/releases/download/2.5/$DEB"
     echo "$SHA512  $tmp/$DEB" | sha512sum -c -
     sudo apt-get install -y "$tmp/$DEB"
 else

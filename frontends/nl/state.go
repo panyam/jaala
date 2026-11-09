@@ -16,9 +16,10 @@ import (
 // which the harness repairs a guessed value from, and, for Actions.Compact, the facts so far, which
 // stand in for the conversation.
 type memory struct {
-	seen  map[string][]string // a value's spelling key to the values with that key
-	facts []string
-	last  string // the last refusal, whole, with what to do about it
+	seen   map[string][]string // a value's spelling key to the values with that key
+	facts  []string
+	drafts []bool // whether each fact is a draft (a try, or a refused answer) rather than a finding
+	last   string // the last refusal, whole, with what to do about it
 
 	found, refused string // Prompts.CompactFound and CompactRefused, heading the compact turn's lists
 }
@@ -114,19 +115,46 @@ func fact(reply, result string) string {
 	return fmt.Sprintf("- %s\n  %s", strings.Join(strings.Fields(reply), " "), strings.ReplaceAll(r, "\n", "\n  "))
 }
 
+// add records a fact, a draft's or a finding's.
+func (m *memory) add(draft bool, f string) {
+	m.facts = append(m.facts, f)
+	m.drafts = append(m.drafts, draft)
+}
+
 // compact is the one turn Actions.Compact sends in place of the conversation: the question, every
-// fact so far, and the last refusal whole.
-func (m *memory) compact(ask string) []Turn {
-	if len(m.facts) == 0 && m.last == "" {
+// fact so far when facts is set (the Ledger shows them otherwise), and the last refusal whole.
+func (m *memory) compact(ask string, facts bool) []Turn {
+	if (!facts || len(m.facts) == 0) && m.last == "" {
 		return []Turn{{RoleUser, ask}}
 	}
 	var b strings.Builder
 	b.WriteString(ask)
-	if len(m.facts) > 0 {
+	if facts && len(m.facts) > 0 {
 		b.WriteString("\n\n" + m.found + "\n" + strings.Join(m.facts, "\n"))
 	}
 	if m.last != "" {
 		b.WriteString("\n\n" + m.refused + "\n" + m.last)
 	}
 	return []Turn{{RoleUser, b.String()}}
+}
+
+// ledger is the facts split into findings and drafts, each list under its heading, "" when there
+// are none.
+func (m *memory) ledger(pr Prompts) string {
+	var found, tried []string
+	for i, f := range m.facts {
+		if m.drafts[i] {
+			tried = append(tried, f)
+		} else {
+			found = append(found, f)
+		}
+	}
+	var parts []string
+	if len(found) > 0 {
+		parts = append(parts, pr.LedgerFound+"\n"+strings.Join(found, "\n"))
+	}
+	if len(tried) > 0 {
+		parts = append(parts, pr.LedgerTried+"\n"+strings.Join(tried, "\n"))
+	}
+	return strings.Join(parts, "\n\n")
 }

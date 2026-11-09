@@ -92,19 +92,23 @@ func TestEachActionSendsBackWhatItFound(t *testing.T) {
 }
 
 // Steps run out: once a model has asked Steps actions it is offered none and must answer, under the
-// draft's grammar, and an action then is a draft that doesn't parse. A repeated action says so.
+// draft's grammar, and an action then is a draft that doesn't parse. A repeated action says so, and
+// takes no step.
 func TestStepsRunOut(t *testing.T) {
 	v, b := guide.Deps(t)
-	m := model("small", "look pkg", "look pkg", "look pkg", "look pkg")
+	m := model("small", "look pkg", "look pkg", "values pkg.license", "look pkg", "look pkg")
 	_, tr, err := translate(context.Background(), "which packages are MIT licensed?", v, nil, m, nl.Options{Base: b, MaxTries: 2, Actions: &nl.Actions{Steps: 2}})
-	if err == nil || len(tr.Steps) != 2 || len(tr.Tries) != 2 || tr.Tries[0].Kind != nl.KindParse {
+	if err == nil || len(tr.Steps) != 3 || len(tr.Tries) != 2 || tr.Tries[0].Kind != nl.KindParse {
 		t.Fatalf("%v, steps %d, tries %+v", err, len(tr.Steps), tr.Tries)
 	}
 	if !strings.HasPrefix(tr.Steps[1].Result, "You asked that already.") {
 		t.Errorf("a repeated look: %q", tr.Steps[1].Result)
 	}
-	if g := m.asked[2].Grammar; strings.Contains(g, `"look "`) || !strings.HasPrefix(g, "root ::=") || m.offered[2] != nil {
-		t.Errorf("after the last step, tools %v and the grammar:\n%.200s", m.offered[2], g)
+	if m.offered[2] == nil {
+		t.Errorf("the repeat used up a step: the request after it offered no tools")
+	}
+	if g := m.asked[3].Grammar; strings.Contains(g, `"look "`) || !strings.HasPrefix(g, "root ::=") || m.offered[3] != nil {
+		t.Errorf("after the last step, tools %v and the grammar:\n%.200s", m.offered[3], g)
 	}
 	if len(m.offered[0]) != 3 || strings.Contains(m.asked[0].Prefix, "values TARGET") {
 		t.Errorf("the first request offered %v; the prefix lists the text actions: %v", m.offered[0], strings.Contains(m.asked[0].Prefix, "values TARGET"))

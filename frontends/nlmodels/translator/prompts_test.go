@@ -36,6 +36,8 @@ func hostPrompts() *nl.Prompts {
 		PickRetry:            "H-PICKRETRY",
 		CompactFound:         "H-FOUND",
 		CompactRefused:       "H-REFUSED",
+		LedgerFound:          "H-LEDGERFOUND",
+		LedgerTried:          "H-LEDGERTRIED",
 		Extract:              "\nH-EXTRACT\n",
 		ExtractFix:           "H-EXTRACTFIX",
 	}
@@ -97,12 +99,18 @@ func TestAPacksPromptsReplaceJaalasText(t *testing.T) {
 		{"a front end's instructions", nl.Options{Base: b, FrontEnd: shout{}}, nil, []string{`SAY edge("a", ?b) => ?b`}, func(m *scripted, _ nl.Trace) string {
 			return want(m.asked[0].Prefix, "H-SHOUT") + absent(m.asked[0].Prefix, "# Say SAY", "H-INSTRUCTIONS")
 		}},
-		{"asked again and the last look", nl.Options{Base: b, Actions: &nl.Actions{Steps: 2}}, nil, []string{"look edge", "look edge", `edge("a", ?b) => ?b`}, func(_ *scripted, tr nl.Trace) string {
-			r := tr.Steps[1].Result
-			if !strings.HasPrefix(r, "H-ASKED ") || !strings.HasSuffix(r, "\n\nH-LAST") {
+		{"asked again and the last look", nl.Options{Base: b, Actions: &nl.Actions{Steps: 2}}, nil, []string{"look edge", "look edge", "values edge.0", `edge("a", ?b) => ?b`}, func(_ *scripted, tr nl.Trace) string {
+			if r := tr.Steps[1].Result; !strings.HasPrefix(r, "H-ASKED ") {
 				return fmt.Sprintf("second look's result %q", r)
 			}
+			if r := tr.Steps[2].Result; !strings.HasSuffix(r, "\n\nH-LAST") {
+				return fmt.Sprintf("the last step's result %q", r)
+			}
 			return ""
+		}},
+		{"the ledger", nl.Options{Base: b, Actions: &nl.Actions{Steps: 2, Ledger: true}}, nil, []string{"values edge.0", "try\n" + `edge("zz", ?b) => ?b`, `edge("a", ?b) => ?b`}, func(m *scripted, _ nl.Trace) string {
+			ledger := m.asked[2].Turns[len(m.asked[2].Turns)-1].Text
+			return want(ledger, "H-LEDGERFOUND\n- values edge.0", "\n\nH-LEDGERTRIED\n- try ")
 		}},
 		{"a try tried again and the stuck note", nl.Options{Base: b, Actions: &nl.Actions{}}, nil, []string{"try\n" + `edge("zz", ?b) => ?b`, "try\n" + `edge("zz", ?b) => ?b`, `edge("a", ?b) => ?b`}, func(m *scripted, tr nl.Trace) string {
 			if r := tr.Steps[1].Result; !strings.HasPrefix(r, "H-TRIED\n") {

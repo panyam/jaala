@@ -11,6 +11,7 @@ import (
 
 	agent "github.com/panyam/chakra"
 	"github.com/panyam/jaala/frontends/nl"
+	"github.com/panyam/mcpkit/core"
 )
 
 // A role is a Role as the loop runs it: the provider, the generation settings it can take, and
@@ -37,6 +38,7 @@ func (r Role) runtime(label string, temp float64) *role {
 		}
 		rr.gen.Temperature = &temp
 	}
+	rr.gen.Penalties = sendable(r.Penalties, caps)
 	switch {
 	case r.MaxTokens > 0:
 		rr.gen.MaxTokens = r.MaxTokens
@@ -51,6 +53,31 @@ func (r Role) runtime(label string, temp float64) *role {
 	}
 	rr.guide = !r.Thinking && caps.CanGuide(&agent.GuidedDecoding{Grammar: "root ::= \"x\""})
 	return rr
+}
+
+// sendable is p with only the kinds of penalty caps lists, nil when none is left.
+func sendable(p *agent.SamplingPenalties, caps agent.Capabilities) *agent.SamplingPenalties {
+	if p == nil {
+		return nil
+	}
+	var out agent.SamplingPenalties
+	can := func(kind string) bool { return slices.Contains(caps.Penalties, kind) }
+	if can(agent.PenaltyRepeat) {
+		out.Repeat, out.RepeatLastN = p.Repeat, p.RepeatLastN
+	}
+	if can(agent.PenaltyFrequency) {
+		out.Frequency = p.Frequency
+	}
+	if can(agent.PenaltyPresence) {
+		out.Presence = p.Presence
+	}
+	if can(agent.PenaltyDRY) {
+		out.DRYMultiplier, out.DRYBase, out.DRYAllowedLength = p.DRYMultiplier, p.DRYBase, p.DRYAllowedLength
+	}
+	if out == (agent.SamplingPenalties{}) {
+		return nil
+	}
+	return &out
 }
 
 // guided is the grammar r's answers are held to, nil when it takes none or there is none.
@@ -162,6 +189,8 @@ type loop struct {
 	tr     nl.Trace
 	stop   error // why the last turn ended without an answer
 
+	shown *agent.Message // the preview block the retrieval stage put before the question, nil for none
+
 	recorded agent.Usage // the part of the current turn's usage already on a Try or Step
 	pending  agent.Usage // the last step's tokens, not yet on a Step
 	mark     time.Time   // when the last Try or Step was recorded, or the turn began
@@ -178,17 +207,18 @@ func (l *loop) turn(ctx context.Context, s *nl.Session, c *nl.Conversation, r *r
 		prefix, grammar = s.TextActions()
 	}
 	cfg := agent.RunnerConfig{
-		Provider:       r.provider,
-		Instructions:   prefix + r.think,
-		MaxSteps:       s.MaxTries() + s.MaxSteps() + 1,
-		Generation:     r.gen,
-		ResponseGuided: r.guided(grammar),
+		Provider:        r.provider,
+		Instructions:    prefix + r.think,
+		MaxSteps:        s.MaxTries() + s.MaxSteps() + 1,
+		MaxFreeRefusals: nl.MaxRepeats,
+		Generation:      r.gen,
+		ResponseGuided:  r.guided(grammar),
 		TurnEnd: []agent.TurnEndHook{func(ctx context.Context, info agent.TurnEndInfo) (agent.TurnEndVerdict, error) {
 			if err := l.timeUp(ctx); err != nil {
 				return agent.TurnEndVerdict{}, err
 			}
-			if result, ok := l.textAction(ctx, s, c, r, info); ok {
-				return agent.TurnEndVerdict{Continue: result, AsUser: true}, nil
+			if result, repeat, ok := l.textAction(ctx, s, c, r, info); ok {
+				return agent.TurnEndVerdict{Continue: result, AsUser: true, Free: repeat}, nil
 			}
 			vd := c.Judge(ctx, l.try(r, r.answer(info.Text), info.Usage))
 			l.tr.Tries = append(l.tr.Tries, vd.Tries...)
@@ -206,7 +236,9 @@ func (l *loop) turn(ctx context.Context, s *nl.Session, c *nl.Conversation, r *r
 	}
 	if tools := s.Tools(); tools != nil && !r.text {
 		cfg.Tools = l.tools(tools, c, r)
+		cfg.ToolMiddleware = []agent.ToolMiddleware{l.repeated(c, r)}
 	}
+	l.shown = nil
 	history := []agent.Message{{Role: agent.RoleUser, Text: c.Ask()}}
 	res, err := l.runTurn(ctx, cfg, r, "", agent.TurnRequest{History: history})
 	if err != nil {
@@ -220,9 +252,18 @@ func (l *loop) turn(ctx context.Context, s *nl.Session, c *nl.Conversation, r *r
 		for _, t := range c.Compact() {
 			asked = append(asked, agent.Message{Role: agent.RoleUser, Text: t.Text})
 		}
-		return *accepted, asked, nil
+		return *accepted, l.withPreview(asked), nil
 	}
-	return *accepted, answered(append(history, res.Messages...)), nil
+	return *accepted, l.withPreview(answered(append(history, res.Messages...))), nil
+}
+
+// withPreview is history with the preview block before it, as the turn's model saw it, so a vote's
+// draws see it too: the retrieval stage keeps it out of the turn's record.
+func (l *loop) withPreview(history []agent.Message) []agent.Message {
+	if l.shown == nil {
+		return history
+	}
+	return append([]agent.Message{*l.shown}, history...)
 }
 
 // runTurn runs one turn on a Runner over cfg, counting its tokens. A turn the Conversation stopped,
@@ -336,6 +377,9 @@ func (l *loop) stages(s *nl.Session, c *nl.Conversation, r *role) []agent.StepSt
 	if l.o.Actions != nil {
 		st = append([]agent.StepStage{l.stuck(s, c, r)}, st...)
 	}
+	if p := l.o.Pack; p != nil && p.Preview != nil && l.o.Base != nil {
+		st = append(st, l.preview(s))
+	}
 	if l.o.Actions != nil && l.o.Actions.Compact {
 		st = append(st, agent.StepStage{Name: "jaala.translator.compact", Scope: agent.ScopeTurn, Run: func(_ context.Context, _ agent.StepInfo, v agent.StepView) (agent.StepView, error) {
 			l.mu.Lock()
@@ -344,10 +388,60 @@ func (l *loop) stages(s *nl.Session, c *nl.Conversation, r *role) []agent.StepSt
 			for _, t := range c.Compact() {
 				v.Messages = append(v.Messages, agent.Message{Role: agent.RoleUser, Text: t.Text})
 			}
+			v.Messages = l.withPreview(v.Messages)
+			return v, nil
+		}})
+	}
+	if l.o.Actions != nil && l.o.Actions.Ledger {
+		st = append(st, agent.StepStage{Name: "jaala.translator.ledger", Scope: agent.ScopeRequest, Run: func(_ context.Context, _ agent.StepInfo, v agent.StepView) (agent.StepView, error) {
+			l.mu.Lock()
+			ledger := c.Ledger()
+			l.mu.Unlock()
+			if ledger != "" {
+				v.Messages = append(slices.Clip(v.Messages), agent.Message{Role: agent.RoleSystem, Text: ledger})
+			}
 			return v, nil
 		}})
 	}
 	return st
+}
+
+// preview is chakra's retrieval stage over the session's Preview (#514): before the turn's first
+// call it puts a block of the pack's samples before the question, the pack's first target ranked
+// first, and keeps the block out of the turn's record. The block is kept in l.shown, so Compact's
+// stage, which rewrites the messages on every call, puts it back, and a vote's history carries it.
+// It goes as the user's, since a chat template may refuse a system message after the first.
+func (l *loop) preview(s *nl.Session) agent.StepStage {
+	inner := agent.NewRetrievalStage(agent.RetrievalConfig{AsUser: true, Retrievers: []agent.Retriever{
+		agent.NewRetriever("jaala.preview", func(ctx context.Context, _ agent.RetrievalQuery) ([]agent.Snippet, error) {
+			l.mu.Lock()
+			samples, err := s.Preview(ctx)
+			l.mu.Unlock()
+			if len(samples) == 0 {
+				return nil, err
+			}
+			out := make([]agent.Snippet, len(samples))
+			for i, sm := range samples {
+				out[i] = agent.Snippet{Source: sm.Target, Text: sm.Text, Score: float64(len(samples) - i)}
+			}
+			return out, nil
+		})}})
+	return agent.StepStage{Name: "jaala.translator.preview", Scope: agent.ScopeTurn, Run: func(ctx context.Context, info agent.StepInfo, v agent.StepView) (agent.StepView, error) {
+		before := slices.Clone(v.Messages)
+		v, err := inner.Run(ctx, info, v)
+		if err != nil || len(v.Messages) == len(before) {
+			return v, err
+		}
+		for i, m := range v.Messages {
+			if i == len(before) || m.Role != before[i].Role || m.Text != before[i].Text {
+				l.mu.Lock()
+				l.shown = &m
+				l.mu.Unlock()
+				break
+			}
+		}
+		return v, nil
+	}}
 }
 
 // stuck is chakra's stuck detector over the turn's actions (#512): the same action twice in a row, or
@@ -416,13 +510,7 @@ type (
 // tools are the session's actions as chakra tools, each a Step in the Trace.
 func (l *loop) tools(ts []nl.Tool, c *nl.Conversation, r *role) agent.ToolSource {
 	src := agent.NewFuncSource()
-	act := func(ctx context.Context, action, arg string) string {
-		l.mu.Lock()
-		defer l.mu.Unlock()
-		u := l.pending
-		l.recorded, l.pending = add(l.recorded, u), agent.Usage{}
-		return l.act(ctx, c, r, action, arg, u)
-	}
+	act := func(ctx context.Context, action, arg string) string { return l.toolAct(ctx, c, r, action, arg) }
 	for _, t := range ts {
 		var err error
 		switch t.Action {
@@ -447,25 +535,55 @@ func (l *loop) tools(ts []nl.Tool, c *nl.Conversation, r *role) agent.ToolSource
 	return src
 }
 
+// toolAct runs an action a tool call asked for, charging its Step the last call's tokens.
+func (l *loop) toolAct(ctx context.Context, c *nl.Conversation, r *role, action, arg string) string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	u := l.pending
+	l.recorded, l.pending = add(l.recorded, u), agent.Usage{}
+	return l.act(ctx, c, r, action, arg, u)
+}
+
+// repeated answers a tool call that repeats an action the conversation took as a free refusal
+// (#517): the Conversation answers it from before and takes no step, so chakra's Runner takes none
+// either while the turn is under MaxFreeRefusals. Under a step budget a model cycling try, look, try,
+// find ran out of steps with nothing new run. The model reads the earlier result after chakra's
+// denial prefix. Any other call goes on to the tool.
+func (l *loop) repeated(c *nl.Conversation, r *role) agent.ToolMiddleware {
+	return func(ctx context.Context, info agent.ToolCallInfo, next agent.ToolCallFunc) (*core.ToolResult, error) {
+		action, arg := info.Call.Name, toolArg(info.Call)
+		l.mu.Lock()
+		repeat := c.Repeats(action, arg)
+		l.mu.Unlock()
+		if !repeat {
+			return next(ctx, info)
+		}
+		result := l.toolAct(ctx, c, r, action, arg)
+		return nil, &agent.ToolDeniedError{Reason: "repeated " + action, ModelReason: result, Free: true}
+	}
+}
+
 // textAction runs the action a TextActions role's reply asks for while it has steps left, and returns
-// what goes back to it. ok is false for any other reply, which is judged as an answer. The step is
-// charged what the turn spent since the last Try or Step.
-func (l *loop) textAction(ctx context.Context, s *nl.Session, c *nl.Conversation, r *role, info agent.TurnEndInfo) (string, bool) {
+// what goes back to it, and whether it repeated one the conversation took, which costs no step
+// (#517). ok is false for any other reply, which is judged as an answer. The step is charged what the
+// turn spent since the last Try or Step.
+func (l *loop) textAction(ctx context.Context, s *nl.Session, c *nl.Conversation, r *role, info agent.TurnEndInfo) (result string, repeat, ok bool) {
 	if !r.text || l.o.Actions == nil {
-		return "", false
+		return "", false, false
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if c.Steps() >= s.MaxSteps() {
-		return "", false
+		return "", false, false
 	}
 	action, arg, ok := nl.ReadAction(r.answer(info.Text))
 	if !ok {
-		return "", false
+		return "", false, false
 	}
 	u := sub(info.Usage, l.recorded)
 	l.recorded, l.pending = info.Usage, agent.Usage{}
-	return l.act(ctx, c, r, action, arg, u), true
+	repeat = c.Repeats(action, arg)
+	return l.act(ctx, c, r, action, arg, u), repeat, true
 }
 
 // act runs an action c's model asked for and records it as a Step costing u. l.mu is held.
