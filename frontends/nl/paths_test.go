@@ -2,6 +2,7 @@ package nl_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -253,5 +254,39 @@ func TestAJoinComesBackWithoutALimit(t *testing.T) {
 	}
 	if len(paths[0].Rows) != 2 {
 		t.Errorf("control: the first join showed %d rows, want 2", len(paths[0].Rows))
+	}
+}
+
+// ParseEnds says which of its three refusals it made, as an *EndsError, so a Session writes it from
+// the pack's Prompts (#532); its own text is unchanged for a caller outside a Session. A Session
+// writes the pack's PathsUsage and PathsNoKind, which only a tool call can reach: a reply read as a
+// text action needs " => " and a kind on each side.
+func TestParseEndsSaysWhichRefusal(t *testing.T) {
+	for _, c := range []struct {
+		arg     string
+		problem nl.EndsProblem
+		text    string
+	}{
+		{"func", nl.EndsNoArrow, `paths takes FROM => TO, each a kind and literals over ?x, as func str.glob(?x, "a/*") => func ?x = "b.F"`},
+		{" => func", nl.EndsNoKind, `paths: an end needs a kind first, in " => func"`},
+		{`func ?y = "a" => func`, nl.EndsUnbound, `paths: the literals after func never mention ?x, the end's node, so nothing ties them to it; write them over ?x, as func ?x = "an id"`},
+	} {
+		_, _, err := nl.ParseEnds(c.arg)
+		var ee *nl.EndsError
+		if !errors.As(err, &ee) || ee.Problem != c.problem || err.Error() != c.text {
+			t.Errorf("%q: %#v", c.arg, err)
+		}
+	}
+	b, shape := codeGraph(t)
+	ctx := context.Background()
+	s, err := nl.NewSession(ctx, "q", b.Vocabulary(), nil, nl.Options{Base: b, Pack: &nl.Pack{Shape: &shape, Prompts: &nl.Prompts{PathsUsage: "H-USAGE", PathsNoKind: "H-NOKIND %s"}}, Actions: &nl.Actions{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := s.Act(ctx, nl.ActionPaths, " => func"); r != `H-NOKIND " => func"` {
+		t.Errorf("an end with no kind sent back %q", r)
+	}
+	if r := s.Act(ctx, nl.ActionPaths, "func"); r != "H-USAGE" {
+		t.Errorf("an argument with no arrow sent back %q", r)
 	}
 }

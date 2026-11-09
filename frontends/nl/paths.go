@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/panyam/jaala/datalog"
@@ -283,23 +284,63 @@ func evalText(ctx context.Context, b *datalog.Base, text string, limit int, eval
 	return datalog.SemiNaive{}.Eval(ctx, q, b, eval...)
 }
 
+// An EndsProblem says why ParseEnds refused a paths argument.
+type EndsProblem int
+
+const (
+	EndsNoArrow EndsProblem = iota + 1 // no " => " between the two ends
+	EndsNoKind                         // an end is blank, so it names no kind
+	EndsUnbound                        // an end's literals never mention ?x
+)
+
+// An EndsError is ParseEnds' refusal (#532). Its Error is jaala's own wording; a Session writes the
+// pack's instead (Prompts.PathsUsage, PathsNoKind, PathsUnbound), so a host can reword what a model
+// reads. Arg is the whole argument and Kind the end's kind, for EndsUnbound.
+type EndsError struct {
+	Problem   EndsProblem
+	Arg, Kind string
+}
+
+func (e *EndsError) Error() string {
+	switch e.Problem {
+	case EndsNoKind:
+		return fmt.Sprintf("paths: an end needs a kind first, in %q", e.Arg)
+	case EndsUnbound:
+		return fmt.Sprintf("paths: the literals after %s never mention ?x, the end's node, so nothing ties them to it; write them over ?x, as %s ?x = \"an id\"", e.Kind, e.Kind)
+	}
+	return pathsUsage
+}
+
+const pathsUsage = "paths takes FROM => TO, each a kind and literals over ?x, as func str.glob(?x, \"a/*\") => func ?x = \"b.F\""
+
+// prompt is the refusal as the pack words it.
+func (e *EndsError) prompt(pr Prompts) string {
+	switch e.Problem {
+	case EndsNoKind:
+		return fmt.Sprintf(pr.PathsNoKind, strconv.Quote(e.Arg))
+	case EndsUnbound:
+		return fmt.Sprintf(pr.PathsUnbound, e.Kind)
+	}
+	return pr.PathsUsage
+}
+
 // ParseEnds reads a paths action's argument, FROM => TO, each end a kind and then literals over ?x:
 // func str.glob(?x, "github.com/a/*") => func ?x = "github.com/b.F". An end with literals that
 // never mention ?x is refused: nothing would tie them to the end, and the join would run them
-// unbound (#530).
+// unbound (#530). Every refusal is an *EndsError.
 func ParseEnds(arg string) (from, to End, err error) {
 	a, b, ok := strings.Cut(arg, " => ")
 	if !ok {
-		return End{}, End{}, fmt.Errorf("paths takes FROM => TO, each a kind and literals over ?x, as func str.glob(?x, \"a/*\") => func ?x = \"b.F\"")
+		return End{}, End{}, &EndsError{Problem: EndsNoArrow, Arg: arg}
 	}
 	end := func(s string) (End, error) {
 		kind, where, _ := strings.Cut(strings.TrimSpace(s), " ")
 		if kind == "" {
-			return End{}, fmt.Errorf("paths: an end needs a kind first, in %q", arg)
+			return End{}, &EndsError{Problem: EndsNoKind, Arg: arg}
 		}
 		where = strings.TrimSpace(where)
 		if where != "" && !endVar.MatchString(where) {
-			return End{}, fmt.Errorf("paths: the literals after %s never mention ?x, the end's node, so nothing ties them to it; write them over ?x, as %s ?x = \"an id\"", kind, kind)
+			return End{}, &EndsError{Problem: EndsUnbound, Arg: arg, Kind: kind}
 		}
 		return End{Kind: kind, Where: where}, nil
 	}
@@ -318,6 +359,10 @@ func (s *Session) paths(ctx context.Context, arg string) string {
 		return "paths needs the pack's Shape and data to run on"
 	}
 	from, to, err := ParseEnds(arg)
+	var ee *EndsError
+	if errors.As(err, &ee) {
+		return ee.prompt(s.pr)
+	}
 	if err != nil {
 		return err.Error()
 	}

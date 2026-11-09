@@ -67,6 +67,13 @@ type Prompts struct {
 	ToolLook, ToolValues, ToolTry, ToolFind string
 	// ToolAdd and ToolDrop describe add and drop as tools, under Actions.Build.
 	ToolAdd, ToolDrop string
+	// PathsUsage is what a paths action sends back for an argument with no " => " (#532).
+	PathsUsage string
+	// PathsNoKind is what it sends back for an end with no kind. Placeholder: the argument, quoted.
+	PathsNoKind string
+	// PathsUnbound is what it sends back for an end whose literals never mention ?x (#530).
+	// Placeholder: the end's kind.
+	PathsUnbound string
 	// ToolPaths describes paths as a tool, when the pack has a Shape.
 	ToolPaths string
 	// Fix ends a refused draft's feedback. Placeholder: "program", or "query" under a front end.
@@ -114,6 +121,9 @@ func DefaultPrompts() Prompts {
 		Paths:         pathsInstruction,
 		PathsFound:    "These joins from %s to %s answered. Write your program from the one that fits the question, changing its columns as it asks:",
 		PathsNone:     "No join from %s to %s within %s links answered. Check each end's kind and literals with look and values.",
+		PathsUsage:    pathsUsage,
+		PathsNoKind:   "paths: an end needs a kind first, in %s",
+		PathsUnbound:  "paths: the literals after %[1]s never mention ?x, the end's node, so nothing ties them to it; write them over ?x, as %[1]s ?x = \"an id\"",
 		ToolPaths:     "The joins from one kind of node to another, each run on a few rows, so you can pick one rather than write it. ends is FROM => TO, each a kind then literals over ?x, such as func str.glob(?x, \"github.com/a/*\") => func ?x = \"github.com/b.F\".",
 		Dropped:       "Dropped %s. The body is now: %s",
 		DropNothing:   "The body is empty; there is nothing to drop.",
@@ -160,7 +170,7 @@ func (p *Pack) prompts() Prompts {
 	h := *p.Prompts
 	for _, f := range []struct{ host, def *string }{
 		{&h.Instructions, &d.Instructions}, {&h.Actions, &d.Actions}, {&h.Find, &d.Find},
-		{&h.Build, &d.Build}, {&h.Paths, &d.Paths}, {&h.PathsFound, &d.PathsFound}, {&h.PathsNone, &d.PathsNone}, {&h.ToolPaths, &d.ToolPaths}, {&h.Dropped, &d.Dropped}, {&h.DropNothing, &d.DropNothing}, {&h.NotAdded, &d.NotAdded},
+		{&h.Build, &d.Build}, {&h.Paths, &d.Paths}, {&h.PathsFound, &d.PathsFound}, {&h.PathsNone, &d.PathsNone}, {&h.PathsUsage, &d.PathsUsage}, {&h.PathsNoKind, &d.PathsNoKind}, {&h.PathsUnbound, &d.PathsUnbound}, {&h.ToolPaths, &d.ToolPaths}, {&h.Dropped, &d.Dropped}, {&h.DropNothing, &d.DropNothing}, {&h.NotAdded, &d.NotAdded},
 		{&h.ToolAdd, &d.ToolAdd}, {&h.ToolDrop, &d.ToolDrop},
 		{&h.AskedAgain, &d.AskedAgain}, {&h.LastLook, &d.LastLook}, {&h.TriedAgain, &d.TriedAgain},
 		{&h.LookFound, &d.LookFound}, {&h.LookNothing, &d.LookNothing}, {&h.Stuck, &d.Stuck}, {&h.DraftFirst, &d.DraftFirst}, {&h.ToolLook, &d.ToolLook},
@@ -187,7 +197,7 @@ func (t Prompts) templates() []struct {
 		name, text string
 		n          int
 	}{{"Actions", t.Actions, 2}, {"ToolValues", t.ToolValues, 1}, {"Fix", t.Fix, 1}, {"FixEmpty", t.FixEmpty, 1}, {"Reask", t.Reask, 4},
-		{"LookFound", t.LookFound, 1}, {"Stuck", t.Stuck, 1}, {"DraftFirst", t.DraftFirst, 3}, {"Dropped", t.Dropped, 2}, {"PathsFound", t.PathsFound, 2}, {"PathsNone", t.PathsNone, 3}, {"Without", t.Without, 2}}
+		{"LookFound", t.LookFound, 1}, {"Stuck", t.Stuck, 1}, {"DraftFirst", t.DraftFirst, 3}, {"Dropped", t.Dropped, 2}, {"PathsFound", t.PathsFound, 2}, {"PathsNone", t.PathsNone, 3}, {"PathsNoKind", t.PathsNoKind, 1}, {"PathsUnbound", t.PathsUnbound, 1}, {"Without", t.Without, 2}}
 }
 
 // checkTemplates refuses a template that drops one of its placeholders or reads one it isn't given:
