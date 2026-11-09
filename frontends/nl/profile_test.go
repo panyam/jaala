@@ -77,19 +77,24 @@ func TestProfileReadsEachSkillFromTheTries(t *testing.T) {
 	small := nl.Record{Model: "small", Summary: nl.Summary{Tally: nl.Tally{Pass: 2, Wrong: 1}, Tags: map[string]nl.Tally{"hop": {Pass: 1}},
 		Cost: nl.Cost{Dollars: 1, Seconds: 10}}, Cases: []nl.CaseRecord{
 		// a parse error, then a grounding miss, then an accepted draft reading the right relation
+		// "mit" offered up front and again by a find, used; "app" offered, not used
 		{Outcome: nl.OutcomePass, Program: "p", Reads: []string{"pkg"}, Relations: []string{"imports", "pkg"},
-			Tries: []nl.TryRecord{try(nl.ClassConstruct, nl.KindParse, "bad"), try(nl.ClassGrounding, nl.KindEmpty, "empty"), ok}},
+			Offered:   []nl.Candidate{{Name: "mit", Values: []string{"MIT"}}, {Name: "app", Values: []string{"app-1", "app-2"}}, {Name: "mit", Values: []string{"MIT-0"}}},
+			Constants: []string{"MIT-0", "api"},
+			Tries:     []nl.TryRecord{try(nl.ClassConstruct, nl.KindParse, "bad"), try(nl.ClassGrounding, nl.KindEmpty, "empty"), ok}},
 		// right first time, reading the wrong relation
 		{Outcome: nl.OutcomePass, Program: "p", Reads: []string{"pkg"}, Relations: []string{"imports"}, Tries: []nl.TryRecord{ok}},
 		// a model failure first: no syntax, and no repair after it; then a harness repair, which isn't the model's
-		{Outcome: nl.OutcomeWrong, Tries: []nl.TryRecord{try(nl.ClassModel, nl.KindModel, "down"), try(nl.ClassSemantics, nl.KindAnswer, "no"), {Model: "m", Repair: "mit"}}},
+		// offered, but no accepted program: not a grounding case
+		{Outcome: nl.OutcomeWrong, Offered: []nl.Candidate{{Name: "x", Values: []string{"x1"}}}, Tries: []nl.TryRecord{try(nl.ClassModel, nl.KindModel, "down"), try(nl.ClassSemantics, nl.KindAnswer, "no"), {Model: "m", Repair: "mit"}}},
 	}}
 	more := nl.Record{Model: "small", Summary: nl.Summary{Tally: nl.Tally{Abstain: 2}, Tags: map[string]nl.Tally{"hop": {Abstain: 1}}, Cost: nl.Cost{Dollars: 1, Seconds: 10}},
 		Cases: []nl.CaseRecord{
 			{Outcome: nl.OutcomeAbstain, WouldPass: &no, Tries: []nl.TryRecord{try(nl.ClassGrounding, nl.KindEmpty, "empty")}},
 			{Outcome: nl.OutcomeAbstain, WouldPass: &yes, Tries: []nl.TryRecord{try(nl.ClassConstruct, nl.KindParse, "bad"), try("", nl.KindRepeat, "again")}},
 			{Outcome: nl.OutcomeAbstain, WouldPass: &no},
-			{Outcome: nl.OutcomePass, Program: "p", Relations: []string{"pkg"}}, // no Reads: not a schema case
+			// no Reads: not a schema case; a name offered nothing isn't a grounding case
+			{Outcome: nl.OutcomePass, Program: "p", Relations: []string{"pkg"}, Offered: []nl.Candidate{{Name: "lib", Values: []string{"lib"}}, {Name: "none"}}, Constants: []string{"lib"}},
 		}}
 	big := nl.Record{Model: "big", Summary: nl.Summary{Tally: nl.Tally{Pass: 1}}}
 	ps := nl.Profile([]nl.Record{small, big, more}, nl.Prices{"small": {In: 0.5}})
@@ -97,10 +102,11 @@ func TestProfileReadsEachSkillFromTheTries(t *testing.T) {
 		t.Fatalf("profiles %+v", ps)
 	}
 	p := ps[1]
-	got := map[string]nl.Rate{"syntax": p.Syntax, "grounding": p.Grounding, "schema": p.Schema, "repair": p.Repair, "calibration": p.Calibration}
+	got := map[string]nl.Rate{"syntax": p.Syntax, "grounding": p.Grounding, "matched": p.Matched, "schema": p.Schema, "repair": p.Repair, "calibration": p.Calibration}
 	want := map[string]nl.Rate{
 		"syntax":      {Hit: 2, Of: 4}, // the model failure's case is left out
-		"grounding":   {Hit: 2, Of: 4}, // the first try that ran; the last case never ran one
+		"grounding":   {Hit: 2, Of: 3}, // per name: mit (as MIT-0) and lib used, app not
+		"matched":     {Hit: 2, Of: 4}, // the first try that ran; the last case never ran one
 		"schema":      {Hit: 1, Of: 2},
 		"repair":      {Hit: 1, Of: 4}, // parse→grounding, grounding→ok, semantics→harness repair, parse→repeat
 		"calibration": {Hit: 2, Of: 3},
@@ -117,7 +123,7 @@ func TestProfileTablePutsThePriceBesideTheSkills(t *testing.T) {
 	ps := []nl.ModelProfile{
 		{Model: "small", Price: nl.Price{In: 0.5, Cached: 0.05, Out: 2}, Priced: true,
 			Summary: nl.Summary{Tally: nl.Tally{Pass: 2, Wrong: 1}, Tags: map[string]nl.Tally{"join": {Wrong: 1}, "hop": {Pass: 2}}, Cost: nl.Cost{Dollars: 1, Seconds: 30}},
-			Syntax:  nl.Rate{Hit: 2, Of: 3}, Repair: nl.Rate{Hit: 1, Of: 1}},
+			Syntax:  nl.Rate{Hit: 2, Of: 3}, Grounding: nl.Rate{Hit: 1, Of: 2}, Repair: nl.Rate{Hit: 1, Of: 1}},
 		{Model: "big", Summary: nl.Summary{Tally: nl.Tally{Pass: 1}, Cost: nl.Cost{Dollars: 1, Seconds: 4, Unpriced: []string{"big"}}}},
 	}
 	var b strings.Builder
@@ -126,13 +132,40 @@ func TestProfileTablePutsThePriceBesideTheSkills(t *testing.T) {
 	}
 	lines := strings.Split(strings.TrimSpace(b.String()), "\n")
 	want := []string{
-		"| small | 0.5 | 0.05 | 2 | 2 | 1 | 0 | 3 | 0.5000 | 15.0 | 2/3 |  |  | 1/1 |  | hop 2/0/0; join 0/1/0 |",
-		"| big |  |  |  | 1 | 0 | 0 | 1 | 1.0000+ | 4.0 |  |  |  |  |  |  |",
+		"| small | 0.5 | 0.05 | 2 | 2 | 1 | 0 | 3 | 0.5000 | 15.0 | 2/3 | 1/2 |  |  | 1/1 |  | hop 2/0/0; join 0/1/0 |",
+		"| big |  |  |  | 1 | 0 | 0 | 1 | 1.0000+ | 4.0 |  |  |  |  |  |  |  |",
 	}
 	if len(lines) != 4 || !reflect.DeepEqual(lines[2:], want) {
 		t.Errorf("table\n%s\nwant rows\n%s", b.String(), strings.Join(want, "\n"))
 	}
 	if err := nl.ProfileTable(&b, nil, "xml"); err == nil {
 		t.Error("an unknown format writes nothing and no error")
+	}
+}
+
+// Constants reads every constant the accepted program writes, in atoms, comparisons, expressions,
+// rule heads and braces, and leaves out variables and absent.
+func TestConstantsAreWhatTheProgramWrites(t *testing.T) {
+	q := datalog.MustParse(`lic(?p, "tag") :- pkg(?p, "MIT"); lic(?p, ?t), "left" != ?t, not dep(?p, "old"), ?n = count(?d) : { dep(?p, ?d), ?d != "x" }, ?w = ?n * 2, optional { attr(?p, "k", ?v) } => ?p`)
+	got := nl.Result{Program: nl.Program{Query: q}}.Constants()
+	if want := []string{"2", "MIT", "k", "left", "old", "tag", "x"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("constants %v, want %v", got, want)
+	}
+	if c := (nl.Result{}).Constants(); c != nil {
+		t.Errorf("control: no program has constants %v", c)
+	}
+}
+
+// A record keeps what the Grounder offered and the constants the accepted program wrote, which
+// grounding compares.
+func TestARecordKeepsWhatWasOfferedAndWhatWasWritten(t *testing.T) {
+	offered := []nl.Candidate{{Name: "mit", Values: []string{"MIT"}}}
+	r := nl.Result{Case: nl.Case{Name: "c"}, Program: nl.Program{Text: "p", Query: datalog.MustParse(`pkg(?p, "MIT") => ?p`)}, Trace: nl.Trace{Offered: offered}}
+	c := nl.NewRecord(nl.Report{Cases: []nl.Result{r}}, nil).Cases[0]
+	if !reflect.DeepEqual(c.Offered, offered) || !reflect.DeepEqual(c.Constants, []string{"MIT"}) {
+		t.Errorf("record offered %+v, constants %v", c.Offered, c.Constants)
+	}
+	if p := nl.Profile([]nl.Record{{Model: "m", Cases: []nl.CaseRecord{c}}}, nil); p[0].Grounding != (nl.Rate{Hit: 1, Of: 1}) {
+		t.Errorf("control: the record's own fields ground: %+v", p[0].Grounding)
 	}
 }

@@ -82,6 +82,15 @@ var errLowAgreement = errors.New("the drafts agreed too little on an answer")
 // conversation starts from (Conversation.Handoff).
 func (t *Translator) run(ctx context.Context, question string, o nl.Options, roles []*role, handoff *nl.Try) (nl.Program, nl.Trace, error) {
 	l := &loop{t: t, o: o, start: time.Now()}
+	p, tr, err := t.runIn(ctx, l, question, o, roles, handoff)
+	if l.session != nil {
+		tr.Offered = l.session.Offered()
+	}
+	return p, tr, err
+}
+
+// runIn is run's body over l, which keeps the question's Session for run to read what it offered.
+func (t *Translator) runIn(ctx context.Context, l *loop, question string, o nl.Options, roles []*role, handoff *nl.Try) (nl.Program, nl.Trace, error) {
 	if o.Budget.Tokens > 0 || o.Budget.Calls > 0 {
 		ctx = agent.WithTreeBudget(ctx, agent.TreeBudget{MaxTokens: o.Budget.Tokens, MaxSteps: o.Budget.Calls})
 	}
@@ -95,6 +104,7 @@ func (t *Translator) run(ctx context.Context, question string, o nl.Options, rol
 	if err != nil {
 		return nl.Program{}, l.tr, err
 	}
+	l.session = s
 	first := roles[0]
 	var last error
 	var held *nl.Program // an answer escalated past, kept in case nothing better comes
@@ -194,13 +204,14 @@ var errTurnOver = errors.New("translator: the turn ended without an answer")
 
 // A loop is one question's run: the trace it builds and what it has spent.
 type loop struct {
-	t      *Translator
-	o      nl.Options      // the question's options
-	parent context.Context // the caller's context, under the token budget but not the time one
-	start  time.Time
-	mu     sync.Mutex // tools may run concurrently with each other
-	tr     nl.Trace
-	stop   error // why the last turn ended without an answer
+	t       *Translator
+	o       nl.Options      // the question's options
+	parent  context.Context // the caller's context, under the token budget but not the time one
+	start   time.Time
+	mu      sync.Mutex // tools may run concurrently with each other
+	tr      nl.Trace
+	stop    error       // why the last turn ended without an answer
+	session *nl.Session // the question's Session, once made
 
 	shown *agent.Message // the preview block the retrieval stage put before the question, nil for none
 

@@ -112,6 +112,9 @@ type Trace struct {
 	// Tier is the tier that answered under Options.Tiers (TierLocal, TierFrontier), "" when none did
 	// or no tiers were set.
 	Tier string
+	// Offered are the values the Grounder offered for the question's names (Session.Offered): what
+	// grounding found before any model was asked, then what each find action found.
+	Offered []Candidate
 }
 
 // A Try is one draft: the model, its text, why it was refused (nil and "" when accepted), what it cost

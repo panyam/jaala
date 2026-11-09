@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -216,10 +217,17 @@ func TestFindAsksTheGrounder(t *testing.T) {
 	if !slices.Contains(m.offered[0], nl.ActionFind) {
 		t.Errorf("find wasn't offered: %v", m.offered[0])
 	}
+	// the trace keeps what was offered: the question's grounding, then the find's
+	if want := []nl.Candidate{{Name: mitQ, Values: []string{"MIT"}}, {Name: "mit license", Values: []string{"MIT"}}}; !reflect.DeepEqual(tr.Offered, want) {
+		t.Errorf("offered %+v, want %+v", tr.Offered, want)
+	}
 	blind := model("small", "find mit license", mit)
 	_, tr, _ = translate(context.Background(), mitQ, v, nil, blind, nl.Options{Base: b, Actions: &nl.Actions{}})
 	if slices.Contains(blind.offered[0], nl.ActionFind) || len(tr.Steps) != 0 || tr.Tries[0].Kind != nl.KindParse {
 		t.Errorf("control: without a finder, offered %v, steps %+v, tries %+v", blind.offered[0], tr.Steps, tr.Tries)
+	}
+	if tr.Offered != nil {
+		t.Errorf("control: without a finder, the trace says %+v was offered", tr.Offered)
 	}
 }
 
