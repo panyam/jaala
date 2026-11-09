@@ -123,6 +123,9 @@ type Try struct {
 	Kind                              string
 	TokensIn, TokensOut, TokensCached int
 	Latency                           time.Duration
+	// Calls is how many model calls the try's tokens came from: its reply's, and a guided call that
+	// rewrote it. A loop that leaves it 0 has a try with tokens counted as one call (Cost).
+	Calls int
 	// Report is what evaluating the draft over Options.Base did (datalog.Explain), when it was
 	// evaluated: its work per rule and literal, and for an empty answer, Report.Empty.
 	Report *datalog.Report

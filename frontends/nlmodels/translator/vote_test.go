@@ -79,6 +79,11 @@ func TestAVoteKeepsTheRowsMostDraftsAgreeOn(t *testing.T) {
 		if len(tr.Tries) != 1 || len(tr.Votes) != c.drafts-1 || len(m.asked) != c.drafts {
 			t.Errorf("%s: %d tries, %d votes, %d asked", c.name, len(tr.Tries), len(tr.Votes), len(m.asked))
 		}
+		for i, d := range tr.Votes {
+			if d.Calls != 1 {
+				t.Errorf("%s: vote %d counts %d calls, want its one draw", c.name, i, d.Calls)
+			}
+		}
 		for i, q := range m.asked {
 			if q.Draw != i || q.Grammar != m.asked[0].Grammar {
 				t.Errorf("%s: ask %d had Draw %d", c.name, i, q.Draw)
