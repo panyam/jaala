@@ -240,6 +240,9 @@ type EmptyAnswer struct {
 	Why *datalog.EmptyReport // nil when every literal passed something on
 	// Hint is the Pack's Hint for Why: what the data holds where it matched nothing, "" for none.
 	Hint string
+	// Without is what the rest of the goal gives the culprit's variables when the culprit is left
+	// out (withoutCulprit), "" when it couldn't be run or gave nothing.
+	Without string
 }
 
 func (e *EmptyAnswer) Error() string {
@@ -249,6 +252,9 @@ func (e *EmptyAnswer) Error() string {
 	s := errEmpty.Error() + ":\n" + e.Why.String()
 	if e.Hint != "" {
 		s += "\n" + strings.TrimRight(e.Hint, "\n")
+	}
+	if e.Without != "" {
+		s += "\n" + e.Without
 	}
 	return s
 }
@@ -309,7 +315,8 @@ func check(ctx context.Context, try Try, v *ns.Vocabulary, o Options, limit int)
 		return refuse(err, kindOf(err, KindEval))
 	}
 	if len(rows) == 0 {
-		return refuse(&EmptyAnswer{Why: try.Report.Empty, Hint: hintFor(ctx, o.Pack, try.Report.Empty)}, KindEmpty)
+		why := try.Report.Empty
+		return refuse(&EmptyAnswer{Why: why, Hint: hintFor(ctx, o.Pack, why), Without: withoutCulprit(ctx, q, why, o)}, KindEmpty)
 	}
 	prog.Rows = rows
 	return judged(ctx, try, prog, o)

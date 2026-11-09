@@ -106,7 +106,10 @@ GOARCH=wasm go test ./ns` (#417 ran `ns` that way).
   own rule it likely means (`localFix`, #341, at `Validate` and `evaluate`, since the vocabulary's
   suggestion can't see the rules). The translator's tests script the model (`scripted`), so tries are exact.
   A draft run over the Base keeps its `datalog.Report` (`Try.Report`), and an empty answer's error
-  is an `EmptyAnswer` carrying `Report.Empty`, whose text goes back to the model (#343);
+  is an `EmptyAnswer` carrying `Report.Empty`, whose text goes back to the model (#343), with
+  `Without` (`without.go`): the goal rerun without the culprit (or first an equality to a constant over
+  its variables, which #370 folded into the atom named) selecting the variables it shares with the rest,
+  none the rest pins to a constant, up to five rows, goal literals only and never under a FrontEnd;
   `nl.Report.Costliest` ranks drafts by work, and its work column shows only when one was evaluated.
   A host's domain is an `nl.Pack` (`Options.Pack`, #344): `About`, `Card`, `Examples` (checked by
   `Pack.Validate` before any model is asked), a `Grounder` used when the translator's is nil, and a `Check`
