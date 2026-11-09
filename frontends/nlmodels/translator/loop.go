@@ -120,8 +120,53 @@ func (t *Translator) run(ctx context.Context, question string, o nl.Options, rol
 			held = &p
 		}
 	}
+	// accept votes on p, the answer of r's turn in s, and reports whether it ends the question: an
+	// answer the vote disputes while another model is left is held and escalated past.
+	accept := func(s *nl.Session, r *role, history []agent.Message, p nl.Program, steps int, more bool) (nl.Program, bool, error) {
+		p.Confidence = nl.Confidence{Drawn: 1, Agreed: 1, Ran: o.Base != nil, Judged: o.Pack != nil && o.Pack.Check != nil, Steps: steps}
+		if o.Vote != nil {
+			var err error
+			if p, err = l.vote(ctx, s, r, history, p); err != nil {
+				return nl.Program{}, true, err
+			}
+		}
+		if o.Escalate > 0 && p.Confidence.Agreement() < o.Escalate && more {
+			l.tr.Escalations = append(l.tr.Escalations, nl.Escalation{Model: r.label, Text: p.Text, Confidence: p.Confidence})
+			if held == nil {
+				held = &p
+			}
+			last = errLowAgreement
+			return p, false, nil
+		}
+		return p, true, nil
+	}
+	var draft *nl.Try // the one-shot draft a DraftFirst turn starts from, when it was refused
+	if o.Actions != nil && o.Actions.DraftFirst {
+		one := o
+		one.Actions, one.MaxTries = nil, 1
+		os, err := nl.NewSession(ctx, question, t.v, t.grounder, one)
+		if err != nil {
+			return nl.Program{}, l.tr, err
+		}
+		n := len(l.tr.Tries)
+		p, history, err := l.turn(ctx, os, os.NewConversation(nil, false), first)
+		switch {
+		case err == nil:
+			if p, done, err := accept(os, first, history, p, 0, true); done {
+				return p, l.tr, err
+			}
+		case !errors.Is(err, errTurnOver):
+			return nl.Program{}, l.tr, err
+		case len(l.tr.Tries) > n:
+			d := l.tr.Tries[len(l.tr.Tries)-1]
+			draft = &d
+		}
+	}
 	for k, r := range roles {
 		c := s.NewConversation(last, k == len(roles)-1)
+		if k == 0 && draft != nil {
+			c.From(*draft)
+		}
 		p, history, err := l.turn(ctx, s, c, r)
 		if err != nil {
 			if !errors.Is(err, errTurnOver) {
@@ -130,21 +175,9 @@ func (t *Translator) run(ctx context.Context, question string, o nl.Options, rol
 			last = l.stop
 			continue
 		}
-		p.Confidence = nl.Confidence{Drawn: 1, Agreed: 1, Ran: o.Base != nil, Judged: o.Pack != nil && o.Pack.Check != nil, Steps: c.Steps()}
-		if o.Vote != nil {
-			if p, err = l.vote(ctx, s, r, history, p); err != nil {
-				return nl.Program{}, l.tr, err
-			}
+		if p, done, err := accept(s, r, history, p, c.Steps(), k < len(roles)-1); done {
+			return p, l.tr, err
 		}
-		if o.Escalate > 0 && p.Confidence.Agreement() < o.Escalate && k < len(roles)-1 {
-			l.tr.Escalations = append(l.tr.Escalations, nl.Escalation{Model: r.label, Text: p.Text, Confidence: p.Confidence})
-			if held == nil {
-				held = &p
-			}
-			last = errLowAgreement
-			continue
-		}
-		return p, l.tr, nil
 	}
 	if held != nil {
 		return *held, l.tr, nil

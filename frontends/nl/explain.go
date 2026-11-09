@@ -11,14 +11,15 @@ import (
 
 // Explain writes err, from parsing, validating or evaluating the program text, as a model reads it
 // to fix the program: the message, then the line it points at with a caret under the place, then the
-// fix when the engine knows one. An error Locate can't place in text keeps just its message and fix.
+// fix when the engine knows one. An error Locate can't place in text keeps just its message and fix,
+// as does one placed past text's end, which came from other text (#530).
 func Explain(text string, err error) string {
 	if err == nil {
 		return ""
 	}
 	var b strings.Builder
 	b.WriteString(err.Error())
-	if pos, ok := datalog.Locate(text, err); ok {
+	if pos, ok := datalog.Locate(text, err); ok && pos.Offset >= 0 && pos.Offset <= len(text) {
 		start := strings.LastIndexByte(text[:pos.Offset], '\n') + 1
 		end := strings.IndexByte(text[pos.Offset:], '\n')
 		if end < 0 {

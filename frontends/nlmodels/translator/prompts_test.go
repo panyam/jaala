@@ -24,6 +24,7 @@ func hostPrompts() *nl.Prompts {
 		LookFound:            "H-LOOKFOUND %s",
 		LookNothing:          "H-LOOKNOTHING",
 		Stuck:                "H-STUCK %s",
+		DraftFirst:           "H-DRAFTFIRST %[3]s|%[1]s|%[2]s",
 		ToolLook:             "H-TOOLLOOK",
 		ToolValues:           "H-TOOLVALUES %s",
 		ToolTry:              "H-TOOLTRY",
@@ -165,6 +166,9 @@ func TestAPacksPromptsReplaceJaalasText(t *testing.T) {
 			return want(m.asked[0].Prefix, "H-PICK\n") + absent(m.asked[0].Prefix, "# Answer the question with one call") +
 				want(m.asked[1].Turns[2].Text, "\n\nH-PICKRETRY")
 		}},
+		{"a refused draft first", nl.Options{Base: b, Actions: &nl.Actions{DraftFirst: true}}, nil, []string{`nope(?a) => ?a`, `edge("a", ?b) => ?b`}, func(m *scripted, _ nl.Trace) string {
+			return want(m.asked[1].Turns[0].Text, "q\n\nH-DRAFTFIRST program|nope(?a) => ?a|query: unknown relation")
+		}},
 		{"the compact turn", nl.Options{Base: b, Actions: &nl.Actions{Steps: 2, Compact: true}}, nil, []string{"look edge", `edge("zz", ?b) => ?b`, `edge("a", ?b) => ?b`}, func(m *scripted, _ nl.Trace) string {
 			return want(m.asked[2].Turns[0].Text, "\n\nH-FOUND\n", "\n\nH-REFUSED\n")
 		}},
@@ -212,6 +216,7 @@ func TestAPacksPromptTemplatesKeepTheirPlaceholders(t *testing.T) {
 		{nl.Prompts{Reask: "%[5]s"}, "prompt Reask isn't a template of 4 placeholders"},
 		{nl.Prompts{LookFound: "Nothing here."}, "prompt LookFound isn't a template of 1 placeholders"},
 		{nl.Prompts{Stuck: "Stop."}, "prompt Stuck isn't a template of 1 placeholders"},
+		{nl.Prompts{DraftFirst: "%[1]s %[2]s"}, "prompt DraftFirst leaves out placeholder 3 of 3"},
 	} {
 		pack := &nl.Pack{Prompts: &c.pr}
 		if err := pack.Validate(v); err == nil || !strings.Contains(err.Error(), c.want) {

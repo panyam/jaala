@@ -241,6 +241,31 @@ func (s *Session) NewConversation(after error, last bool) *Conversation {
 	return c
 }
 
+// From starts the conversation from draft, a reply another Session's conversation refused: the
+// one-shot draft of Actions.DraftFirst (#521). The draft counts as refused here too, so the model
+// sending it again is a repeat, and Ask carries it with its refusal (Prompts.DraftFirst). It counts
+// no try: the loop keeps all of its own. A draft with no error, or whose model failed, is ignored.
+func (c *Conversation) From(draft Try) {
+	if draft.Err == nil || draft.Text == "" || draft.Kind == KindModel {
+		return
+	}
+	s := c.s
+	told := Explain(draft.Text, draft.Err)
+	if draft.explain != nil {
+		told = draft.explain(draft.Err)
+	}
+	told = strings.TrimRight(told, "\n")
+	what := "program"
+	if s.o.FrontEnd != nil {
+		what = "query"
+	}
+	c.refused[draft.Text] = draft.Err
+	c.why[draft.Text] = told
+	s.mem.add(true, fact(draft.Text, "refused ("+draft.Kind+"): "+strings.Join(strings.Fields(told), " ")))
+	s.mem.last = draft.Text + "\n" + told
+	c.ask += "\n\n" + fmt.Sprintf(s.pr.DraftFirst, draft.Text, told, what)
+}
+
 // Ask is the conversation's first message: the session's, and after an empty answer ended the last
 // model's turn, a line saying so.
 func (c *Conversation) Ask() string { return c.ask }

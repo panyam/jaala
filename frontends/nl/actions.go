@@ -51,6 +51,14 @@ type Actions struct {
 	// translator does on a chakra Runner (#496), rather than reading them from a reply: the prefix
 	// leaves out Prompts.Actions, and ActionGrammar is Grammar.
 	AsTools bool
+	// DraftFirst has the first model draft once without the actions, as it would one-shot, before its
+	// turn with them (#521). A draft that passes is the answer, as one-shot's would be. A refused one
+	// starts the turn: the conversation holds it as refused, so sending it again is a repeat, and the
+	// first message carries it with its refusal (Prompts.DraftFirst). On a small model the actions'
+	// prompt made the first draft worse than one-shot's, so the loop lost passes one-shot made; this
+	// way it can only add them. The draft costs one model call, and the one-shot Session grounds
+	// the question again. Conversation.From is the hook a host's own loop uses.
+	DraftFirst bool
 }
 
 // A Prober is a FrontEnd's side of Actions: look and values in its language. A front end that isn't
