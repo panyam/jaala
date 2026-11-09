@@ -30,6 +30,9 @@ type Session struct {
 	pick                                bool
 
 	built      []string // the body of the last conversation to answer, for a vote's tail-only draws (Build)
+	links      []Link   // Pack.Links, or KindGraph's once read (linksRead)
+	linksRead  bool
+	linksErr   error
 	question   string   // as the host asked it, for Pack.Preview
 	previewed  bool     // Preview has read the targets
 	preview    []Sample // what Preview read
@@ -85,7 +88,7 @@ func NewSession(ctx context.Context, question string, v *ns.Vocabulary, g Ground
 	}
 	s.grammar, s.textGrammar, s.finalGrammar = s.answerGrammar, s.answerGrammar, s.answerGrammar
 	if o.Actions != nil && s.answerGrammar != "" {
-		s.textGrammar = actionGrammar(s.answerGrammar, g != nil, o.Actions.builds(o.FrontEnd))
+		s.textGrammar = actionGrammar(s.answerGrammar, g != nil, o.Actions.builds(o.FrontEnd), o.offersPaths())
 		s.finalGrammar = finalGrammar(s.answerGrammar)
 	}
 	if o.Actions.replies() {
@@ -168,6 +171,9 @@ func (s *Session) MaxSteps() int {
 // can be repaired. A bad argument is answered in the text, never as an error, since the model reads
 // it. It needs Options.Actions.
 func (s *Session) Act(ctx context.Context, action, arg string) string {
+	if action == ActionPaths {
+		return s.paths(ctx, arg)
+	}
 	result, seen := act(ctx, action, arg, s.v, s.o)
 	s.mem.see(seen)
 	return result
@@ -436,6 +442,9 @@ func (s *Session) Tools() []Tool {
 	}
 	if s.o.Actions.builds(s.o.FrontEnd) {
 		ts = append(ts, Tool{ActionAdd, "literal", s.pr.ToolAdd}, Tool{ActionDrop, "", s.pr.ToolDrop})
+	}
+	if s.o.offersPaths() {
+		ts = append(ts, Tool{ActionPaths, "ends", s.pr.ToolPaths})
 	}
 	return ts
 }

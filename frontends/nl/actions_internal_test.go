@@ -25,7 +25,7 @@ func testActionGrammar(t *testing.T, find bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	g := mustGBNF(t, actionGrammar(grammar, find, false))
+	g := mustGBNF(t, actionGrammar(grammar, find, false, false))
 	rules, err := vocabRules(grammarVocabulary(t), grammarOpts{})
 	if err != nil {
 		t.Fatal(err)
@@ -101,8 +101,8 @@ func TestEveryBuildReplyReadsAsItsAction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	g := mustGBNF(t, actionGrammar(buildGrammar(grammar), false, true))
-	plain := mustGBNF(t, actionGrammar(grammar, false, false))
+	g := mustGBNF(t, actionGrammar(buildGrammar(grammar), false, true, false))
+	plain := mustGBNF(t, actionGrammar(grammar, false, false, false))
 	rules, err := vocabRules(grammarVocabulary(t), grammarOpts{})
 	if err != nil {
 		t.Fatal(err)
@@ -139,6 +139,40 @@ func TestEveryBuildReplyReadsAsItsAction(t *testing.T) {
 		t.Errorf("drop: accepted %v (%v without Build), read as %q", g.Accepts("drop"), plain.Accepts("drop"), action)
 	}
 	for _, reply := range []string{"add ", "drop it", "add pkg(?p, ?l)\npkg(?q, ?l)"} {
+		if g.Accepts(reply) {
+			t.Errorf("the grammar accepts %q", reply)
+		}
+	}
+}
+
+// With a Shape the actions' grammar takes paths with two ends, each a kind and any literals the draft
+// grammar writes, and each reads as paths with its ends. control: without paths it refuses them.
+func TestEveryPathsReplyReadsAsItsAction(t *testing.T) {
+	grammar, err := GrammarFor(grammarVocabulary(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := mustGBNF(t, actionGrammar(grammar, false, false, true))
+	plain := mustGBNF(t, actionGrammar(grammar, false, false, false))
+	rules, err := vocabRules(grammarVocabulary(t), grammarOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := gbnf.NewSampler(table(rules), 5, 4)
+	for i := 0; i < 200; i++ {
+		ends := "func " + s.Sample("literal") + " => callsite"
+		if i%2 == 0 {
+			ends = "func => test_case " + s.Sample("literal") + ", " + s.Sample("literal")
+		}
+		reply := "paths " + ends
+		if action, arg, ok := readAction(reply); !g.Accepts(reply) || !ok || action != ActionPaths || arg != ends {
+			t.Fatalf("%q: accepted %v, read as %q %q", reply, g.Accepts(reply), action, arg)
+		}
+		if plain.Accepts(reply) {
+			t.Fatalf("control: without paths the grammar accepts %q", reply)
+		}
+	}
+	for _, reply := range []string{"paths func", "paths => func", "paths func =>"} {
 		if g.Accepts(reply) {
 			t.Errorf("the grammar accepts %q", reply)
 		}

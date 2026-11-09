@@ -130,7 +130,7 @@ func (p *provider) call(ctx context.Context, req agent.ProviderRequest) (agent.S
 	u := &agent.Usage{InputTokens: c.TokensIn, OutputTokens: c.TokensOut, CachedInputTokens: c.TokensCached}
 	if len(req.Tools) > 0 {
 		if name, arg, ok := TextAction(c.Text); ok && slices.Contains(offered, name) {
-			key := map[string]string{nl.ActionLook: "name", nl.ActionFind: "name", nl.ActionValues: "target", nl.ActionTry: "draft", nl.ActionAdd: "literal"}[name]
+			key := map[string]string{nl.ActionLook: "name", nl.ActionFind: "name", nl.ActionValues: "target", nl.ActionTry: "draft", nl.ActionAdd: "literal", nl.ActionPaths: "ends"}[name]
 			args := map[string]string{}
 			if key != "" {
 				args[key] = arg
@@ -190,6 +190,8 @@ func TextAction(r string) (action, arg string, ok bool) {
 		return word, strings.TrimSpace(inline), rest == "" && strings.TrimSpace(inline) != ""
 	case nl.ActionDrop:
 		return word, "", rest == "" && strings.TrimSpace(inline) == ""
+	case nl.ActionPaths:
+		return word, strings.TrimSpace(inline), rest == "" && strings.Contains(inline, " => ")
 	case nl.ActionTry:
 		d := strings.TrimSpace(strings.TrimSpace(inline) + "\n" + rest)
 		return word, d, d != ""

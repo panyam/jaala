@@ -512,6 +512,9 @@ type (
 	literalArg struct {
 		Literal string `json:"literal"`
 	}
+	endsArg struct {
+		Ends string `json:"ends"`
+	}
 )
 
 // tools are the session's actions as chakra tools, each a Step in the Trace.
@@ -536,6 +539,10 @@ func (l *loop) tools(ts []nl.Tool, c *nl.Conversation, r *role) agent.ToolSource
 		case nl.ActionTry:
 			err = agent.AddFunc(src, t.Action, t.Description, func(ctx context.Context, in draftArg) (string, error) {
 				return act(ctx, nl.ActionTry, in.Draft)
+			}, agent.ReadOnly())
+		case nl.ActionPaths:
+			err = agent.AddFunc(src, t.Action, t.Description, func(ctx context.Context, in endsArg) (string, error) {
+				return act(ctx, nl.ActionPaths, in.Ends)
 			}, agent.ReadOnly())
 		case nl.ActionAdd:
 			// add and drop change the body, so they aren't read-only: a step's calls run in order

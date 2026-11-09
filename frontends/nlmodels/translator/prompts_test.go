@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/panyam/jaala/frontends/nl"
+	"github.com/panyam/jaala/internal/guide"
 )
 
 // hostPrompts replaces every Prompts field with a marker naming it, templates keeping their
@@ -45,6 +46,10 @@ func hostPrompts() *nl.Prompts {
 		LedgerFound:          "H-LEDGERFOUND",
 		LedgerTried:          "H-LEDGERTRIED",
 		LedgerHeader:         "H-LEDGERHEADER",
+		Paths:                "H-PATHS\n",
+		PathsFound:           "H-FOUNDPATHS %s|%s",
+		PathsNone:            "H-NOPATHS %s|%s|%s",
+		ToolPaths:            "H-TOOLPATHS",
 		Without:              "H-WITHOUT %[2]s|%[1]s",
 		Extract:              "\nH-EXTRACT\n",
 		ExtractFix:           "H-EXTRACTFIX",
@@ -245,5 +250,30 @@ func TestAPacksPromptsReplaceExtractsText(t *testing.T) {
 	}
 	if msg := want(m.asked[0].Prefix, "\nH-EXTRACT\n") + absent(m.asked[0].Prefix, "# Write the facts the text states") + want(m.asked[1].Turns[2].Text, "\n\nH-EXTRACTFIX"); msg != "" {
 		t.Error(msg)
+	}
+}
+
+// A host's paths text replaces jaala's: the tool's description, the head over the joins found, and
+// what goes back when none answered. control: jaala's own text has none of it.
+func TestAPacksPathsPromptsReplaceJaalasText(t *testing.T) {
+	b := guide.Code(t)
+	shape := nl.Shape{Kinds: "node", Edges: []string{"calls", "contains"}, Refs: []nl.Ref{{Relation: "attr", Key: "callee"}}}
+	replies := []string{`paths func str.glob(?x, "goapp/*") => func str.glob(?x, "oneauth/*")`, `paths func ?x = "nope" => func`, `node(?f, "func") => ?f`}
+	for _, host := range []bool{true, false} {
+		pack := &nl.Pack{Shape: &shape}
+		if host {
+			pack.Prompts = hostPrompts()
+		}
+		m := model("small", replies...)
+		_, tr, err := translate(context.Background(), "q", b.Vocabulary(), nil, m, nl.Options{Base: b, Pack: pack, Actions: &nl.Actions{}})
+		if err != nil || len(tr.Steps) != 2 {
+			t.Fatalf("host %v: %v, steps %+v", host, err, tr.Steps)
+		}
+		got := m.descs[nl.ActionPaths] == "H-TOOLPATHS" &&
+			strings.HasPrefix(tr.Steps[0].Result, `H-FOUNDPATHS func str.glob(?x, "goapp/*")|func str.glob(?x, "oneauth/*")`) &&
+			tr.Steps[1].Result == `H-NOPATHS func ?x = "nope"|func|3`
+		if got != host {
+			t.Errorf("host %v: tool %q, steps %q and %q", host, m.descs[nl.ActionPaths], tr.Steps[0].Result, tr.Steps[1].Result)
+		}
 	}
 }

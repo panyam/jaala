@@ -99,7 +99,8 @@ type Path struct {
 }
 
 // Paths finds the joins from one End to the other over links (KindGraph's), runs each, and returns
-// those that answered, shortest first (#514 piece 5). A small model picks among them rather than
+// those that answered, shortest first (#514 piece 5). A path whose first rows are a shorter one's
+// is left out: a plain hop and its closure often answer alike. A small model picks among them rather than
 // writing the join. A link can be walked either way, and a link from a kind to itself can be walked
 // as a closure (graph.closure, up to Depth steps), so calls* reaches a test's callee's callee. Each
 // node on a path is held to its kind, and a path visits a kind once, apart from its closures. err
@@ -119,6 +120,7 @@ func Paths(ctx context.Context, b *datalog.Base, shape Shape, links []Link, from
 	}
 	var found []Path
 	var firstErr error
+	answered := map[string]bool{} // the rows each kept path gave, so a longer one giving the same goes
 	for _, steps := range kindPaths(links, from.Kind, to.Kind, o.MaxHops, o.MaxPaths) {
 		prog := pathProgram(shape, steps, from, to, o.Depth, o.Rows)
 		rows, err := evalText(ctx, b, prog, o.Rows, o.Eval)
@@ -132,10 +134,16 @@ func Paths(ctx context.Context, b *datalog.Base, shape Shape, links []Link, from
 			continue
 		}
 		p := Path{Program: prog, Hops: len(steps)}
+		var key []string
 		for _, r := range rows {
 			p.Rows = append(p.Rows, [2]string{r.Bind["from"].S, r.Bind["to"].S})
+			key = append(key, r.Bind["from"].S+"\x00"+r.Bind["to"].S)
 		}
-		found = append(found, p)
+		sort.Strings(key)
+		if k := strings.Join(key, "\x01"); !answered[k] {
+			answered[k] = true
+			found = append(found, p)
+		}
 	}
 	if len(found) == 0 {
 		return nil, firstErr
@@ -257,4 +265,70 @@ func evalText(ctx context.Context, b *datalog.Base, text string, limit int, eval
 		return nil, err
 	}
 	return datalog.SemiNaive{}.Eval(ctx, q, b, eval...)
+}
+
+// ParseEnds reads a paths action's argument, FROM => TO, each end a kind and then literals over ?x:
+// func str.glob(?x, "github.com/a/*") => func ?x = "github.com/b.F".
+func ParseEnds(arg string) (from, to End, err error) {
+	a, b, ok := strings.Cut(arg, " => ")
+	if !ok {
+		return End{}, End{}, fmt.Errorf("paths takes FROM => TO, each a kind and literals over ?x, as func str.glob(?x, \"a/*\") => func ?x = \"b.F\"")
+	}
+	end := func(s string) (End, error) {
+		kind, where, _ := strings.Cut(strings.TrimSpace(s), " ")
+		if kind == "" {
+			return End{}, fmt.Errorf("paths: an end needs a kind first, in %q", arg)
+		}
+		return End{Kind: kind, Where: strings.TrimSpace(where)}, nil
+	}
+	if from, err = end(a); err != nil {
+		return End{}, End{}, err
+	}
+	to, err = end(b)
+	return from, to, err
+}
+
+// paths runs a paths action: the ends from arg, the pack's Links (or KindGraph's, read once per
+// Session), and the joins that answered, each with its first rows, as the model reads them. The
+// text values in the rows are kept, as an action's are.
+func (s *Session) paths(ctx context.Context, arg string) string {
+	if !s.o.offersPaths() {
+		return "paths needs the pack's Shape and data to run on"
+	}
+	from, to, err := ParseEnds(arg)
+	if err != nil {
+		return err.Error()
+	}
+	if !s.linksRead {
+		s.linksRead = true
+		s.links = s.o.Pack.Links
+		if s.links == nil {
+			s.links, s.linksErr = KindGraph(ctx, s.o.Base, *s.o.Pack.Shape, s.o.Eval...)
+		}
+	}
+	if s.linksErr != nil {
+		return s.linksErr.Error()
+	}
+	o := PathOptions{Eval: s.o.Eval}
+	found, err := Paths(ctx, s.o.Base, *s.o.Pack.Shape, s.links, from, to, o)
+	a, b, _ := strings.Cut(arg, " => ")
+	a, b = strings.TrimSpace(a), strings.TrimSpace(b)
+	if len(found) == 0 {
+		if err != nil {
+			return strings.TrimRight(Explain(arg, err), "\n")
+		}
+		return fmt.Sprintf(s.pr.PathsNone, a, b, "3")
+	}
+	var out strings.Builder
+	fmt.Fprintf(&out, s.pr.PathsFound, a, b)
+	var seen []string
+	for i, p := range found {
+		fmt.Fprintf(&out, "\n\n%d. %s", i+1, p.Program)
+		for _, r := range p.Rows {
+			fmt.Fprintf(&out, "\n  %q, %q", r[0], r[1])
+			seen = append(seen, r[0], r[1])
+		}
+	}
+	s.mem.see(seen)
+	return out.String()
 }

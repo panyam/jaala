@@ -2,60 +2,19 @@ package nl_test
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/panyam/jaala/datalog"
 	"github.com/panyam/jaala/frontends/nl"
-	"github.com/panyam/jaala/ns"
-	"github.com/panyam/jaala/stdlib"
+	"github.com/panyam/jaala/internal/guide"
 )
 
-// codeGraph is a small graph laid out as Declaire lays out its own: node(id, kind), attr(id, key,
-// value), and an edge relation per kind. goapp's Auth contains a callsite whose callee is oneauth's
-// Get, and calls holds no edge across the two repos, as Declaire's doesn't. TestParse reaches
-// oneauth's Parse through a helper, two calls away.
+// codeGraph is guide.Code with its Shape.
 func codeGraph(t *testing.T) (*datalog.Base, nl.Shape) {
 	t.Helper()
-	src := ns.NewMemSource().
-		DeclareSchema("node", ns.Schema{Arity: 2, Labels: []string{"id", "kind"}, Types: []ns.ArgType{{KindFrom: "kind"}, {Type: ns.TypeString}}}).
-		Declare("attr", "id", "key", "value").
-		Declare("contains", "src", "dst").
-		Declare("calls", "src", "dst")
-	add := func(rel string, vals ...string) {
-		vs := make([]ns.Value, len(vals))
-		for i, s := range vals {
-			vs[i] = ns.S(s)
-		}
-		src.Add(rel, ns.Tuple{Vals: vs})
-	}
-	for _, n := range [][2]string{
-		{"goapp/svc.Auth", "func"}, {"goapp/svc.Other", "func"}, {"goapp/svc.Auth#1", "callsite"}, {"goapp/svc.Other#1", "callsite"},
-		{"oneauth/acct.Get", "func"}, {"oneauth/acct.Save", "func"},
-		{"oneauth/api.TestParse", "func"}, {"oneauth/api.helper", "func"}, {"oneauth/api.Parse", "func"},
-	} {
-		add("node", n[0], n[1])
-	}
-	add("contains", "goapp/svc.Auth", "goapp/svc.Auth#1")
-	add("contains", "goapp/svc.Other", "goapp/svc.Other#1")
-	add("attr", "goapp/svc.Auth#1", "callee", "oneauth/acct.Get")
-	add("attr", "goapp/svc.Other#1", "callee", "goapp/svc.Auth")
-	add("attr", "oneauth/api.TestParse", "role", "test")
-	add("calls", "goapp/svc.Other", "goapp/svc.Auth")
-	add("calls", "oneauth/api.TestParse", "oneauth/api.helper")
-	add("calls", "oneauth/api.helper", "oneauth/api.Parse")
-	add("calls", "oneauth/acct.Save", "oneauth/acct.Get")
-	v, err := ns.NewVocabulary(src)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := v.AddLanguage(datalog.Language); err != nil {
-		t.Fatal(err)
-	}
-	if err := stdlib.Register(v); err != nil {
-		t.Fatal(err)
-	}
-	return datalog.MustBase(v, src), nl.Shape{Kinds: "node", Edges: []string{"calls", "contains"}, Refs: []nl.Ref{{Relation: "attr", Key: "callee"}}}
+	return guide.Code(t), nl.Shape{Kinds: "node", Edges: []string{"calls", "contains"}, Refs: []nl.Ref{{Relation: "attr", Key: "callee"}}}
 }
 
 // KindGraph reads from the data which kinds each edge and ref joins, with counts.
@@ -95,7 +54,12 @@ func TestPathsFindTheJoinBetweenTwoSets(t *testing.T) {
 	if err != nil || len(paths) == 0 {
 		t.Fatalf("paths %+v, %v", paths, err)
 	}
+	rows := map[string]string{}
 	for _, q := range paths {
+		if prev, ok := rows[fmt.Sprint(q.Rows)]; ok {
+			t.Errorf("two paths answered %v: %q and %q", q.Rows, prev, q.Program)
+		}
+		rows[fmt.Sprint(q.Rows)] = q.Program
 		if q.Hops == 1 {
 			t.Errorf("a one-hop path answered across the repos: %q", q.Program)
 		}
@@ -167,5 +131,57 @@ func TestPathsWalkLinksBackwards(t *testing.T) {
 	p := paths[0]
 	if !strings.Contains(p.Program, `attr(?n1, "callee", ?from), node(?n1, "callsite"), contains(?to, ?n1)`) || p.Rows[0] != [2]string{"oneauth/acct.Get", "goapp/svc.Auth"} {
 		t.Errorf("the first path %q, rows %v", p.Program, p.Rows)
+	}
+}
+
+// The paths action, offered with a pack's Shape over a Base, answers with the joins that answered and
+// their rows, and keeps their values, so a later guess at one's spelling is repaired; its ends come as FROM => TO. Without a kind on an
+// end, or with no join answering, it says so. The pack's Links are used as given. control: without
+// a Shape, paths isn't offered.
+func TestThePathsActionListsTheJoinsThatAnswered(t *testing.T) {
+	b, shape := codeGraph(t)
+	ctx := context.Background()
+	d := nl.DefaultPrompts()
+	s, err := nl.NewSession(ctx, "q", b.Vocabulary(), nil, nl.Options{Base: b, Pack: &nl.Pack{Shape: &shape}, Actions: &nl.Actions{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prefix, grammar := s.TextActions()
+	var tools []string
+	for _, tl := range s.Tools() {
+		tools = append(tools, tl.Action)
+	}
+	if !strings.Contains(strings.Join(tools, " "), "paths") || !strings.Contains(prefix, "#   paths FROM => TO") || !strings.Contains(grammar, `"paths "`) {
+		t.Errorf("tools %v; prefix or grammar leaves out paths", tools)
+	}
+	ends := `func str.glob(?x, "goapp/*") => func str.glob(?x, "oneauth/*")`
+	r := s.Act(ctx, nl.ActionPaths, ends)
+	head := fmt.Sprintf(d.PathsFound, `func str.glob(?x, "goapp/*")`, `func str.glob(?x, "oneauth/*")`)
+	if !strings.HasPrefix(r, head) || !strings.Contains(r, `1. node(?from, "func"), str.glob(?from, "goapp/*"), contains(?from, ?n1)`) || !strings.Contains(r, `"goapp/svc.Auth", "oneauth/acct.Get"`) {
+		t.Errorf("paths sent back %q", r)
+	}
+	guess := `node(?f, "func"), ?f = "oneauth/acct.get" => ?f`
+	if vd := s.NewConversation(nil, true).Judge(ctx, nl.Try{Text: guess}); vd.Program == nil || vd.Program.Text != strings.Replace(guess, "acct.get", "acct.Get", 1) {
+		t.Errorf("a spelling of an id paths showed wasn't repaired: %+v", vd)
+	}
+	if r := s.Act(ctx, nl.ActionPaths, `func ?x = "nope" => func`); r != fmt.Sprintf(d.PathsNone, `func ?x = "nope"`, "func", "3") {
+		t.Errorf("no join answering sent back %q", r)
+	}
+	if r := s.Act(ctx, nl.ActionPaths, "func"); !strings.HasPrefix(r, "paths takes FROM => TO") {
+		t.Errorf("paths without its arrow sent back %q", r)
+	}
+	only := []nl.Link{{Relation: "calls", From: "func", To: "func"}}
+	given, _ := nl.NewSession(ctx, "q", b.Vocabulary(), nil, nl.Options{Base: b, Pack: &nl.Pack{Shape: &shape, Links: only}, Actions: &nl.Actions{}})
+	if r := given.Act(ctx, nl.ActionPaths, ends); !strings.HasPrefix(r, "No join") {
+		t.Errorf("the pack's Links, holding calls alone, still found %q", r)
+	}
+	plain, _ := nl.NewSession(ctx, "q", b.Vocabulary(), nil, nl.Options{Base: b, Pack: &nl.Pack{}, Actions: &nl.Actions{}})
+	if vd := plain.NewConversation(nil, true).Judge(ctx, nl.Try{Text: guess}); vd.Program != nil {
+		t.Errorf("control: with nothing seen, the guess was repaired")
+	}
+	for _, tl := range plain.Tools() {
+		if tl.Action == nl.ActionPaths {
+			t.Errorf("control: paths offered without a Shape")
+		}
 	}
 }
