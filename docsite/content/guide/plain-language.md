@@ -193,10 +193,11 @@ A case ends one of three ways ([#536](https://github.com/panyam/jaala/issues/536
 
 ### A profile per model
 
-`nl.Profile(records, prices)` reads a directory's worth of records into a `ModelProfile` per `Record.Model` ([#537](https://github.com/panyam/jaala/issues/537)). We use it to say which model suits a host's questions with numbers rather than a feeling. A profile adds up its records' outcomes, per tag too, and their cost, and puts the model's price beside them. It also rates five skills, each as how many cases showed it out of how many could:
+`nl.Profile(records, prices)` reads a directory's worth of records into a `ModelProfile` per `Record.Model` ([#537](https://github.com/panyam/jaala/issues/537)). We use it to say which model suits a host's questions with numbers rather than a feeling. A profile adds up its records' outcomes, per tag too, and their cost, and puts the model's price beside them. It also rates six skills, each as how many cases (or names) showed it out of how many could:
 
 - `Syntax`: the first try parsed, compiled and checked.
-- `Grounding`: the first try that ran answered something, rather than nothing from a guessed value or id.
+- `Grounding`: a name the `Grounder` offered values for became one of those values in the accepted program, counted per name. The translator keeps what was offered in `Trace.Offered`: the grounding done before any model was asked, then each `find` action's. The record keeps it beside the accepted program's constants (`Result.Constants`), and the profile compares the two. A name offered twice, up front and by a `find`, counts once. A case with nothing offered, or no accepted program, is left out.
+- `Matched`: the first try that ran answered something, rather than nothing from a guessed value or id. It needs no `Grounder`.
 - `Schema`: the accepted program reads every relation in the case's `Case.Reads`. A case without `Reads` is left out.
 - `Repair`: a refused try was followed by an accepted one the model wrote itself.
 - `Calibration`: an abstention fell on a case the model would have got wrong. `Eval` runs the closest draft an abstention offers over its base and keeps the verdict in `Result.WouldPass`. It runs a draft in jaala's language, or scores one that already ran, and a front end's draft is skipped.

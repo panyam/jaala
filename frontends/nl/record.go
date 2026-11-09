@@ -261,6 +261,10 @@ type CaseRecord struct {
 	Reads     []string `json:",omitempty"`
 	Relations []string `json:",omitempty"`
 	WouldPass *bool    `json:",omitempty"`
+	// Offered is the Trace's, the values the Grounder offered per name, and Constants the accepted
+	// program's (Result.Constants), which a model profile's grounding compares.
+	Offered   []Candidate `json:",omitempty"`
+	Constants []string    `json:",omitempty"`
 }
 
 // A TryRecord is a Try as text: Err's message, and Class.
@@ -313,6 +317,7 @@ func NewRecord(rep Report, p Prices) Record {
 		}
 		cr.Reads, cr.WouldPass = r.Reads, r.WouldPass
 		cr.Relations = r.Relations()
+		cr.Offered, cr.Constants = r.Trace.Offered, r.Constants()
 		rec.Cases = append(rec.Cases, cr)
 	}
 	return rec

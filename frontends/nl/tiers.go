@@ -71,6 +71,7 @@ func (tr *Trace) Then(next Trace) {
 	tr.Tries = append(tr.Tries, next.Tries...)
 	tr.Votes = append(tr.Votes, next.Votes...)
 	tr.Escalations = append(tr.Escalations, next.Escalations...)
+	tr.Offered = append(tr.Offered, next.Offered...)
 	if next.Tier != "" {
 		tr.Tier = next.Tier
 	}

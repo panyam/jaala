@@ -43,6 +43,63 @@ func wouldPass(ctx context.Context, r Result, b *datalog.Base) *bool {
 // negated, optional or inside an aggregate's braces too, less the relations its own rules define.
 func (r Result) Relations() []string { return relationsRead(r.Program.Query) }
 
+// Constants are the constants the accepted program writes, sorted and distinct: in atoms,
+// comparisons and expressions of its goal and rules, and the host's bound values (Bind) left out. A Cypher draft's are those of the program it compiled to.
+func (r Result) Constants() []string { return constantsIn(r.Program.Query) }
+
+func constantsIn(q datalog.Query) []string {
+	seen := map[string]bool{}
+	var term func(datalog.Term)
+	term = func(t datalog.Term) {
+		switch {
+		case t.Const != nil:
+			seen[t.Const.S] = true
+		case t.Expr != nil:
+			for _, a := range t.Expr.Args {
+				term(a)
+			}
+		}
+	}
+	atom := func(a *datalog.Atom) {
+		if a != nil {
+			for _, t := range a.Args {
+				term(t)
+			}
+		}
+	}
+	var walk func(datalog.Body)
+	walk = func(b datalog.Body) {
+		for _, l := range b.Literals {
+			atom(l.Pos)
+			atom(l.Neg)
+			if l.Compare != nil {
+				term(l.Compare.Left)
+				term(l.Compare.Right)
+			}
+			if l.Opt != nil {
+				walk(*l.Opt)
+			}
+			if l.Agg != nil {
+				walk(l.Agg.Body)
+			}
+		}
+	}
+	walk(q.Goal)
+	for _, rl := range q.Rules {
+		atom(&rl.Head)
+		walk(rl.Body)
+	}
+	var out []string
+	for c := range seen {
+		out = append(out, c)
+	}
+	sort.Strings(out)
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 func relationsRead(q datalog.Query) []string {
 	own := map[string]bool{}
 	for _, rl := range q.Rules {
@@ -111,9 +168,14 @@ type ModelProfile struct {
 	// Syntax: the first try parsed, compiled and checked. A case whose first try was a model's
 	// failure is left out.
 	Syntax Rate
-	// Grounding: the first try that ran answered something, rather than nothing from a guessed value,
-	// kind or id (ClassGrounding).
+	// Grounding: a name the Grounder offered values for became one of them in the accepted program,
+	// counted per name (CaseRecord.Offered against Constants). A name offered twice, up front and by
+	// a find, counts once with every value offered. Cases with nothing offered, or no accepted
+	// program, are left out.
 	Grounding Rate
+	// Matched: the first try that ran answered something, rather than nothing from a guessed value,
+	// kind or id (ClassGrounding). It needs no Grounder.
+	Matched Rate
 	// Schema: the accepted program reads every relation of the case's Reads. Cases without Reads,
 	// or without an accepted program, are left out.
 	Schema Rate
@@ -172,8 +234,13 @@ func (p *ModelProfile) read(c CaseRecord) {
 		if t.Class == ClassConstruct || t.Class == ClassModel || t.Kind == KindRepeat {
 			continue // didn't run
 		}
-		p.Grounding.count(t.Class != ClassGrounding)
+		p.Matched.count(t.Class != ClassGrounding)
 		break
+	}
+	if c.Program != "" {
+		for _, vals := range offeredByName(c.Offered) {
+			p.Grounding.count(slices.ContainsFunc(vals, func(v string) bool { return slices.Contains(c.Constants, v) }))
+		}
 	}
 	if len(c.Reads) > 0 && c.Program != "" {
 		p.Schema.count(readsAll(c.Relations, c.Reads))
@@ -190,6 +257,26 @@ func (p *ModelProfile) read(c CaseRecord) {
 	}
 }
 
+// offeredByName merges what was offered per name, in the order names were first offered.
+func offeredByName(cs []Candidate) [][]string {
+	var names []string
+	vals := map[string][]string{}
+	for _, c := range cs {
+		if len(c.Values) == 0 {
+			continue
+		}
+		if _, ok := vals[c.Name]; !ok {
+			names = append(names, c.Name)
+		}
+		vals[c.Name] = append(vals[c.Name], c.Values...)
+	}
+	out := make([][]string, len(names))
+	for i, n := range names {
+		out[i] = vals[n]
+	}
+	return out
+}
+
 // readsAll says every name of want is in have.
 func readsAll(have, want []string) bool {
 	for _, w := range want {
@@ -201,7 +288,7 @@ func readsAll(have, want []string) bool {
 }
 
 var profileColumns = []string{"model", "usd_per_mtok_in", "usd_per_mtok_cached", "usd_per_mtok_out", "pass", "wrong", "abstain", "of",
-	"usd_per_correct", "seconds_per_correct", "syntax", "grounding", "schema", "repair", "calibration", "tags"}
+	"usd_per_correct", "seconds_per_correct", "syntax", "grounding", "matched", "schema", "repair", "calibration", "tags"}
 
 // ProfileTable writes a row per profile as "csv" or "md": its price per million tokens (empty when
 // unpriced), its outcomes, its cost and time per correct answer, each skill as hit/of, and each tag's
@@ -228,7 +315,7 @@ func ProfileTable(w io.Writer, ps []ModelProfile, format string) error {
 		}
 		sort.Strings(tags)
 		rows = append(rows, []string{p.Model, in, cached, out, fmt.Sprint(s.Pass), fmt.Sprint(s.Wrong), fmt.Sprint(s.Abstain), fmt.Sprint(s.Cases()),
-			perUSD, perSec, p.Syntax.String(), p.Grounding.String(), p.Schema.String(), p.Repair.String(), p.Calibration.String(), strings.Join(tags, "; ")})
+			perUSD, perSec, p.Syntax.String(), p.Grounding.String(), p.Matched.String(), p.Schema.String(), p.Repair.String(), p.Calibration.String(), strings.Join(tags, "; ")})
 	}
 	switch format {
 	case "csv":

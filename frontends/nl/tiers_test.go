@@ -11,9 +11,9 @@ import (
 
 // A later tier's steps count the tries before them across both tiers, and its Tier wins.
 func TestThenJoinsATiersTraceAfterAnother(t *testing.T) {
-	tr := nl.Trace{Tries: []nl.Try{{Model: "small"}, {Model: "small"}}, Steps: []nl.Step{{After: 1}}}
-	tr.Then(nl.Trace{Tries: []nl.Try{{Model: "big"}}, Steps: []nl.Step{{After: 0}}, Votes: []nl.Try{{}}, Tier: nl.TierFrontier})
-	if len(tr.Tries) != 3 || tr.Steps[0].After != 1 || tr.Steps[1].After != 2 || len(tr.Votes) != 1 || tr.Tier != nl.TierFrontier {
+	tr := nl.Trace{Tries: []nl.Try{{Model: "small"}, {Model: "small"}}, Steps: []nl.Step{{After: 1}}, Offered: []nl.Candidate{{Name: "a"}}}
+	tr.Then(nl.Trace{Tries: []nl.Try{{Model: "big"}}, Steps: []nl.Step{{After: 0}}, Votes: []nl.Try{{}}, Tier: nl.TierFrontier, Offered: []nl.Candidate{{Name: "b"}}})
+	if len(tr.Tries) != 3 || tr.Steps[0].After != 1 || tr.Steps[1].After != 2 || len(tr.Votes) != 1 || tr.Tier != nl.TierFrontier || len(tr.Offered) != 2 {
 		t.Errorf("joined %+v", tr)
 	}
 }

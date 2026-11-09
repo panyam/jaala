@@ -21,7 +21,8 @@ type Session struct {
 	o     Options
 	pr    Prompts
 	cands []Candidate
-	mem   *memory // what the actions have shown, across models, since it is about the data
+	found []Candidate // what each find action offered, in order
+	mem   *memory     // what the actions have shown, across models, since it is about the data
 
 	prefix, ask, grammar, answerGrammar string
 	textPrefix, textGrammar             string // for a model that writes its actions (TextActions)
@@ -176,7 +177,17 @@ func (s *Session) Act(ctx context.Context, action, arg string) string {
 	}
 	result, seen := act(ctx, action, arg, s.v, s.o)
 	s.mem.see(seen)
+	if action == ActionFind && len(seen) > 0 {
+		s.found = append(s.found, Candidate{Name: arg, Values: seen})
+	}
 	return result
+}
+
+// Offered are the values the Grounder offered for the question's names: the grounding before any
+// model was asked, then each find action's, in order. A model profile's grounding reads them against
+// the accepted program's constants (#537).
+func (s *Session) Offered() []Candidate {
+	return append(append([]Candidate(nil), s.cands...), s.found...)
 }
 
 // Draw judges one more answer to the question outside any conversation, as a vote draws one: the

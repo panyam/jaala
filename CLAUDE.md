@@ -123,8 +123,11 @@ GOARCH=wasm go test ./ns` (#417 ran `ns` that way).
   the loop adding one for chakra's guided finalizing call, which raises no `EventStep`; a model with no
   `Prices` entry is `Cost.Unpriced`, never free.
   `nl.Profile` (`profile.go`, #537) reads records into a `ModelProfile` per `Record.Model`: tallies, cost,
-  price, and five skill `Rate`s from the tries. `Case.Reads` feeds schema choice, and `Eval` runs an
-  abstention's draft (jaala's text, or a low-agreement draft's rows) into `Result.WouldPass` for calibration. `TestEval`
+  price, and six skill `Rate`s from the tries. `Case.Reads` feeds schema choice, and `Eval` runs an
+  abstention's draft (jaala's text, or a low-agreement draft's rows) into `Result.WouldPass` for calibration.
+  Grounding reads `Trace.Offered` (`Session.Offered`: the up-front grounding, then each find's values,
+  which the translator copies off its Session) against `Result.Constants`, per name; `Matched` is the old
+  first-try-answered rate. `TestEval`
   (in `frontends/nlmodels/translator` since #496) is #322's exercise until Declaire's arm runs: the
   guide's vocabulary, a scripted small model and fallback (`byQuestion`), and the report in its
   `testdata/eval.golden` (`-update`).
