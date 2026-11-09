@@ -1428,6 +1428,11 @@ the conflict resolution kept. Deleting an open PR's head branch closes it unmerg
 A PR body closes only its own issue. GitHub reads any "fix", "fixes", "close", "closes" or "resolves"
 before `#N` as a closing keyword, even inside a phrase like "Engine fixes: #90", which closed #90 on
 merge (reopened). In "Out of scope" and "Related" write "left for #N".
+The same holds across repos: a host's PR that writes "fixes panyam/jaala#N" closes the jaala ticket
+when the host's PR merges. declaire#365 read "ships the translator-loop fixes panyam/jaala#514 and
+#517" and closed #514 with two of its pieces open (reopened). A host session writes "for
+panyam/jaala#N" or "from panyam/jaala#N", and when a jaala ticket closes without a jaala PR, check
+its timeline for a cross-repo close before treating it as done.
 
 ## Working with hosts
 
