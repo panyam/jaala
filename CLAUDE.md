@@ -156,6 +156,12 @@ GOARCH=wasm go test ./ns` (#417 ran `ns` that way).
   doesn't, and an answer of a tail alone (`=> ?p`) follows the body (`withBody`, in `Judge`, and in
   `Draw` through `Session.built`); `buildGrammar` lets the answer grammar take that tail. An add of a
   literal the body holds is a repeat; a drop never is. Off under a FrontEnd.
+  `paths.go` (#514 piece 5, a prototype not yet wired into the translator): a host's `Shape` names its
+  kind relation, edge relations and id-valued `Ref`s; `KindGraph` reads from the data which kinds each
+  joins (the vocabulary can't say: Declaire's edges are untyped and a kind is data); `Paths` searches
+  that graph breadth first between two `End`s (a kind and literals over `?x`), a link either way and a
+  same-kind link as one step and then as a `graph.closure`, a kind visited once except arriving back at
+  the target's, and keeps the programs that answer, shortest first.
   `Pack.Callables` (#484, `callable.go`) are relations answering a question alone: the translator first
   asks the first model to pick one (`Session.Pick`: About, Card and the catalogue, a grammar of `none`
   or a listed call, `pickTries` 2), a bare call being a program whose rows bind its variables; a `none` is a
