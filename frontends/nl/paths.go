@@ -2,6 +2,7 @@ package nl
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -101,10 +102,11 @@ type Path struct {
 // Paths finds the joins from one End to the other over links (KindGraph's), runs each, and returns
 // those that answered, shortest first (#514 piece 5). A path whose first rows are a shorter one's
 // is left out: a plain hop and its closure often answer alike. A small model picks among them rather than
-// writing the join. A link can be walked either way, and a link from a kind to itself can be walked
+// writing the join. A path's Program asks no limit, so a model answering with it gets every row;
+// only the rows shown are capped at Rows. A link can be walked either way, and a link from a kind to itself can be walked
 // as a closure (graph.closure, up to Depth steps), so calls* reaches a test's callee's callee. Each
 // node on a path is held to its kind, and a path visits a kind once, apart from its closures. err
-// is the first path's failure when none answered and one failed.
+// is the first path's failure, a *PathError, when none answered and one failed.
 func Paths(ctx context.Context, b *datalog.Base, shape Shape, links []Link, from, to End, o PathOptions) ([]Path, error) {
 	if o.MaxHops <= 0 {
 		o.MaxHops = 3
@@ -122,11 +124,11 @@ func Paths(ctx context.Context, b *datalog.Base, shape Shape, links []Link, from
 	var firstErr error
 	answered := map[string]bool{} // the rows each kept path gave, so a longer one giving the same goes
 	for _, steps := range kindPaths(links, from.Kind, to.Kind, o.MaxHops, o.MaxPaths) {
-		prog := pathProgram(shape, steps, from, to, o.Depth, o.Rows)
+		prog := pathProgram(shape, steps, from, to, o.Depth)
 		rows, err := evalText(ctx, b, prog, o.Rows, o.Eval)
 		if err != nil {
 			if firstErr == nil {
-				firstErr = err
+				firstErr = &PathError{Program: prog, Err: err}
 			}
 			continue
 		}
@@ -150,6 +152,19 @@ func Paths(ctx context.Context, b *datalog.Base, shape Shape, links []Link, from
 	}
 	return found, nil
 }
+
+// A PathError is a join that failed to parse, check or run. Its Program is the text jaala wrote
+// for it, which the error's position (datalog.Locate) points into; the ends the model sent hold no
+// such place.
+type PathError struct {
+	Program string
+	Err     error
+}
+
+func (e *PathError) Error() string { return e.Err.Error() }
+
+// Unwrap is the join's own error, so errors.As finds a *datalog.CheckError through it.
+func (e *PathError) Unwrap() error { return e.Err }
 
 // A step walks one link, forward or back, once or as a closure.
 type step struct {
@@ -220,8 +235,9 @@ func kindPaths(links []Link, from, to string, max, limit int) [][]step {
 var endVar = regexp.MustCompile(`\?x\b`)
 
 // pathProgram writes steps as a program from ?from to ?to, each node held to its kind, both ends
-// narrowed by their Where, answering the distinct pairs of ends.
-func pathProgram(shape Shape, steps []step, from, to End, depth, rows int) string {
+// narrowed by their Where, answering the distinct pairs of ends. It writes no limit: the caller caps
+// the rows it reads, and a model keeps whatever the program says (#530).
+func pathProgram(shape Shape, steps []step, from, to End, depth int) string {
 	vars := make([]string, len(steps)+1)
 	vars[0], vars[len(steps)] = "?from", "?to"
 	for i := 1; i < len(steps); i++ {
@@ -249,7 +265,7 @@ func pathProgram(shape Shape, steps []step, from, to End, depth, rows int) strin
 	if w := strings.TrimSpace(to.Where); w != "" {
 		lits = append(lits, endVar.ReplaceAllString(w, "?to"))
 	}
-	return fmt.Sprintf("%s => ?from, ?to limit %d", strings.Join(lits, ", "), rows)
+	return strings.Join(lits, ", ") + " => ?from, ?to"
 }
 
 // evalText parses, checks and runs a program over b, with limit rows at most when it's above 0.
@@ -268,7 +284,9 @@ func evalText(ctx context.Context, b *datalog.Base, text string, limit int, eval
 }
 
 // ParseEnds reads a paths action's argument, FROM => TO, each end a kind and then literals over ?x:
-// func str.glob(?x, "github.com/a/*") => func ?x = "github.com/b.F".
+// func str.glob(?x, "github.com/a/*") => func ?x = "github.com/b.F". An end with literals that
+// never mention ?x is refused: nothing would tie them to the end, and the join would run them
+// unbound (#530).
 func ParseEnds(arg string) (from, to End, err error) {
 	a, b, ok := strings.Cut(arg, " => ")
 	if !ok {
@@ -279,7 +297,11 @@ func ParseEnds(arg string) (from, to End, err error) {
 		if kind == "" {
 			return End{}, fmt.Errorf("paths: an end needs a kind first, in %q", arg)
 		}
-		return End{Kind: kind, Where: strings.TrimSpace(where)}, nil
+		where = strings.TrimSpace(where)
+		if where != "" && !endVar.MatchString(where) {
+			return End{}, fmt.Errorf("paths: the literals after %s never mention ?x, the end's node, so nothing ties them to it; write them over ?x, as %s ?x = \"an id\"", kind, kind)
+		}
+		return End{Kind: kind, Where: where}, nil
 	}
 	if from, err = end(a); err != nil {
 		return End{}, End{}, err
@@ -314,8 +336,12 @@ func (s *Session) paths(ctx context.Context, arg string) string {
 	a, b, _ := strings.Cut(arg, " => ")
 	a, b = strings.TrimSpace(a), strings.TrimSpace(b)
 	if len(found) == 0 {
+		var pe *PathError
+		if errors.As(err, &pe) {
+			return strings.TrimRight(Explain(pe.Program, pe.Err), "\n")
+		}
 		if err != nil {
-			return strings.TrimRight(Explain(arg, err), "\n")
+			return err.Error()
 		}
 		return fmt.Sprintf(s.pr.PathsNone, a, b, "3")
 	}

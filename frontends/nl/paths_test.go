@@ -185,3 +185,73 @@ func TestThePathsActionListsTheJoinsThatAnswered(t *testing.T) {
 		}
 	}
 }
+
+// A join that fails to check is explained against the program jaala wrote, never against the
+// model's argument (#530: Locate's offset in the longer program ran past the argument's end and
+// Explain panicked). The caret sits under the program's text.
+func TestAFailedJoinIsExplainedAgainstItsProgram(t *testing.T) {
+	b, shape := codeGraph(t)
+	ctx := context.Background()
+	s, err := nl.NewSession(ctx, "q", b.Vocabulary(), nil, nl.Options{Base: b, Pack: &nl.Pack{Shape: &shape}, Actions: &nl.Actions{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := s.Act(ctx, nl.ActionPaths, `func => func ?x = = "a"`)
+	if !strings.Contains(r, `node(?from, "func")`) || !strings.Contains(r, "^") {
+		t.Errorf("a failed join sent back %q", r)
+	}
+}
+
+// Explain keeps just the message for text the error doesn't point into, rather than slicing past
+// its end.
+func TestExplainKeepsTheMessageForTextTheErrorIsNotIn(t *testing.T) {
+	_, err := datalog.Parse(`node(?from, "func"), calls(?from, ?to), ?to = = "a" => ?from`)
+	if err == nil {
+		t.Fatal("control: the program parsed")
+	}
+	if got := nl.Explain("short", err); got != err.Error() {
+		t.Errorf("Explain over other text gave %q", got)
+	}
+}
+
+// An end whose literals never mention ?x is refused, so the model ties it to the end (#530: x01's
+// ?p ran unbound, and the join answered every package importing every package).
+func TestAnEndThatNeverMentionsXIsRefused(t *testing.T) {
+	for _, arg := range []string{
+		`package ?p = "github.com/go-delve/delve" => package ?p = "github.com/go-delve/delve"`,
+		`func => func ?y = "a"`,
+	} {
+		if _, _, err := nl.ParseEnds(arg); err == nil || !strings.Contains(err.Error(), "?x") {
+			t.Errorf("%s: %v", arg, err)
+		}
+	}
+	if _, _, err := nl.ParseEnds(`func str.glob(?x, "a/*") => func`); err != nil {
+		t.Errorf("control: an end over ?x was refused: %v", err)
+	}
+}
+
+// A join comes back without a limit, so a model answering with it isn't held to the rows shown
+// (#530: x01's answer kept limit 5 against 20 expected rows). The rows shown are still capped.
+func TestAJoinComesBackWithoutALimit(t *testing.T) {
+	b, shape := codeGraph(t)
+	ctx := context.Background()
+	links, err := nl.KindGraph(ctx, b, shape)
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths, err := nl.Paths(ctx, b, shape, links, nl.End{Kind: "func"}, nl.End{Kind: "func"}, nl.PathOptions{Rows: 2})
+	if err != nil || len(paths) == 0 {
+		t.Fatalf("paths %+v, %v", paths, err)
+	}
+	for _, p := range paths {
+		if strings.Contains(p.Program, "limit") {
+			t.Errorf("a join kept its limit: %q", p.Program)
+		}
+		if len(p.Rows) > 2 {
+			t.Errorf("%d rows shown, want at most 2", len(p.Rows))
+		}
+	}
+	if len(paths[0].Rows) != 2 {
+		t.Errorf("control: the first join showed %d rows, want 2", len(paths[0].Rows))
+	}
+}
