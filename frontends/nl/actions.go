@@ -80,8 +80,9 @@ const (
 	ActionValues = "values"
 	ActionTry    = "try"
 	ActionFind   = "find"
-	ActionAdd    = "add"  // Actions.Build: append a literal to the body
-	ActionDrop   = "drop" // Actions.Build: take the body's last literal off
+	ActionPaths  = "paths" // Pack.Shape: the joins between two kinds of node, run
+	ActionAdd    = "add"   // Actions.Build: append a literal to the body
+	ActionDrop   = "drop"  // Actions.Build: take the body's last literal off
 )
 
 // replies says the model asks for an action in its reply: Actions are set and not AsTools.
@@ -133,6 +134,11 @@ func readAction(text string) (action, arg string, ok bool) {
 			return "", "", false
 		}
 		return word, "", true
+	case ActionPaths:
+		if rest != "" || !strings.Contains(inline, " => ") {
+			return "", "", false
+		}
+		return word, strings.TrimSpace(inline), true
 	}
 	return "", "", false
 }
@@ -150,6 +156,10 @@ const actionInstructions = `
 const buildInstruction = "#   add LITERAL     add one literal to the program you are building, and see its rows so far\n" +
 	"#   drop            take the last literal off it\n" +
 	"# Once the body is right, answer with => and the columns alone, such as => ?p\n"
+
+// pathsInstruction is actionInstructions' lines for paths, when the pack has a Shape.
+const pathsInstruction = "#   paths FROM => TO  the joins from one kind of node to another, each run on a few rows; an end\n" +
+	"#                   is a kind, then literals over ?x, such as func str.glob(?x, \"github.com/a/*\")\n"
 
 // findInstruction is actionInstructions' line for find, when there is a Grounder.
 const findInstruction = "#   find NAME       the ids or values a name from the question may stand for\n"
@@ -412,7 +422,7 @@ func valuesProgram(v *ns.Vocabulary, target string, limit int) (string, error) {
 // actionGrammar wraps a draft's grammar so a reply is an action or a draft: the draft grammar's root
 // becomes program, a NAME or TARGET is a dotted name of nameMax characters at most, which look and
 // values check, and with find a phrase of words, which the Grounder reads.
-func actionGrammar(grammar string, find, build bool) string {
+func actionGrammar(grammar string, find, build, paths bool) string {
 	if grammar == "" {
 		return ""
 	}
@@ -420,6 +430,15 @@ func actionGrammar(grammar string, find, build bool) string {
 		gbnf.Seq{gbnf.Lit("try\n"), gbnf.Ref("program")}}
 	if build {
 		root = append(root, gbnf.Seq{gbnf.Lit("add "), gbnf.Ref("literal")}, gbnf.Lit("drop"))
+	}
+	var pathRules []gbnf.Rule
+	if paths {
+		// paths KIND [LITERAL, ...] => KIND [LITERAL, ...], each end's literals over ?x
+		root = append(root, gbnf.Seq{gbnf.Lit("paths "), gbnf.Ref("pathend"), gbnf.Lit(" => "), gbnf.Ref("pathend")})
+		pathRules = []gbnf.Rule{
+			{Name: "pathend", E: gbnf.Seq{gbnf.Ref("pathkind"), gbnf.Opt(gbnf.Seq{gbnf.Lit(" "), gbnf.Ref("literal"), gbnf.Star(gbnf.Seq{gbnf.Lit(", "), gbnf.Ref("literal")})})}},
+			{Name: "pathkind", E: gbnf.Seq{gbnf.Class{Spec: "A-Za-z_", Sample: "afcx_"}, gbnf.UpTo(gbnf.Class{Spec: "A-Za-z0-9_", Sample: "ae1_"}, nameMax-1)}},
+		}
 	}
 	rules := []gbnf.Rule{
 		{Name: "target", E: gbnf.Seq{gbnf.Class{Spec: "A-Za-z_", Sample: "aPx_"}, gbnf.UpTo(gbnf.Class{Spec: "A-Za-z0-9_.", Sample: "ae1._"}, nameMax-1)}},
@@ -429,6 +448,7 @@ func actionGrammar(grammar string, find, build bool) string {
 		rules = append(rules, gbnf.Rule{Name: "phrase", E: gbnf.Seq{gbnf.Class{Spec: "A-Za-z0-9_", Sample: "aP1_"}, gbnf.UpTo(gbnf.Class{Spec: "A-Za-z0-9_. /-", Sample: "a1. /"}, 2*nameMax-1)}})
 	}
 	root = append(root, gbnf.Ref("program"))
+	rules = append(rules, pathRules...)
 	return gbnf.Render(append([]gbnf.Rule{{Name: "root", E: root}}, rules...)) + rootRule.ReplaceAllString(grammar, "program ::=")
 }
 
@@ -470,7 +490,7 @@ func buildGrammar(grammar string) string {
 
 // actionsPrefix is actionInstructions with a values target written as the model's language writes one,
 // and find's line when there is a Grounder to find with.
-func actionsPrefix(fe FrontEnd, find, build bool, pr Prompts) string {
+func actionsPrefix(fe FrontEnd, find, build, paths bool, pr Prompts) string {
 	target := "relation.argument"
 	if p, ok := fe.(Prober); ok {
 		target = p.ValuesTarget()
@@ -481,6 +501,9 @@ func actionsPrefix(fe FrontEnd, find, build bool, pr Prompts) string {
 	}
 	if build {
 		line += pr.Build
+	}
+	if paths {
+		line += pr.Paths
 	}
 	return fmt.Sprintf(pr.Actions, target, line)
 }

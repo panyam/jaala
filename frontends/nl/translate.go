@@ -188,7 +188,7 @@ func promptPrefix(v *ns.Vocabulary, o Options) (head, actions, tail string, err 
 		}
 		head = card + o.Pack.prompts().Instructions
 		if o.Actions != nil {
-			actions = actionsPrefix(nil, o.grounder != nil, o.Actions.builds(nil), o.Pack.prompts())
+			actions = actionsPrefix(nil, o.grounder != nil, o.Actions.builds(nil), o.offersPaths(), o.Pack.prompts())
 		}
 		if o.Pack != nil {
 			if err := o.Pack.Validate(v); err != nil {
@@ -218,7 +218,7 @@ func promptPrefix(v *ns.Vocabulary, o Options) (head, actions, tail string, err 
 	}
 	head = card + instr
 	if o.Actions != nil {
-		actions = actionsPrefix(fe, o.grounder != nil, false, o.Pack.prompts())
+		actions = actionsPrefix(fe, o.grounder != nil, false, false, o.Pack.prompts())
 	}
 	if o.Pack != nil {
 		p := *o.Pack
@@ -341,6 +341,12 @@ func kindOf(err error, otherwise string) string {
 		return string(ce.Kind)
 	}
 	return otherwise
+}
+
+// offersPaths says the model may ask for paths: the pack has a Shape, there is a Base to run them
+// on, and the language is jaala's own, since a path is a jaala program.
+func (o Options) offersPaths() bool {
+	return o.Actions != nil && o.Pack != nil && o.Pack.Shape != nil && o.Base != nil && o.FrontEnd == nil
 }
 
 // grounded lists the candidates after the question under head (Prompts.Grounded), for the model to use

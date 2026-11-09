@@ -98,3 +98,51 @@ var CypherDrafts = map[string][]string{
 }
 
 // frontends/cypher's FuzzCompile seeds from them, and nlmodels/cypherarm's TestEval writes them.
+
+// Code is a small graph laid out as Declaire lays out its own: node(id, kind), attr(id, key,
+// value), and an edge relation per kind. goapp's Auth contains a callsite whose callee is oneauth's
+// Get, and calls holds no edge across the two repos, as Declaire's doesn't. TestParse reaches
+// oneauth's Parse through a helper, two calls away. Its shape for nl.Paths is node for kinds, calls
+// and contains for edges, and attr's callee for a ref (#514 piece 5).
+func Code(t *testing.T) *datalog.Base {
+	t.Helper()
+	src := ns.NewMemSource().
+		DeclareSchema("node", ns.Schema{Arity: 2, Labels: []string{"id", "kind"}, Types: []ns.ArgType{{KindFrom: "kind"}, {Type: ns.TypeString}}}).
+		Declare("attr", "id", "key", "value").
+		Declare("contains", "src", "dst").
+		Declare("calls", "src", "dst")
+	add := func(rel string, vals ...string) {
+		vs := make([]ns.Value, len(vals))
+		for i, s := range vals {
+			vs[i] = ns.S(s)
+		}
+		src.Add(rel, ns.Tuple{Vals: vs})
+	}
+	for _, n := range [][2]string{
+		{"goapp/svc.Auth", "func"}, {"goapp/svc.Other", "func"}, {"goapp/svc.Auth#1", "callsite"}, {"goapp/svc.Other#1", "callsite"},
+		{"oneauth/acct.Get", "func"}, {"oneauth/acct.Save", "func"},
+		{"oneauth/api.TestParse", "func"}, {"oneauth/api.helper", "func"}, {"oneauth/api.Parse", "func"},
+	} {
+		add("node", n[0], n[1])
+	}
+	add("contains", "goapp/svc.Auth", "goapp/svc.Auth#1")
+	add("contains", "goapp/svc.Other", "goapp/svc.Other#1")
+	add("attr", "goapp/svc.Auth#1", "callee", "oneauth/acct.Get")
+	add("attr", "goapp/svc.Other#1", "callee", "goapp/svc.Auth")
+	add("attr", "oneauth/api.TestParse", "role", "test")
+	add("calls", "goapp/svc.Other", "goapp/svc.Auth")
+	add("calls", "oneauth/api.TestParse", "oneauth/api.helper")
+	add("calls", "oneauth/api.helper", "oneauth/api.Parse")
+	add("calls", "oneauth/acct.Save", "oneauth/acct.Get")
+	v, err := ns.NewVocabulary(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := v.AddLanguage(datalog.Language); err != nil {
+		t.Fatal(err)
+	}
+	if err := stdlib.Register(v); err != nil {
+		t.Fatal(err)
+	}
+	return datalog.MustBase(v, src)
+}

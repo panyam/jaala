@@ -65,6 +65,16 @@ type Pack struct {
 	// nlmodels' translator puts it before the question for every draft, through chakra's retrieval
 	// stage. Nothing is shown without a Base.
 	Preview func(ctx context.Context, question string) []string
+	// Shape, when set, says how the data is laid out as a graph (#514 piece 5): the relation holding
+	// each node's kind, the edge relations, and the attributes whose values are node ids. Over a Base,
+	// in jaala's language, it offers the model the paths action: name two ends, each a kind and
+	// literals over ?x, and get back the joins between them that answer, so it picks a join rather
+	// than writing one.
+	Shape *Shape
+	// Links are Shape's kind graph, KindGraph's result. A host computes it once per data version, as
+	// it does DataCard, since it reads every edge relation whole. When nil, a Session reads it the
+	// first time the model asks for paths.
+	Links []Link
 	// ExtractExamples are texts with the lines Extract should write for them, which follow the pack's
 	// About and Card in Extract's prefix. The translator doesn't read them.
 	ExtractExamples []ExtractExample

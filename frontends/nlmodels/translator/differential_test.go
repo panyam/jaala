@@ -87,7 +87,7 @@ func (s *script) turn(req agent.ProviderRequest) (agent.StubTurn, error) {
 		return agent.StubTurn{Text: r}, nil
 	}
 	if name, arg, ok := textAction(r); ok {
-		key := map[string]string{nl.ActionLook: "name", nl.ActionFind: "name", nl.ActionValues: "target", nl.ActionTry: "draft", nl.ActionAdd: "literal"}[name]
+		key := map[string]string{nl.ActionLook: "name", nl.ActionFind: "name", nl.ActionValues: "target", nl.ActionTry: "draft", nl.ActionAdd: "literal", nl.ActionPaths: "ends"}[name]
 		args := map[string]string{}
 		if key != "" {
 			args[key] = arg
@@ -112,6 +112,8 @@ func textAction(r string) (action, arg string, ok bool) {
 		return word, strings.TrimSpace(inline), rest == "" && strings.TrimSpace(inline) != ""
 	case nl.ActionDrop:
 		return word, "", rest == "" && strings.TrimSpace(inline) == ""
+	case nl.ActionPaths:
+		return word, strings.TrimSpace(inline), rest == "" && strings.Contains(inline, " => ")
 	case nl.ActionTry:
 		d := strings.TrimSpace(strings.TrimSpace(inline) + "\n" + rest)
 		return word, d, d != ""

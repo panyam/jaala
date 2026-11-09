@@ -193,3 +193,35 @@ func toolSaid(reqs []agent.ProviderRequest, prefix string) bool {
 	}
 	return false
 }
+
+// A model asks for the paths between two ends, reads the joins that answered, and answers with the
+// first one's program (#514 piece 5), as a tool role and as a text role. control: without the pack's
+// Shape the same script's paths is no action, and its turn fails.
+func TestAModelPicksAJoinFromPaths(t *testing.T) {
+	b := guide.Code(t)
+	v := b.Vocabulary()
+	shape := nl.Shape{Kinds: "node", Edges: []string{"calls", "contains"}, Refs: []nl.Ref{{Relation: "attr", Key: "callee"}}}
+	q := "which oneauth functions does goapp call?"
+	answer := `node(?from, "func"), str.glob(?from, "goapp/*"), contains(?from, ?n1), node(?n1, "callsite"), attr(?n1, "callee", ?to), node(?to, "func"), str.glob(?to, "oneauth/*") => ?to, ?from`
+	script := []string{`paths func str.glob(?x, "goapp/*") => func str.glob(?x, "oneauth/*")`, answer}
+	for _, text := range []bool{false, true} {
+		tr, err := New(v, &nl.Pack{Shape: &shape}, Config{Model: Role{Provider: scripted("small", map[string][]string{q: script}), TextActions: text}, Base: b, Actions: &nl.Actions{}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, trace, err := tr.Ask(context.Background(), q)
+		if err != nil || p.Text != answer || len(p.Rows) != 1 {
+			t.Fatalf("text %v: Ask = %q (%d rows), %v; steps %+v", text, p.Text, len(p.Rows), err, trace.Steps)
+		}
+		if len(trace.Steps) != 1 || !strings.Contains(trace.Steps[0].Result, `"goapp/svc.Auth", "oneauth/acct.Get"`) {
+			t.Errorf("text %v: steps %+v", text, trace.Steps)
+		}
+	}
+	tr, err := New(v, &nl.Pack{}, Config{Model: Role{Provider: scripted("small", map[string][]string{q: script}), TextActions: true}, Base: b, Actions: &nl.Actions{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, trace, _ := tr.Ask(context.Background(), q); len(trace.Steps) == 1 && strings.Contains(trace.Steps[0].Result, "oneauth/acct.Get") {
+		t.Errorf("control: without a Shape, paths answered %q", trace.Steps[0].Result)
+	}
+}
