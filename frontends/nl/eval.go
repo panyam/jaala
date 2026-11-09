@@ -27,6 +27,9 @@ type Case struct {
 	// across kinds", "aggregation" or "negation". They are the host's words: Summary counts each tag's
 	// outcomes apart, so a run says which kinds a model gets wrong.
 	Tags []string
+	// Reads, when set, are the relations a right program reads (#537), the vocabulary's names as
+	// written. A model profile's schema choice checks that the accepted program reads each of them.
+	Reads []string
 }
 
 // A Result is how one Case went: the program the translator accepted and its Trace, the rows it answered
@@ -40,6 +43,10 @@ type Result struct {
 	Err     error
 	// Took is the case's wall time: the translator's run and the evaluation over Eval's Base.
 	Took time.Duration
+	// WouldPass, for a case that abstained with a draft Eval could run, says whether that draft would
+	// have answered Want's rows (#537). A model profile's calibration reads it: an abstention is well
+	// placed when its draft was wrong. It is nil when there was no draft to run.
+	WouldPass *bool
 }
 
 // The outcomes a Result has (Result.Outcome).
@@ -152,6 +159,7 @@ func Eval(ctx context.Context, cases []Case, b *datalog.Base, translate func(ctx
 			res.Pass = res.Err == nil && sameRows(res.Got, c.Want, c.Ordered)
 		}
 		res.Took = time.Since(start)
+		res.WouldPass = wouldPass(ctx, res, b)
 		rep.add(res)
 	}
 	return rep
