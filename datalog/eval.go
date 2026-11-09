@@ -352,6 +352,7 @@ func evaluate(ctx context.Context, q Query, b *Base, opts []Option, rewrite func
 		return tab, localFix(err, q.Rules)
 	}
 	nb.run.explain = newExplainer(o.explain, &nb)
+	o.explain.Warnings = Lint(q)
 	tab, err := evaluateOn(&nb, gen, q, o, rewrite, fixpoint)
 	err = localFix(err, q.Rules)
 	nb.run.explain.finish(&nb, tab.Len(), err, o.budget)
