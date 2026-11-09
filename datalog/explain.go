@@ -70,6 +70,9 @@ type Report struct {
 	// nil when the Eval answered rows or failed, and when every literal of the goal passed something on,
 	// so a limit, offset or having dropped the rows.
 	Empty *EmptyReport `json:"empty,omitempty"`
+	// Warnings are Lint's, over the program as written (#477): likely mistakes that change no answer,
+	// filled whether or not the Eval succeeded.
+	Warnings []Warning `json:"warnings,omitempty"`
 }
 
 // An EmptyReport is the first literal of a body, in the order the body ran, that passed no binding on:
@@ -740,6 +743,9 @@ func (r *Report) String() string {
 	fmt.Fprintf(&sb, ", %d rows, %s\n", r.Rows, r.Elapsed.Round(time.Microsecond))
 	if r.Error != "" {
 		fmt.Fprintf(&sb, "error: %s\n", r.Error)
+	}
+	for _, w := range r.Warnings {
+		fmt.Fprintf(&sb, "warning: %s\n", w.Message)
 	}
 	if r.Empty != nil {
 		sb.WriteString("no rows: ")
