@@ -138,9 +138,8 @@ func (m *memory) compact(ask string, facts bool) []Turn {
 	return []Turn{{RoleUser, b.String()}}
 }
 
-// ledger is the facts split into findings and drafts, each list under its heading, "" when there
-// are none.
-func (m *memory) ledger(pr Prompts) string {
+// ledger is the facts split into findings and drafts, each under its heading.
+func (m *memory) ledger(pr Prompts) []LedgerPart {
 	var found, tried []string
 	for i, f := range m.facts {
 		if m.drafts[i] {
@@ -149,12 +148,5 @@ func (m *memory) ledger(pr Prompts) string {
 			found = append(found, f)
 		}
 	}
-	var parts []string
-	if len(found) > 0 {
-		parts = append(parts, pr.LedgerFound+"\n"+strings.Join(found, "\n"))
-	}
-	if len(tried) > 0 {
-		parts = append(parts, pr.LedgerTried+"\n"+strings.Join(tried, "\n"))
-	}
-	return strings.Join(parts, "\n\n")
+	return []LedgerPart{{pr.LedgerFound, strings.Join(found, "\n")}, {pr.LedgerTried, strings.Join(tried, "\n")}}
 }

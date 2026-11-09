@@ -34,6 +34,16 @@ func TestARepeatedActionCostsNoStep(t *testing.T) {
 		if len(trace.Steps) != 6 {
 			t.Fatalf("text %v: %d steps", text, len(trace.Steps))
 		}
+		for i, req := range rec.reqs {
+			for _, m := range req.Messages {
+				if m.Role == agent.RoleTool && strings.HasPrefix(m.Text, "tool call not permitted") {
+					t.Errorf("text %v: request %d: a repeat read as a denial: %q", text, i, m.Text)
+				}
+			}
+		}
+		if !text && !toolSaid(rec.reqs, d.TriedAgain) {
+			t.Errorf("no tool result carried the repeat's answer")
+		}
 		for i, prefix := range []string{d.TriedAgain, d.AskedAgain, d.AskedAgain} {
 			if r := trace.Steps[3+i].Result; !strings.Contains(r, prefix) {
 				t.Errorf("text %v: repeat %d sent back %q", text, i+1, r)
@@ -107,9 +117,10 @@ func samePenalties(a, b *agent.SamplingPenalties) bool {
 		f(a.DRYMultiplier, b.DRYMultiplier) && f(a.DRYBase, b.DRYBase) && n(a.DRYAllowedLength, b.DRYAllowedLength)
 }
 
-// With Ledger, every step's call after an action ends with the ledger as a system note; the first,
-// before anything happened, doesn't. chakra's guided finalizing call rewrites the answer without the
-// request stages, so it carries none. control: without Ledger, no call carries one.
+// With Ledger, every step's call after an action ends with the ledger in chakra's slots, as the
+// user's, under LedgerHeader with a slot per list; the first, before anything happened, doesn't.
+// chakra's guided finalizing call rewrites the answer without the request stages, so it carries none.
+// control: without Ledger, no call carries one.
 func TestTheLedgerFollowsTheConversation(t *testing.T) {
 	v, b := guide.Deps(t)
 	d := nl.DefaultPrompts()
@@ -128,7 +139,8 @@ func TestTheLedgerFollowsTheConversation(t *testing.T) {
 		for i, req := range rec.reqs[:2] {
 			ms := req.Messages
 			last := ms[len(ms)-1]
-			has := last.Role == agent.RoleSystem && strings.HasPrefix(last.Text, d.LedgerFound+"\n- values pkg.license")
+			found := "\n\n[" + strings.TrimSuffix(d.LedgerFound, ":") + "]\n- values pkg.license"
+			has := last.Role == agent.RoleUser && strings.HasPrefix(last.Text, d.LedgerHeader+found)
 			if want := ledger && i > 0; has != want {
 				t.Errorf("ledger %v: request %d ends with %q", ledger, i, last.Text)
 			}
@@ -168,4 +180,16 @@ func TestAModelBuildsItsProgramALiteralAtATime(t *testing.T) {
 	if p, _, err := tr.Ask(context.Background(), mitQ); err == nil {
 		t.Errorf("control: without Build the script answered %q", p.Text)
 	}
+}
+
+// toolSaid says some request carries a tool result opening with prefix.
+func toolSaid(reqs []agent.ProviderRequest, prefix string) bool {
+	for _, req := range reqs {
+		for _, m := range req.Messages {
+			if m.Role == agent.RoleTool && strings.HasPrefix(m.Text, prefix) {
+				return true
+			}
+		}
+	}
+	return false
 }

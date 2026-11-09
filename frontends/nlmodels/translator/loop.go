@@ -6,12 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
 	agent "github.com/panyam/chakra"
 	"github.com/panyam/jaala/frontends/nl"
-	"github.com/panyam/mcpkit/core"
 )
 
 // A role is a Role as the loop runs it: the provider, the generation settings it can take, and
@@ -38,7 +38,7 @@ func (r Role) runtime(label string, temp float64) *role {
 		}
 		rr.gen.Temperature = &temp
 	}
-	rr.gen.Penalties = sendable(r.Penalties, caps)
+	rr.gen.Penalties = caps.Sendable(r.Penalties)
 	switch {
 	case r.MaxTokens > 0:
 		rr.gen.MaxTokens = r.MaxTokens
@@ -53,31 +53,6 @@ func (r Role) runtime(label string, temp float64) *role {
 	}
 	rr.guide = !r.Thinking && caps.CanGuide(&agent.GuidedDecoding{Grammar: "root ::= \"x\""})
 	return rr
-}
-
-// sendable is p with only the kinds of penalty caps lists, nil when none is left.
-func sendable(p *agent.SamplingPenalties, caps agent.Capabilities) *agent.SamplingPenalties {
-	if p == nil {
-		return nil
-	}
-	var out agent.SamplingPenalties
-	can := func(kind string) bool { return slices.Contains(caps.Penalties, kind) }
-	if can(agent.PenaltyRepeat) {
-		out.Repeat, out.RepeatLastN = p.Repeat, p.RepeatLastN
-	}
-	if can(agent.PenaltyFrequency) {
-		out.Frequency = p.Frequency
-	}
-	if can(agent.PenaltyPresence) {
-		out.Presence = p.Presence
-	}
-	if can(agent.PenaltyDRY) {
-		out.DRYMultiplier, out.DRYBase, out.DRYAllowedLength = p.DRYMultiplier, p.DRYBase, p.DRYAllowedLength
-	}
-	if out == (agent.SamplingPenalties{}) {
-		return nil
-	}
-	return &out
 }
 
 // guided is the grammar r's answers are held to, nil when it takes none or there is none.
@@ -236,7 +211,6 @@ func (l *loop) turn(ctx context.Context, s *nl.Session, c *nl.Conversation, r *r
 	}
 	if tools := s.Tools(); tools != nil && !r.text {
 		cfg.Tools = l.tools(tools, c, r)
-		cfg.ToolMiddleware = []agent.ToolMiddleware{l.repeated(c, r)}
 	}
 	l.shown = nil
 	history := []agent.Message{{Role: agent.RoleUser, Text: c.Ask()}}
@@ -330,11 +304,17 @@ func (l *loop) language() string {
 	return ""
 }
 
-// emit keeps each step's tokens until a Step or Try takes them.
+// emit keeps each step's tokens until a Step or Try takes them, and the preview's block as the
+// retrieval stage put it before the question.
 func (l *loop) emit(e agent.Event) {
-	if e.Kind == agent.EventStep && e.Usage != nil {
+	switch {
+	case e.Kind == agent.EventStep && e.Usage != nil:
 		l.mu.Lock()
 		l.pending = add(l.pending, *e.Usage)
+		l.mu.Unlock()
+	case e.Kind == agent.EventRetrieved && e.Retrieval != nil && e.Retrieval.Block != "":
+		l.mu.Lock()
+		l.shown = &agent.Message{Role: agent.RoleUser, Text: e.Retrieval.Block}
 		l.mu.Unlock()
 	}
 }
@@ -393,26 +373,66 @@ func (l *loop) stages(s *nl.Session, c *nl.Conversation, r *role) []agent.StepSt
 		}})
 	}
 	if l.o.Actions != nil && l.o.Actions.Ledger {
-		st = append(st, agent.StepStage{Name: "jaala.translator.ledger", Scope: agent.ScopeRequest, Run: func(_ context.Context, _ agent.StepInfo, v agent.StepView) (agent.StepView, error) {
-			l.mu.Lock()
-			ledger := c.Ledger()
-			l.mu.Unlock()
-			if ledger != "" {
-				v.Messages = append(slices.Clip(v.Messages), agent.Message{Role: agent.RoleSystem, Text: ledger})
-			}
-			return v, nil
-		}})
+		st = append(st, l.ledger(s, c))
 	}
 	return st
 }
 
+// ledgerBytes caps each of the ledger's slots; past it the oldest lines go.
+const ledgerBytes = 8000
+
+// ledger shows the conversation's ledger (#514) in chakra's slots, one per list, under the session's
+// LedgerHeader and as the user's: before each call it writes both lists into their slots, and the
+// slots' stage puts them after the history for that call alone.
+func (l *loop) ledger(s *nl.Session, c *nl.Conversation) agent.StepStage {
+	var names []string
+	var specs []agent.SlotSpec
+	for i, p := range c.LedgerParts() {
+		name := strings.TrimSuffix(strings.TrimSpace(p.Heading), ":")
+		if name == "" || slices.Contains(names, name) {
+			name = fmt.Sprintf("ledger %d", i+1) // a pack's prompts may name the two alike
+		}
+		names = append(names, name)
+		specs = append(specs, agent.SlotSpec{Name: name, MaxBytes: ledgerBytes})
+	}
+	slots, err := agent.NewSlotsWith(agent.SlotsConfig{Specs: specs, Header: s.LedgerHeader(), AsUser: true})
+	if err != nil {
+		panic("translator: the ledger's slots: " + err.Error()) // the names are made distinct above
+	}
+	show := slots.StepStage()
+	return agent.StepStage{Name: "jaala.translator.ledger", Scope: agent.ScopeRequest, Run: func(ctx context.Context, info agent.StepInfo, v agent.StepView) (agent.StepView, error) {
+		l.mu.Lock()
+		parts := c.LedgerParts()
+		l.mu.Unlock()
+		for i, p := range parts {
+			if _, err := slots.Write(ctx, names[i], newest(p.Lines, ledgerBytes)); err != nil {
+				return v, err
+			}
+		}
+		return show.Run(ctx, info, v)
+	}}
+}
+
+// newest is text's last lines that fit in n bytes, whole lines only.
+func newest(text string, n int) string {
+	for len(text) > n {
+		_, rest, ok := strings.Cut(text, "\n")
+		if !ok {
+			return text[len(text)-n:]
+		}
+		text = rest
+	}
+	return text
+}
+
 // preview is chakra's retrieval stage over the session's Preview (#514): before the turn's first
 // call it puts a block of the pack's samples before the question, the pack's first target ranked
-// first, and keeps the block out of the turn's record. The block is kept in l.shown, so Compact's
-// stage, which rewrites the messages on every call, puts it back, and a vote's history carries it.
-// It goes as the user's, since a chat template may refuse a system message after the first.
+// first, and keeps the block out of the turn's record. emit keeps the block from the stage's event
+// (RetrievalInfo.Block) in l.shown, so Compact's stage, which rewrites the messages on every call,
+// puts it back, and a vote's history carries it. It goes as the user's, since a chat template may
+// refuse a system message after the first.
 func (l *loop) preview(s *nl.Session) agent.StepStage {
-	inner := agent.NewRetrievalStage(agent.RetrievalConfig{AsUser: true, Retrievers: []agent.Retriever{
+	return agent.NewRetrievalStage(agent.RetrievalConfig{AsUser: true, Retrievers: []agent.Retriever{
 		agent.NewRetriever("jaala.preview", func(ctx context.Context, _ agent.RetrievalQuery) ([]agent.Snippet, error) {
 			l.mu.Lock()
 			samples, err := s.Preview(ctx)
@@ -426,22 +446,6 @@ func (l *loop) preview(s *nl.Session) agent.StepStage {
 			}
 			return out, nil
 		})}})
-	return agent.StepStage{Name: "jaala.translator.preview", Scope: agent.ScopeTurn, Run: func(ctx context.Context, info agent.StepInfo, v agent.StepView) (agent.StepView, error) {
-		before := slices.Clone(v.Messages)
-		v, err := inner.Run(ctx, info, v)
-		if err != nil || len(v.Messages) == len(before) {
-			return v, err
-		}
-		for i, m := range v.Messages {
-			if i == len(before) || m.Role != before[i].Role || m.Text != before[i].Text {
-				l.mu.Lock()
-				l.shown = &m
-				l.mu.Unlock()
-				break
-			}
-		}
-		return v, nil
-	}}
 }
 
 // stuck is chakra's stuck detector over the turn's actions (#512): the same action twice in a row, or
@@ -513,31 +517,39 @@ type (
 // tools are the session's actions as chakra tools, each a Step in the Trace.
 func (l *loop) tools(ts []nl.Tool, c *nl.Conversation, r *role) agent.ToolSource {
 	src := agent.NewFuncSource()
-	act := func(ctx context.Context, action, arg string) string { return l.toolAct(ctx, c, r, action, arg) }
+	// a repeat is answered from before as chakra's free result (#517): the model reads it as the
+	// call's result, and the step is free while the turn is under MaxFreeRefusals
+	act := func(ctx context.Context, action, arg string) (string, error) {
+		result, repeat := l.toolAct(ctx, c, r, action, arg)
+		if repeat {
+			return "", &agent.FreeResultError{Text: result, Reason: "repeated " + action}
+		}
+		return result, nil
+	}
 	for _, t := range ts {
 		var err error
 		switch t.Action {
 		case nl.ActionValues:
 			err = agent.AddFunc(src, t.Action, t.Description, func(ctx context.Context, in targetArg) (string, error) {
-				return act(ctx, nl.ActionValues, in.Target), nil
+				return act(ctx, nl.ActionValues, in.Target)
 			}, agent.ReadOnly())
 		case nl.ActionTry:
 			err = agent.AddFunc(src, t.Action, t.Description, func(ctx context.Context, in draftArg) (string, error) {
-				return act(ctx, nl.ActionTry, in.Draft), nil
+				return act(ctx, nl.ActionTry, in.Draft)
 			}, agent.ReadOnly())
 		case nl.ActionAdd:
 			// add and drop change the body, so they aren't read-only: a step's calls run in order
 			err = agent.AddFunc(src, t.Action, t.Description, func(ctx context.Context, in literalArg) (string, error) {
-				return act(ctx, nl.ActionAdd, in.Literal), nil
+				return act(ctx, nl.ActionAdd, in.Literal)
 			})
 		case nl.ActionDrop:
 			err = agent.AddFunc(src, t.Action, t.Description, func(ctx context.Context, _ struct{}) (string, error) {
-				return act(ctx, nl.ActionDrop, ""), nil
+				return act(ctx, nl.ActionDrop, "")
 			})
 		default:
 			action := t.Action
 			err = agent.AddFunc(src, action, t.Description, func(ctx context.Context, in nameArg) (string, error) {
-				return act(ctx, action, in.Name), nil
+				return act(ctx, action, in.Name)
 			}, agent.ReadOnly())
 		}
 		if err != nil {
@@ -547,32 +559,15 @@ func (l *loop) tools(ts []nl.Tool, c *nl.Conversation, r *role) agent.ToolSource
 	return src
 }
 
-// toolAct runs an action a tool call asked for, charging its Step the last call's tokens.
-func (l *loop) toolAct(ctx context.Context, c *nl.Conversation, r *role, action, arg string) string {
+// toolAct runs an action a tool call asked for, charging its Step the last call's tokens, and says
+// whether it repeated one the conversation took.
+func (l *loop) toolAct(ctx context.Context, c *nl.Conversation, r *role, action, arg string) (string, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	u := l.pending
 	l.recorded, l.pending = add(l.recorded, u), agent.Usage{}
-	return l.act(ctx, c, r, action, arg, u)
-}
-
-// repeated answers a tool call that repeats an action the conversation took as a free refusal
-// (#517): the Conversation answers it from before and takes no step, so chakra's Runner takes none
-// either while the turn is under MaxFreeRefusals. Under a step budget a model cycling try, look, try,
-// find ran out of steps with nothing new run. The model reads the earlier result after chakra's
-// denial prefix. Any other call goes on to the tool.
-func (l *loop) repeated(c *nl.Conversation, r *role) agent.ToolMiddleware {
-	return func(ctx context.Context, info agent.ToolCallInfo, next agent.ToolCallFunc) (*core.ToolResult, error) {
-		action, arg := info.Call.Name, toolArg(info.Call)
-		l.mu.Lock()
-		repeat := c.Repeats(action, arg)
-		l.mu.Unlock()
-		if !repeat {
-			return next(ctx, info)
-		}
-		result := l.toolAct(ctx, c, r, action, arg)
-		return nil, &agent.ToolDeniedError{Reason: "repeated " + action, ModelReason: result, Free: true}
-	}
+	repeat := c.Repeats(action, arg)
+	return l.act(ctx, c, r, action, arg, u), repeat
 }
 
 // textAction runs the action a TextActions role's reply asks for while it has steps left, and returns

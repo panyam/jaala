@@ -75,8 +75,12 @@ type Prompts struct {
 	// CompactFound and CompactRefused head the memory's lists in Actions.Compact's one turn.
 	CompactFound, CompactRefused string
 	// LedgerFound and LedgerTried head Conversation.Ledger's two lists (#514): what the actions found,
-	// and the drafts tried with what each did.
+	// and the drafts tried with what each did. nlmodels' translator names a chakra slot after each,
+	// without a trailing colon.
 	LedgerFound, LedgerTried string
+	// LedgerHeader opens the ledger where a loop shows its lists apart (Session.LedgerHeader), as
+	// nlmodels' translator does in chakra's slots.
+	LedgerHeader string
 	// Extract follows the relations in every Extract prompt.
 	Extract string
 	// ExtractFix ends a refused extraction's feedback.
@@ -117,6 +121,7 @@ func DefaultPrompts() Prompts {
 		CompactRefused: "Your last answer was refused:",
 		LedgerFound:    "What your actions found so far:",
 		LedgerTried:    "Drafts you have tried, and what each did (don't send one again):",
+		LedgerHeader:   "What you have done on this question so far:",
 		Extract:        extractInstructions,
 		ExtractFix:     "Write all the lines again, fixed.",
 	}
@@ -139,7 +144,7 @@ func (p *Pack) prompts() Prompts {
 		{&h.ToolValues, &d.ToolValues}, {&h.ToolTry, &d.ToolTry}, {&h.ToolFind, &d.ToolFind}, {&h.Fix, &d.Fix}, {&h.FixEmpty, &d.FixEmpty},
 		{&h.EmptyFallback, &d.EmptyFallback}, {&h.Reask, &d.Reask}, {&h.Grounded, &d.Grounded},
 		{&h.Pick, &d.Pick}, {&h.PickRetry, &d.PickRetry}, {&h.CompactFound, &d.CompactFound},
-		{&h.CompactRefused, &d.CompactRefused}, {&h.LedgerFound, &d.LedgerFound}, {&h.LedgerTried, &d.LedgerTried},
+		{&h.CompactRefused, &d.CompactRefused}, {&h.LedgerFound, &d.LedgerFound}, {&h.LedgerTried, &d.LedgerTried}, {&h.LedgerHeader, &d.LedgerHeader},
 		{&h.Extract, &d.Extract}, {&h.ExtractFix, &d.ExtractFix},
 	} {
 		if *f.host != "" {
