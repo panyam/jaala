@@ -78,11 +78,12 @@ var errLowAgreement = errors.New("the drafts agreed too little on an answer")
 // run is one question: an nl.Session's pieces on chakra Runners (#496). It is what nl.Translate's loop was,
 // with chakra doing the asking: a turn per model, each reply judged by the session's Conversation as
 // a TurnEnd hook, the actions as tools, a vote as an agent.Consensus, and the fallback a turn of its
-// own over a fresh conversation.
-func (t *Translator) run(ctx context.Context, question string, o nl.Options, roles []*role) (nl.Program, nl.Trace, error) {
+// own over a fresh conversation. handoff, when set, is an earlier tier's draft the first role's
+// conversation starts from (Conversation.Handoff).
+func (t *Translator) run(ctx context.Context, question string, o nl.Options, roles []*role, handoff *nl.Try) (nl.Program, nl.Trace, error) {
 	l := &loop{t: t, o: o, start: time.Now()}
-	if o.Budget.Tokens > 0 {
-		ctx = agent.WithTreeBudget(ctx, agent.TreeBudget{MaxTokens: o.Budget.Tokens})
+	if o.Budget.Tokens > 0 || o.Budget.Calls > 0 {
+		ctx = agent.WithTreeBudget(ctx, agent.TreeBudget{MaxTokens: o.Budget.Tokens, MaxSteps: o.Budget.Calls})
 	}
 	l.parent = ctx
 	if o.Budget.Time > 0 {
@@ -164,8 +165,11 @@ func (t *Translator) run(ctx context.Context, question string, o nl.Options, rol
 	}
 	for k, r := range roles {
 		c := s.NewConversation(last, k == len(roles)-1)
-		if k == 0 && draft != nil {
+		switch {
+		case k == 0 && draft != nil:
 			c.From(*draft)
+		case k == 0 && handoff != nil:
+			c.Handoff(*handoff)
 		}
 		p, history, err := l.turn(ctx, s, c, r)
 		if err != nil {
@@ -779,8 +783,25 @@ func (l *loop) vote(ctx context.Context, s *nl.Session, r *role, history []agent
 
 // overBudget says the token budget is spent by the calls in the trace so far.
 func (l *loop) overBudget() bool {
+	if c := l.o.Budget.Calls; c > 0 && l.callsMade() >= c {
+		return true
+	}
 	b := l.o.Budget.Tokens
 	return b > 0 && l.spentAll().Tokens >= b
+}
+
+// callsMade counts the model calls every Try, Step and vote in the trace carried.
+func (l *loop) callsMade() int {
+	n := 0
+	for _, ts := range [][]nl.Try{l.tr.Tries, l.tr.Votes} {
+		for _, t := range ts {
+			n += t.Calls
+		}
+	}
+	for _, st := range l.tr.Steps {
+		n += st.Calls
+	}
+	return n
 }
 
 // drawnIn are the vote's draws that were asked, the failed included and the unstarted left out, as

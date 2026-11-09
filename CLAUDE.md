@@ -139,8 +139,13 @@ GOARCH=wasm go test ./ns` (#417 ran `ns` that way).
   draw; at temperature 0 a vote agrees by construction), keeps the rows most agree on (`voteKey`,
   `Session.Key`, a refused draft agreeing with nothing),
   and sets `Program.Confidence`; `Options.Escalate` moves a disputed answer to the fallback, keeping it
-  if nothing better comes (`Trace.Escalations`); `Options.Budget` caps tokens and time
-  (`*BudgetSpent`). `Options.Abstain` (`abstain.go`, #482) turns a disputed answer, running out of
+  if nothing better comes (`Trace.Escalations`); `Options.Budget` caps tokens, time and model calls
+  (`*BudgetSpent`; `Calls` is chakra's `TreeBudget.MaxSteps`). `Options.Tiers` (`tiers.go`, #538) is a per-call
+  policy, `local`, `local-then-frontier` or `frontier`, over the translator's `Model` (local) and `Fallback`
+  (frontier), each tier capped on its own: the translator's `tiered` runs the local tier judged by
+  `Abstain`, then the frontier one from `HandoffDraft`'s try through `Conversation.Handoff`
+  (`Prompts.Handoff`); `Try.Tier`, `Step.Tier`, `Trace.Tier`, and `Summary.Tiers` split cost by tier.
+  mcp's ask `mode` is the policy (`both` is `local-then-frontier`), `mcp.Options.Tiers` its caps. `Options.Abstain` (`abstain.go`, #482) turns a disputed answer, running out of
   tries or the budget into an `*Abstained` with the closest draft, through `Abstain.Judge`, and a model
   failing never abstains. `Try.Class` and `Result.Class` sort failures as grounding, construct,
   semantics, budget or model (and a case as `abstained`), reading a `CheckError` before `KindAnswer`, since datalog's order-by

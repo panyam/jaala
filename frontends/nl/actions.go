@@ -83,6 +83,8 @@ type Step struct {
 	// Calls is how many model calls the step's tokens came from, as Try.Calls: 0 for the second of
 	// two actions one reply asked for.
 	Calls int
+	// Tier is the tier whose model asked for it under Options.Tiers, "" without tiers.
+	Tier string
 }
 
 // The actions a reply can be.

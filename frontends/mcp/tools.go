@@ -439,11 +439,11 @@ func (c *call) explain(ctx core.ToolContext, in explainInput) (core.ToolResult, 
 	return core.TextResult(text), nil
 }
 
-const askDesc = `Ask a question about %s in plain language: the server writes a Datalog program (or, with language cypher, a Cypher query), checks and runs it, and answers with the program, its rows and each try it took. mode picks the models: local (the small one alone), frontier (the large one alone) or both (the small one, then the large one when it fails). Prefer query when you can write the program.`
+const askDesc = `Ask a question about %s in plain language: the server writes a Datalog program (or, with language cypher, a Cypher query), checks and runs it, and answers with the program, its rows and each try it took. mode picks the models: local (the small one alone), frontier (the large one alone) or local-then-frontier (the small one, then the large one from its closest draft when it has no answer; both is the same). Prefer query when you can write the program.`
 
 type askInput struct {
 	Question string `json:"question" jsonschema:"required" jsonschema_description:"The question, in plain language."`
-	Mode     string `json:"mode,omitempty" jsonschema_description:"local, frontier or both (the default)."`
+	Mode     string `json:"mode,omitempty" jsonschema_description:"local, frontier or local-then-frontier (the default; both is the same)."`
 	Language string `json:"language,omitempty" jsonschema_description:"What the model writes: datalog, or cypher when the server reads a Cypher graph. The server picks when empty."`
 	MaxWork  int64  `json:"max_work,omitempty" jsonschema_description:"Stop each draft past this much work; the server caps it too."`
 	Limit    int    `json:"limit,omitempty" jsonschema_description:"The most rows to return; the server caps it too."`
@@ -451,19 +451,27 @@ type askInput struct {
 }
 
 func (c *call) ask(ctx core.ToolContext, in askInput) (core.ToolResult, error) {
-	model, fallback := true, true
+	// the mode is a tier policy (#538); both is local-then-frontier's older name, and with no frontier
+	// model it asks the local one alone, as both did
+	policy := nl.TierLocalThenFrontier
 	switch in.Mode {
-	case "", "both":
-	case "local":
-		fallback = false
-	case "frontier":
+	case "", "both", nl.TierLocalThenFrontier:
 		if !c.o.Translator.HasFallback() {
-			return core.ErrorResult("this server has no frontier model; ask with mode local or both"), nil
+			policy = nl.TierLocal
 		}
-		model = false
+	case nl.TierLocal:
+		policy = nl.TierLocal
+	case nl.TierFrontier:
+		if !c.o.Translator.HasFallback() {
+			return core.ErrorResult("this server has no frontier model; ask with mode local or local-then-frontier"), nil
+		}
+		policy = nl.TierFrontier
 	default:
-		return core.ErrorResult(fmt.Sprintf("mode %q: want local, frontier or both", in.Mode)), nil
+		return core.ErrorResult(fmt.Sprintf("mode %q: want local, frontier or local-then-frontier", in.Mode)), nil
 	}
+	model, fallback := policy != nl.TierFrontier, policy != nl.TierLocal
+	tiers := c.o.Tiers
+	tiers.Policy = policy
 	lang := in.Language
 	if lang == "" {
 		lang = c.p.AskLanguage
@@ -484,7 +492,7 @@ func (c *call) ask(ctx core.ToolContext, in askInput) (core.ToolResult, error) {
 		return core.ErrorResult(err.Error() + c.budgetHint(err)), nil
 	}
 	p, tr, err := c.o.Translator.Translate(ctx, in.Question, nl.Options{
-		Base: b, Eval: c.evalOptions(in.MaxWork), Pack: &c.p.Pack, FrontEnd: fe, Abstain: c.o.Abstain,
+		Base: b, Eval: c.evalOptions(in.MaxWork), Pack: &c.p.Pack, FrontEnd: fe, Abstain: c.o.Abstain, Tiers: &tiers,
 	}, model, fallback)
 	var ab *nl.Abstained
 	if errors.As(err, &ab) {
@@ -527,7 +535,7 @@ func abstainedText(a *nl.Abstained) string {
 	return b.String()
 }
 
-// traceText is a line per try: the model, why it was refused, and its tokens.
+// traceText is a line per try: the model and its tier, why it was refused, and its tokens.
 func traceText(tr nl.Trace) string {
 	var b strings.Builder
 	b.WriteString("tries:\n")
@@ -536,7 +544,11 @@ func traceText(tr nl.Trace) string {
 		if try.Err == nil {
 			kind = "accepted"
 		}
-		fmt.Fprintf(&b, "  %d. %s: %s, %d tokens in, %d out\n", i+1, try.Model, kind, try.TokensIn, try.TokensOut)
+		model := try.Model
+		if try.Tier != "" {
+			model += " (" + try.Tier + ")"
+		}
+		fmt.Fprintf(&b, "  %d. %s: %s, %d tokens in, %d out\n", i+1, model, kind, try.TokensIn, try.TokensOut)
 	}
 	return b.String()
 }

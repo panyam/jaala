@@ -51,8 +51,11 @@ func translating(models ...testModel) *sessions {
 
 // withVocabulary gives o's sessions Translator, if it has one, the vocabulary v.
 func withVocabulary(o mcp.Options, v *ns.Vocabulary) {
-	if t, ok := o.Translator.(*sessions); ok {
+	switch t := o.Translator.(type) {
+	case *sessions:
 		t.v = v
+	case *tiering:
+		t.sessions.v = v
 	}
 }
 
