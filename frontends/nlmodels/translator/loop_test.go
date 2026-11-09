@@ -69,10 +69,10 @@ func TestEachStepAndTryCarriesItsOwnTokens(t *testing.T) {
 		t.Fatal(err)
 	}
 	// calls: 1 the look (10, 1), 2 the free answer (20, 2), 3 its guided rewrite (30, 3)
-	if len(trace.Steps) != 1 || trace.Steps[0].TokensIn != 10 || trace.Steps[0].TokensOut != 1 {
+	if len(trace.Steps) != 1 || trace.Steps[0].TokensIn != 10 || trace.Steps[0].TokensOut != 1 || trace.Steps[0].Calls != 1 {
 		t.Errorf("step %+v", trace.Steps)
 	}
-	if len(trace.Tries) != 1 || trace.Tries[0].TokensIn != 50 || trace.Tries[0].TokensOut != 5 {
+	if len(trace.Tries) != 1 || trace.Tries[0].TokensIn != 50 || trace.Tries[0].TokensOut != 5 || trace.Tries[0].Calls != 2 {
 		t.Errorf("try %+v", trace.Tries)
 	}
 	if m.calls != 3 {
@@ -233,10 +233,10 @@ func TestATextStepCarriesItsOwnTokens(t *testing.T) {
 		t.Fatal(err)
 	}
 	// calls: 1 the look (10, 1), 2 the answer (20, 2)
-	if len(trace.Steps) != 1 || trace.Steps[0].TokensIn != 10 || trace.Steps[0].TokensOut != 1 || trace.Steps[0].Model != "small" {
+	if len(trace.Steps) != 1 || trace.Steps[0].TokensIn != 10 || trace.Steps[0].TokensOut != 1 || trace.Steps[0].Model != "small" || trace.Steps[0].Calls != 1 {
 		t.Errorf("step %+v", trace.Steps)
 	}
-	if len(trace.Tries) != 1 || trace.Tries[0].TokensIn != 20 || trace.Tries[0].TokensOut != 2 {
+	if len(trace.Tries) != 1 || trace.Tries[0].TokensIn != 20 || trace.Tries[0].TokensOut != 2 || trace.Tries[0].Calls != 1 {
 		t.Errorf("try %+v", trace.Tries)
 	}
 	if m.calls != 2 {

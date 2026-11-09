@@ -202,6 +202,7 @@ type loop struct {
 
 	recorded agent.Usage // the part of the current turn's usage already on a Try or Step
 	pending  agent.Usage // the last step's tokens, not yet on a Step
+	calls    int         // the model calls since the last Try or Step
 	mark     time.Time   // when the last Try or Step was recorded, or the turn began
 }
 
@@ -274,7 +275,7 @@ func (l *loop) runTurn(ctx context.Context, cfg agent.RunnerConfig, r *role, mod
 	if err != nil {
 		return nil, err
 	}
-	l.recorded, l.pending, l.mark = agent.Usage{}, agent.Usage{}, time.Now()
+	l.recorded, l.pending, l.mark, l.calls = agent.Usage{}, agent.Usage{}, time.Now(), 0
 	req.Emit = l.emit
 	res, err := runner.RunTurn(ctx, req)
 	switch {
@@ -337,6 +338,7 @@ func (l *loop) emit(e agent.Event) {
 	case e.Kind == agent.EventStep && e.Usage != nil:
 		l.mu.Lock()
 		l.pending = add(l.pending, *e.Usage)
+		l.calls++
 		l.mu.Unlock()
 	case e.Kind == agent.EventRetrieved && e.Retrieval != nil && e.Retrieval.Block != "":
 		l.mu.Lock()
@@ -345,16 +347,20 @@ func (l *loop) emit(e agent.Event) {
 	}
 }
 
-// try is the reply text as a Try from r, carrying the tokens the turn spent since the last Try or
-// Step (the reply's own call, and a guided call that rewrote it).
+// try is the reply text as a Try from r, carrying the tokens and calls the turn spent since the last
+// Try or Step (the reply's own call, and a guided call that rewrote it).
 func (l *loop) try(r *role, text string, turn agent.Usage) nl.Try {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	u := sub(turn, l.recorded)
+	calls := l.calls
+	if u != l.pending {
+		calls++ // chakra's guided finalizing call raises no EventStep, only the turn's usage
+	}
 	l.recorded, l.pending = turn, agent.Usage{}
 	now := time.Now()
-	try := nl.Try{Model: r.label, Text: text, TokensIn: u.InputTokens, TokensOut: u.OutputTokens, TokensCached: u.CachedInputTokens, Latency: now.Sub(l.mark)}
-	l.mark = now
+	try := nl.Try{Model: r.label, Text: text, TokensIn: u.InputTokens, TokensOut: u.OutputTokens, TokensCached: u.CachedInputTokens, Latency: now.Sub(l.mark), Calls: calls}
+	l.mark, l.calls = now, 0
 	return try
 }
 
@@ -650,8 +656,8 @@ func (l *loop) act(ctx context.Context, c *nl.Conversation, r *role, action, arg
 	result := c.Act(ctx, action, arg)
 	now := time.Now()
 	l.tr.Steps = append(l.tr.Steps, nl.Step{Model: r.label, Action: action, Text: nl.ActionText(action, arg), Result: result, After: len(l.tr.Tries),
-		TokensIn: u.InputTokens, TokensOut: u.OutputTokens, TokensCached: u.CachedInputTokens, Latency: now.Sub(l.mark)})
-	l.mark = now
+		TokensIn: u.InputTokens, TokensOut: u.OutputTokens, TokensCached: u.CachedInputTokens, Latency: now.Sub(l.mark), Calls: l.calls})
+	l.mark, l.calls = now, 0
 	return result
 }
 
@@ -735,7 +741,7 @@ func (l *loop) vote(ctx context.Context, s *nl.Session, r *role, history []agent
 				return s.Key(first), true
 			}
 			u := res.Usage
-			try, p, err := s.Draw(ctx, nl.Try{Model: r.label, Text: r.answer(res.Text), TokensIn: u.InputTokens, TokensOut: u.OutputTokens, TokensCached: u.CachedInputTokens})
+			try, p, err := s.Draw(ctx, nl.Try{Model: r.label, Text: r.answer(res.Text), TokensIn: u.InputTokens, TokensOut: u.OutputTokens, TokensCached: u.CachedInputTokens, Calls: 1})
 			mu.Lock()
 			drawn[res] = struct {
 				try  nl.Try
@@ -760,7 +766,7 @@ func (l *loop) vote(ctx context.Context, s *nl.Session, r *role, history []agent
 		case d.Result != nil:
 			l.tr.Votes = append(l.tr.Votes, drawn[d.Result].try)
 		case d.Err != "" && (res.Stopped == nil || d.Err != res.Stopped.Error()):
-			l.tr.Votes = append(l.tr.Votes, nl.Try{Model: r.label, Language: l.language(), Err: errors.New(d.Err), Kind: nl.KindModel})
+			l.tr.Votes = append(l.tr.Votes, nl.Try{Model: r.label, Language: l.language(), Err: errors.New(d.Err), Kind: nl.KindModel, Calls: 1})
 		}
 	}
 	if res.Winner != nil && res.Winner != prior {

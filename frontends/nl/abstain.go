@@ -28,6 +28,9 @@ const (
 	AbstainNoAnswer     = "no answer"     // every try was refused
 	AbstainRepeat       = "repeat"        // every try was refused, the last for repeating one
 	AbstainBudget       = "budget"        // Options.Budget ran out
+	// AbstainAgent is a host's own agent saying it had no answer, for a host grading an agent through
+	// Eval: its translate returns an *Abstained with this Reason.
+	AbstainAgent = "agent"
 )
 
 // Abstained is the translator saying it has no answer it's confident of (Options.Abstain), with the draft

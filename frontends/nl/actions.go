@@ -80,6 +80,9 @@ type Step struct {
 	After                             int
 	TokensIn, TokensOut, TokensCached int
 	Latency                           time.Duration
+	// Calls is how many model calls the step's tokens came from, as Try.Calls: 0 for the second of
+	// two actions one reply asked for.
+	Calls int
 }
 
 // The actions a reply can be.

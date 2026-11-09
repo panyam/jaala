@@ -117,7 +117,11 @@ GOARCH=wasm go test ./ns` (#417 ran `ns` that way).
   instructions. `nl.DataCard(ctx, b)` writes the generic half of `Card` with one counting program per
   argument (named variables, so `count` counts facts); #347's MCP server reads the same pack.
   `nl.Eval` (#326) scores a `translate` func over `Case`s, matching a row by its values as a multiset
-  (the model picks the columns' names and order) and rows as a multiset unless `Ordered`. `TestEval`
+  (the model picks the columns' names and order) and rows as a multiset unless `Ordered`. A Result's `Outcome` is pass, wrong or abstain (an `*Abstained` error, `AbstainAgent` for a host's own
+  agent), `Case.Tags` group `Report.Summary(prices)`, and `nl.Record` (`record.go`, #536) is a run as JSON:
+  `Write` a file per run, `ReadRecords`, `HistoryTable`. A Try's or Step's `Calls` counts its model calls,
+  the loop adding one for chakra's guided finalizing call, which raises no `EventStep`; a model with no
+  `Prices` entry is `Cost.Unpriced`, never free. `TestEval`
   (in `frontends/nlmodels/translator` since #496) is #322's exercise until Declaire's arm runs: the
   guide's vocabulary, a scripted small model and fallback (`byQuestion`), and the report in its
   `testdata/eval.golden` (`-update`).

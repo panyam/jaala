@@ -23,6 +23,10 @@ type Case struct {
 	Question string
 	Want     [][]string
 	Ordered  bool
+	// Tags name the kinds of query the question needs (#536), such as "one hop", "closure", "join
+	// across kinds", "aggregation" or "negation". They are the host's words: Summary counts each tag's
+	// outcomes apart, so a run says which kinds a model gets wrong.
+	Tags []string
 }
 
 // A Result is how one Case went: the program the translator accepted and its Trace, the rows it answered
@@ -34,6 +38,39 @@ type Result struct {
 	Got     [][]string
 	Pass    bool
 	Err     error
+	// Took is the case's wall time: the translator's run and the evaluation over Eval's Base.
+	Took time.Duration
+}
+
+// The outcomes a Result has (Result.Outcome).
+const (
+	OutcomePass    = "pass"    // it answered Want's rows
+	OutcomeWrong   = "wrong"   // it answered other rows, or failed
+	OutcomeAbstain = "abstain" // it said it had no answer it was confident of
+)
+
+// Outcome is pass, wrong or abstain (#536). An abstention is its own outcome, not a wrong answer: a
+// caller acting on the answer loses less to none than to a wrong one. A case abstains when the
+// translator's error is an *Abstained, Options.Abstain's or a host's own agent's (AbstainAgent). A
+// model that failed, a spent budget without Abstain.Budget and a wrong program are all wrong.
+func (r Result) Outcome() string {
+	var ab *Abstained
+	switch {
+	case r.Pass:
+		return OutcomePass
+	case errors.As(r.Err, &ab):
+		return OutcomeAbstain
+	}
+	return OutcomeWrong
+}
+
+// AbstainReason is the Abstained's Reason for a case that abstained, and "" otherwise.
+func (r Result) AbstainReason() string {
+	var ab *Abstained
+	if !r.Pass && errors.As(r.Err, &ab) {
+		return ab.Reason
+	}
+	return ""
 }
 
 // FirstTry reports whether the case passed with the first draft.
@@ -87,6 +124,9 @@ type Report struct {
 	Failures map[string]int
 	// Repairs counts the drafts the harness repaired itself and then accepted (Try.Repair).
 	Repairs int
+	// Wrong and Abstained count the cases by Result.Outcome, beside Passed: an abstention isn't a
+	// wrong answer.
+	Wrong, Abstained int
 }
 
 // Eval runs each case's question through translate and scores its answer over b (#326). translate is
@@ -101,6 +141,7 @@ func Eval(ctx context.Context, cases []Case, b *datalog.Base, translate func(ctx
 			break
 		}
 		res := Result{Case: c}
+		start := time.Now()
 		res.Program, res.Trace, res.Err = translate(ctx, c.Question)
 		if res.Err == nil {
 			rows := res.Program.Rows
@@ -110,6 +151,7 @@ func Eval(ctx context.Context, cases []Case, b *datalog.Base, translate func(ctx
 			res.Got = rowsText(rows)
 			res.Pass = res.Err == nil && sameRows(res.Got, c.Want, c.Ordered)
 		}
+		res.Took = time.Since(start)
 		rep.add(res)
 	}
 	return rep
@@ -117,11 +159,16 @@ func Eval(ctx context.Context, cases []Case, b *datalog.Base, translate func(ctx
 
 func (rep *Report) add(res Result) {
 	rep.Cases = append(rep.Cases, res)
-	if res.Pass {
+	switch res.Outcome() {
+	case OutcomePass:
 		rep.Passed++
 		if res.FirstTry() {
 			rep.PassedFirstTry++
 		}
+	case OutcomeWrong:
+		rep.Wrong++
+	case OutcomeAbstain:
+		rep.Abstained++
 	}
 	if c := res.Class(); c != "" {
 		if rep.Failures == nil {
