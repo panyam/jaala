@@ -87,9 +87,13 @@ func (s *script) turn(req agent.ProviderRequest) (agent.StubTurn, error) {
 		return agent.StubTurn{Text: r}, nil
 	}
 	if name, arg, ok := textAction(r); ok {
-		key := map[string]string{nl.ActionLook: "name", nl.ActionFind: "name", nl.ActionValues: "target", nl.ActionTry: "draft"}[name]
+		key := map[string]string{nl.ActionLook: "name", nl.ActionFind: "name", nl.ActionValues: "target", nl.ActionTry: "draft", nl.ActionAdd: "literal"}[name]
+		args := map[string]string{}
+		if key != "" {
+			args[key] = arg
+		}
 		var tc agent.ToolCall
-		raw, _ := json.Marshal(map[string]any{"id": fmt.Sprintf("call-%d", s.asked[q]), "name": name, "args": map[string]string{key: arg}})
+		raw, _ := json.Marshal(map[string]any{"id": fmt.Sprintf("call-%d", s.asked[q]), "name": name, "args": args})
 		if err := json.Unmarshal(raw, &tc); err != nil {
 			return agent.StubTurn{}, err
 		}
@@ -104,8 +108,10 @@ func textAction(r string) (action, arg string, ok bool) {
 	first, rest, _ := strings.Cut(r, "\n")
 	word, inline, _ := strings.Cut(strings.TrimSpace(first), " ")
 	switch word {
-	case nl.ActionLook, nl.ActionValues, nl.ActionFind:
+	case nl.ActionLook, nl.ActionValues, nl.ActionFind, nl.ActionAdd:
 		return word, strings.TrimSpace(inline), rest == "" && strings.TrimSpace(inline) != ""
+	case nl.ActionDrop:
+		return word, "", rest == "" && strings.TrimSpace(inline) == ""
 	case nl.ActionTry:
 		d := strings.TrimSpace(strings.TrimSpace(inline) + "\n" + rest)
 		return word, d, d != ""

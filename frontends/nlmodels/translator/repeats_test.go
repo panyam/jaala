@@ -135,3 +135,37 @@ func TestTheLedgerFollowsTheConversation(t *testing.T) {
 		}
 	}
 }
+
+// A model building its program a literal at a time (#514) adds, sees a wrong value answer nothing at
+// the literal that wrote it, drops it, adds the right one and answers with the tail alone, as a tool
+// role and as a text role. control: the same script without Build can't take an add, and its tail
+// alone never parses.
+func TestAModelBuildsItsProgramALiteralAtATime(t *testing.T) {
+	v, b := guide.Deps(t)
+	script := []string{"add pkg(?p, ?l)", `add ?l = "mit"`, "drop", `add ?l = "MIT"`, "=> ?p"}
+	for _, text := range []bool{false, true} {
+		rec := &recordingProvider{Provider: scripted("small", map[string][]string{mitQ: script})}
+		tr, err := New(v, nil, Config{Model: Role{Provider: rec, TextActions: text}, Base: b, Actions: &nl.Actions{Build: true}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, trace, err := tr.Ask(context.Background(), mitQ)
+		if err != nil || p.Text != `pkg(?p, ?l), ?l = "MIT" => ?p` {
+			t.Fatalf("text %v: Ask = %q, %v; tries %+v", text, p.Text, err, trace.Tries)
+		}
+		if len(trace.Steps) != 4 || !strings.Contains(trace.Steps[1].Result, "no rows") || !strings.HasPrefix(trace.Steps[2].Result, "Dropped") {
+			t.Errorf("text %v: steps %+v", text, trace.Steps)
+		}
+		if len(trace.Tries) != 1 {
+			t.Errorf("text %v: %d tries", text, len(trace.Tries))
+		}
+	}
+	ctl := &recordingProvider{Provider: scripted("small", map[string][]string{mitQ: script})}
+	tr, err := New(v, nil, Config{Model: Role{Provider: ctl, TextActions: true}, Base: b, Actions: &nl.Actions{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p, _, err := tr.Ask(context.Background(), mitQ); err == nil {
+		t.Errorf("control: without Build the script answered %q", p.Text)
+	}
+}
