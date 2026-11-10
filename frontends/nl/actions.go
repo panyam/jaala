@@ -92,6 +92,8 @@ type Step struct {
 	Calls int
 	// Tier is the tier whose model asked for it under Options.Tiers, "" without tiers.
 	Tier string
+	// Truncated says the call reached its token cap, as Try.Truncated does.
+	Truncated bool
 }
 
 // The actions a reply can be.

@@ -138,6 +138,10 @@ type Try struct {
 	Calls int
 	// Tier is the tier whose model wrote it under Options.Tiers, "" without tiers.
 	Tier string
+	// Truncated says a model call behind it wrote as many tokens as its cap allowed, so the reply was
+	// likely cut off (#549): Text is then what came before the cap, and its refusal says little about
+	// the model. A reasoning model's hidden reasoning counts toward the cap too.
+	Truncated bool
 	// Report is what evaluating the draft over Options.Base did (datalog.Explain), when it was
 	// evaluated: its work per rule and literal, and for an empty answer, Report.Empty.
 	Report *datalog.Report

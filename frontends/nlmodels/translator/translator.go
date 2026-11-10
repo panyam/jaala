@@ -28,6 +28,8 @@ const (
 	// before the program.
 	MaxTokens         = 512
 	ThinkingMaxTokens = 3072
+	// ReasoningMaxTokens caps a Reasoning model's reply, whose hidden reasoning counts against it.
+	ReasoningMaxTokens = 16384
 )
 
 // A Role is one model the translator asks: the provider and how to ask it.
@@ -40,7 +42,8 @@ type Role struct {
 	// Temperature replaces the role's default (ModelTemperature, FallbackTemperature). It is sent only
 	// to a provider whose agent.CapabilitiesOf says it takes one, so an Anthropic role needs no setting.
 	Temperature *float64
-	// MaxTokens replaces the role's default (MaxTokens, or ThinkingMaxTokens when Thinking).
+	// MaxTokens replaces the role's default (MaxTokens, ThinkingMaxTokens when Thinking, or
+	// ReasoningMaxTokens when Reasoning).
 	MaxTokens int
 	// Penalties turn on chakra's sampling penalties for the role's calls (#517): repeat, frequency,
 	// presence and DRY, for a model that repeats itself until its token limit
@@ -56,6 +59,13 @@ type Role struct {
 	// (#485). Like DefaultThinkPrompt it should ask for the program in a fenced block, which is what
 	// is read as the draft.
 	ThinkPrompt string
+	// Reasoning is for a model that reasons before it replies and is billed for it against the reply's
+	// cap (#549): gpt-5.x and the o-series through chakra's Responses provider, or Claude with
+	// thinking. Its cap is ReasoningMaxTokens, since 512 can go to reasoning before the program is
+	// written, and chakra hands a reply the cap cut off on as the answer. It sends no grammar, as
+	// Thinking doesn't. Unlike Thinking it adds no prompt and reads the whole reply as the draft, since
+	// the reasoning never reaches the reply's text.
+	Reasoning bool
 	// TextActions is for a model that can't call tools (#509), such as Qwen2.5-Coder behind
 	// llama-server, which writes a tool call as JSON in its text. Such a role is offered no tools.
 	// Its prefix lists the actions, and it takes one by writing it as its reply (look NAME, values
