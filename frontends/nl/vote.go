@@ -109,6 +109,8 @@ func (t Try) Class() string {
 		return ""
 	case t.Kind == KindModel:
 		return ClassModel
+	case t.Kind == KindDeclined:
+		return ClassAbstained
 	case errors.Is(t.Err, errEmpty):
 		return ClassGrounding
 	case errors.As(t.Err, &bs), errors.As(t.Err, &be):

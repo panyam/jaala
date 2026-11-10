@@ -26,6 +26,7 @@ func hostPrompts() *nl.Prompts {
 		Stuck:                "H-STUCK %s",
 		DraftFirst:           "H-DRAFTFIRST %[3]s|%[1]s|%[2]s",
 		Handoff:              "H-HANDOFF %[3]s|%[1]s|%[2]s",
+		Decline:              "H-DECLINE %s\n",
 		ToolLook:             "H-TOOLLOOK",
 		ToolValues:           "H-TOOLVALUES %s",
 		ToolTry:              "H-TOOLTRY",
