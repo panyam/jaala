@@ -3,8 +3,8 @@ module github.com/panyam/jaala/frontends/cypher
 go 1.26.4
 
 require (
-	github.com/panyam/jaala v0.1.101
-	github.com/panyam/jaala/frontends/nl v0.1.101
+	github.com/panyam/jaala v0.1.102
+	github.com/panyam/jaala/frontends/nl v0.1.102
 )
 
 replace github.com/panyam/jaala => ../../
