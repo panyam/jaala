@@ -382,16 +382,18 @@ func (l *loop) try(r *role, text string, turn agent.Usage) nl.Try {
 // preset builds the turn's RunnerConfig from chakra's graph-query preset (#528) with jaala's parts:
 // the prefix and grammar, the actions as tools, the Conversation's judging as Check, the preview as
 // its retriever, the ledger's slots synced from the Conversation, and the stuck detector keyed by
-// actionKey with Prompts.Stuck as its note. The Conversation answers repeats itself (#517), so the
+// actionKey with Prompts.Stuck as its note, after collapsing the repeat when Actions.Collapse is set
+// (#547). The Conversation answers repeats itself (#517), so the
 // preset's repeat cache is off. jaala's own stages then go in: actions replaces StageActions, since
 // jaala counts the Conversation's steps and holds a text role to FinalGrammar, and compaction, the
 // time limit and the call's label are added after.
 func (l *loop) preset(s *nl.Session, c *nl.Conversation, r *role, prefix, grammar string, check agent.TurnEndHook) (agent.RunnerConfig, error) {
+	key := func(rec agent.StepRecord) (agent.StuckKey, bool) { return actionKey(r, rec) }
 	g := presets.GraphQuery{
 		Provider:     r.provider,
 		Instructions: prefix + r.think,
 		Check:        check,
-		StuckKey:     func(rec agent.StepRecord) (agent.StuckKey, bool) { return actionKey(r, rec) },
+		StuckKey:     key,
 		StuckNote:    func(f agent.StuckFinding) string { return s.StuckNote(f.String()) },
 		StillStuck: func(_ context.Context, _ agent.StepInfo, v agent.StepView, _ agent.StuckFinding) (agent.StepView, error) {
 			l.mu.Lock()
@@ -410,6 +412,9 @@ func (l *loop) preset(s *nl.Session, c *nl.Conversation, r *role, prefix, gramma
 	}
 	if r.guide {
 		g.Grammar = grammar
+	}
+	if a := l.o.Actions; a != nil && a.Collapse {
+		g.FirstStuck = agent.CollapseStuckSteps(key) // keyed as the detector is, so both mean one repeat
 	}
 	if t := r.gen.Temperature; t != nil {
 		g.Tuning.Temperature = *t

@@ -36,6 +36,13 @@ type Actions struct {
 	// what it has found: each action with its result, each refused answer on a line, and the last
 	// refusal whole. A small model's drafts get worse as its context grows (#393).
 	Compact bool
+	// Collapse drops a repeated action's later copies, with their results, from the next model call
+	// once the stuck detector first finds the repeat (#547, chakra's CollapseStuckSteps), so the model
+	// reads its attempt once and then the note (Prompts.Stuck). The Trace keeps every step. Dropping
+	// messages from the middle of the conversation ends a prompt cache there, so llama.cpp re-reads
+	// the rest of the prompt for that call. Under Compact it changes nothing, since that one turn
+	// already holds each action once. The translator acts on it; a host's own loop doesn't need to.
+	Collapse bool
 	// Ledger shows the model, on every call after the conversation, what its actions found and each
 	// draft it tried with what that did (Conversation.Ledger, #514), so a small model keeps them in
 	// view without rereading the transcript. With Compact, the one turn leaves those lines to it. The
