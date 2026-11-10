@@ -158,6 +158,8 @@ GOARCH=wasm go test ./ns` (#417 ran `ns` that way).
   exactly one other spelling (`spelling`: letters and digits, lower-cased) rewritten, from those and
   the refused argument's Domain (`domainOf`); the rewrite is kept only if it then passes, as a `Try`
   with `Repair`. `Actions.Compact` sends `memory.compact`'s one turn instead of the conversation.
+  `Actions.Collapse` (#547) sets the preset's `FirstStuck` to chakra's `CollapseStuckSteps`, keyed by
+  `actionKey` as `StuckKey` is; off by default, a no-op under Compact (`collapse_test.go`).
   `Actions.Ledger` (#514) shows `Conversation.LedgerParts` on every step's call, each list written to
   a chakra slot (`NewSlotsWith`, v0.3.2, header `Prompts.LedgerHeader`, as the user's) by a request
   stage, so chakra's guided finalizing call carries none: findings and drafts apart, `memory.drafts`
