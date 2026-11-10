@@ -170,6 +170,9 @@ const (
 	KindRepeat = "repeat"
 	KindModel  = "model"
 	KindAnswer = "answer"
+	// KindDeclined is a reply saying the data can't answer the question (Abstain.Declined), whose Err
+	// is a *Declined.
+	KindDeclined = "declined"
 )
 
 // instructions follow the card in every Session's Prefix.
@@ -205,7 +208,7 @@ func promptPrefix(v *ns.Vocabulary, o Options) (head, actions, tail string, err 
 		if err != nil {
 			return "", "", "", err
 		}
-		head = card + o.Pack.prompts().Instructions
+		head = card + o.Pack.prompts().Instructions + o.declineLine("program")
 		if o.Actions != nil {
 			actions = actionsPrefix(nil, o.grounder != nil, o.Actions.builds(nil), o.offersPaths(), o.Pack.prompts())
 		}
@@ -235,7 +238,7 @@ func promptPrefix(v *ns.Vocabulary, o Options) (head, actions, tail string, err 
 	if s, ok := o.Pack.prompts().FrontEndInstructions[fe.Language()]; ok {
 		instr = s
 	}
-	head = card + instr
+	head = card + instr + o.declineLine("query")
 	if o.Actions != nil {
 		actions = actionsPrefix(fe, o.grounder != nil, false, false, o.Pack.prompts())
 	}

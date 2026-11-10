@@ -20,6 +20,12 @@ type Abstain struct {
 	NoAnswer bool
 	// Budget abstains when Options.Budget runs out.
 	Budget bool
+	// Declined lets the model answer that the data can't answer the question (#551), with a line
+	// saying why (Prompts.Decline), in place of a program. Without it the model can only write a
+	// program, and on a question nothing answers a frontier model wrote one that runs and answers
+	// wrongly. A model that declines ends its turn; a fallback or frontier tier left is asked, and
+	// when none answers the translator abstains with AbstainDeclined and the model's words.
+	Declined bool
 }
 
 // The reasons an Abstained gives.
@@ -28,6 +34,7 @@ const (
 	AbstainNoAnswer     = "no answer"     // every try was refused
 	AbstainRepeat       = "repeat"        // every try was refused, the last for repeating one
 	AbstainBudget       = "budget"        // Options.Budget ran out
+	AbstainDeclined     = "declined"      // the model said the data can't answer it (Abstain.Declined)
 	// AbstainAgent is a host's own agent saying it had no answer, for a host grading an agent through
 	// Eval: its translate returns an *Abstained with this Reason.
 	AbstainAgent = "agent"
@@ -62,6 +69,15 @@ func (a *Abstained) Error() string {
 
 func (a *Abstained) Unwrap() error { return a.Err }
 
+// A Declined is a model's reply that the data can't answer the question (Abstain.Declined): the model
+// and the reason it gave. It ends the model's turn as Verdict.Stop, and a try of KindDeclined
+// carries it.
+type Declined struct {
+	Model, Why string
+}
+
+func (d *Declined) Error() string { return "nl: the model declined: " + d.Why }
+
 // ErrNoProgram is what a translation fails with when every model ran out of tries, or stopped,
 // with no draft accepted: the translator's error wraps it, and so must another loop's for Abstain.Judge
 // to read it as no answer.
@@ -75,6 +91,7 @@ func (a *Abstain) Judge(p Program, tr Trace, err error) (Program, Trace, error) 
 		return p, tr, err
 	}
 	var spent *BudgetSpent
+	var declined *Declined
 	switch {
 	case err == nil:
 		if a.MinAgreement > 0 && p.Confidence.Agreement() < a.MinAgreement {
@@ -85,6 +102,8 @@ func (a *Abstain) Judge(p Program, tr Trace, err error) (Program, Trace, error) 
 		if a.Budget {
 			return Program{}, tr, closest(AbstainBudget, tr, err)
 		}
+	case a.Declined && errors.As(err, &declined):
+		return Program{}, tr, &Abstained{Reason: AbstainDeclined, Diagnosis: declined.Why, Err: err}
 	case errors.Is(err, ErrNoProgram):
 		n := len(tr.Tries)
 		if !a.NoAnswer || n > 0 && tr.Tries[n-1].Kind == KindModel {
@@ -105,7 +124,7 @@ func closest(reason string, tr Trace, err error) *Abstained {
 	a := &Abstained{Reason: reason, Err: err, Diagnosis: err.Error()}
 	best, rank := -1, 0
 	for i, t := range tr.Tries {
-		if t.Err == nil || t.Kind == KindRepeat || t.Kind == KindModel {
+		if t.Err == nil || t.Kind == KindRepeat || t.Kind == KindModel || t.Kind == KindDeclined {
 			continue
 		}
 		r := 1

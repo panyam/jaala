@@ -374,3 +374,16 @@ func TestAskSaysWhenItIsNotConfident(t *testing.T) {
 		t.Errorf("control: a model that fails, %+v", res.Content)
 	}
 }
+
+// With Abstain.Declined, a model saying the data can't answer comes back as an ordinary answer: not
+// confident, declined, and the model's reason, with no draft to offer.
+func TestAskSaysWhenTheModelDeclines(t *testing.T) {
+	small := &scripted{name: "small", replies: []string{"none: no road leads from a"}}
+	res := call(t, dial(t, pack, mcp.Options{Translator: translating(small), Abstain: &nl.Abstain{Declined: true}}), "ask", map[string]any{"question": "which town is next after a?"})
+	text := res.Content[0].Text
+	for _, want := range []string{"not confident (declined): no answer.", "no draft to offer: no road leads from a", "1. small: declined"} {
+		if res.IsError || !strings.Contains(text, want) {
+			t.Errorf("ask lacks %q (error %v):\n%s", want, res.IsError, text)
+		}
+	}
+}

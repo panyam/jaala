@@ -150,7 +150,10 @@ GOARCH=wasm go test ./ns` (#417 ran `ns` that way).
   (`Prompts.Handoff`); `Try.Tier`, `Step.Tier`, `Trace.Tier`, and `Summary.Tiers` split cost by tier.
   mcp's ask `mode` is the policy (`both` is `local-then-frontier`), `mcp.Options.Tiers` its caps. `Options.Abstain` (`abstain.go`, #482) turns a disputed answer, running out of
   tries or the budget into an `*Abstained` with the closest draft, through `Abstain.Judge`, and a model
-  failing never abstains. `Try.Class` and `Result.Class` sort failures as grounding, construct,
+  failing never abstains. `Abstain.Declined` (`decline.go`, #551) offers the model `none:` and a reason
+  (`Prompts.Decline`, which must say counting is the program's work, or gpt-5.5 declined to count), the
+  answer grammar's root renamed `drafted`; `Judge` reads it as `KindDeclined` and `Verdict.Stop` with a
+  `*Declined`, and `Abstain.Judge` gives `AbstainDeclined`; `closest` never offers a decline. `Try.Class` and `Result.Class` sort failures as grounding, construct,
   semantics, budget or model (and a case as `abstained`), reading a `CheckError` before `KindAnswer`, since datalog's order-by
   kind is spelled `answer` too; `Report.Failures` counts them, outside `String`, so goldens hold.
   With `Actions`, `state.go`'s `memory` keeps the text values actions showed (`act` returns them), and

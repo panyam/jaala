@@ -58,6 +58,11 @@ type Prompts struct {
 	// the model's turn with actions starts from that draft rather than from nothing. Placeholders:
 	// the draft, why it was refused, and "program" or "query".
 	DraftFirst string
+	// Decline follows the instructions under Abstain.Declined (#551): how the model says the data
+	// can't answer the question, which it writes as DeclinePrefix and a line of why. It says counting
+	// and the like is the program's work: told only when to decline, gpt-5.5 declined to count. The
+	// placeholder, used twice, is "program" or "query".
+	Decline string
 	// Handoff follows the question when the frontier tier starts from the local tier's closest draft
 	// (Options.Tiers, #538). Placeholders: the draft, why it wasn't taken, and "program" or "query".
 	Handoff string
@@ -139,6 +144,7 @@ func DefaultPrompts() Prompts {
 		LookFound:     "Nothing is named %s; these mention it:",
 		LookNothing:   "look takes a relation, module or label name, as the card lists them.",
 		DraftFirst:    "You drafted this %[3]s for it first:\n%[1]s\nIt was refused:\n%[2]s\n\nUse the actions to find what it got wrong, then answer with a %[3]s that fixes it.",
+		Decline:       "# If no relation above holds the facts the question asks about, reply none: and the fact that is missing, in place of a %[1]s.\n# Counting, adding up or ordering the facts is part of the %[1]s, so it is no reason to reply none.\n",
 		Handoff:       "A smaller model drafted this %[3]s for it first:\n%[1]s\nIt wasn't taken:\n%[2]s\n\nAnswer with a %[3]s that fixes what was wrong with it.",
 		Stuck:         "You have %s. Doing it again gives the same result: change the draft, or reply with your answer.",
 		ToolLook:      "What a relation, module or label holds: its arguments and what they mean. name is the relation, module or label.",
@@ -177,7 +183,7 @@ func (p *Pack) prompts() Prompts {
 		{&h.Build, &d.Build}, {&h.Paths, &d.Paths}, {&h.PathsFound, &d.PathsFound}, {&h.PathsNone, &d.PathsNone}, {&h.PathsUsage, &d.PathsUsage}, {&h.PathsNoKind, &d.PathsNoKind}, {&h.PathsUnbound, &d.PathsUnbound}, {&h.ToolPaths, &d.ToolPaths}, {&h.Dropped, &d.Dropped}, {&h.DropNothing, &d.DropNothing}, {&h.NotAdded, &d.NotAdded},
 		{&h.ToolAdd, &d.ToolAdd}, {&h.ToolDrop, &d.ToolDrop},
 		{&h.AskedAgain, &d.AskedAgain}, {&h.LastLook, &d.LastLook}, {&h.TriedAgain, &d.TriedAgain},
-		{&h.LookFound, &d.LookFound}, {&h.LookNothing, &d.LookNothing}, {&h.Stuck, &d.Stuck}, {&h.DraftFirst, &d.DraftFirst}, {&h.Handoff, &d.Handoff}, {&h.ToolLook, &d.ToolLook},
+		{&h.LookFound, &d.LookFound}, {&h.LookNothing, &d.LookNothing}, {&h.Stuck, &d.Stuck}, {&h.DraftFirst, &d.DraftFirst}, {&h.Decline, &d.Decline}, {&h.Handoff, &d.Handoff}, {&h.ToolLook, &d.ToolLook},
 		{&h.ToolValues, &d.ToolValues}, {&h.ToolTry, &d.ToolTry}, {&h.ToolFind, &d.ToolFind}, {&h.Fix, &d.Fix}, {&h.FixEmpty, &d.FixEmpty},
 		{&h.EmptyFallback, &d.EmptyFallback}, {&h.Reask, &d.Reask}, {&h.Grounded, &d.Grounded}, {&h.Without, &d.Without},
 		{&h.Pick, &d.Pick}, {&h.PickRetry, &d.PickRetry}, {&h.CompactFound, &d.CompactFound},
@@ -201,7 +207,7 @@ func (t Prompts) templates() []struct {
 		name, text string
 		n          int
 	}{{"Actions", t.Actions, 2}, {"ToolValues", t.ToolValues, 1}, {"Fix", t.Fix, 1}, {"FixEmpty", t.FixEmpty, 1}, {"Reask", t.Reask, 4},
-		{"LookFound", t.LookFound, 1}, {"Stuck", t.Stuck, 1}, {"DraftFirst", t.DraftFirst, 3}, {"Handoff", t.Handoff, 3}, {"Dropped", t.Dropped, 2}, {"PathsFound", t.PathsFound, 2}, {"PathsNone", t.PathsNone, 3}, {"PathsNoKind", t.PathsNoKind, 1}, {"PathsUnbound", t.PathsUnbound, 1}, {"Without", t.Without, 2}}
+		{"LookFound", t.LookFound, 1}, {"Stuck", t.Stuck, 1}, {"DraftFirst", t.DraftFirst, 3}, {"Decline", t.Decline, 1}, {"Handoff", t.Handoff, 3}, {"Dropped", t.Dropped, 2}, {"PathsFound", t.PathsFound, 2}, {"PathsNone", t.PathsNone, 3}, {"PathsNoKind", t.PathsNoKind, 1}, {"PathsUnbound", t.PathsUnbound, 1}, {"Without", t.Without, 2}}
 }
 
 // checkTemplates refuses a template that drops one of its placeholders or reads one it isn't given:

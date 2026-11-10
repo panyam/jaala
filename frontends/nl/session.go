@@ -87,6 +87,9 @@ func NewSession(ctx context.Context, question string, v *ns.Vocabulary, g Ground
 	if o.Actions.builds(o.FrontEnd) {
 		s.answerGrammar = buildGrammar(s.answerGrammar)
 	}
+	if o.declines() {
+		s.answerGrammar = declineGrammar(s.answerGrammar)
+	}
 	s.grammar, s.textGrammar, s.finalGrammar = s.answerGrammar, s.answerGrammar, s.answerGrammar
 	if o.Actions != nil && s.answerGrammar != "" {
 		s.textGrammar = actionGrammar(s.answerGrammar, g != nil, o.Actions.builds(o.FrontEnd), o.offersPaths())
@@ -524,6 +527,10 @@ func (c *Conversation) Judge(ctx context.Context, try Try) Verdict {
 		return c.judgePick(ctx, try)
 	}
 	c.tries++
+	if why, ok := declining(try.Text); ok && s.o.declines() {
+		try.Kind, try.Err = KindDeclined, &Declined{Model: try.Model, Why: why}
+		return Verdict{Stop: try.Err, Tries: []Try{try}}
+	}
 	var p Program
 	var err error
 	if prev, ok := c.refused[try.Text]; ok {
