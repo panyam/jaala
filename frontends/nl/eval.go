@@ -134,6 +134,9 @@ type Report struct {
 	// Wrong and Abstained count the cases by Result.Outcome, beside Passed: an abstention isn't a
 	// wrong answer.
 	Wrong, Abstained int
+	// Truncated counts the tries, steps and votes whose call reached its token cap (Try.Truncated),
+	// a sign the role's cap is too low rather than that the model was wrong.
+	Truncated int
 }
 
 // Eval runs each case's question through translate and scores its answer over b (#326). translate is
@@ -186,6 +189,9 @@ func (rep *Report) add(res Result) {
 	}
 	rep.Escalations += len(res.Trace.Escalations)
 	for _, t := range res.Trace.Votes {
+		if t.Truncated {
+			rep.Truncated++
+		}
 		rep.Votes++
 		rep.TokensIn += t.TokensIn
 		rep.TokensOut += t.TokensOut
@@ -193,6 +199,9 @@ func (rep *Report) add(res Result) {
 		rep.Latency += t.Latency
 	}
 	for _, s := range res.Trace.Steps {
+		if s.Truncated {
+			rep.Truncated++
+		}
 		rep.Steps++
 		rep.TokensIn += s.TokensIn
 		rep.TokensOut += s.TokensOut
@@ -200,6 +209,9 @@ func (rep *Report) add(res Result) {
 		rep.Latency += s.Latency
 	}
 	for _, t := range res.Trace.Tries {
+		if t.Truncated {
+			rep.Truncated++
+		}
 		rep.Tries++
 		rep.TokensIn += t.TokensIn
 		rep.TokensOut += t.TokensOut

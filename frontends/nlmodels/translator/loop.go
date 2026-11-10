@@ -45,6 +45,8 @@ func (r Role) runtime(label string, temp float64) *role {
 		rr.gen.MaxTokens = r.MaxTokens
 	case r.Thinking:
 		rr.gen.MaxTokens = ThinkingMaxTokens
+	case r.Reasoning:
+		rr.gen.MaxTokens = ReasoningMaxTokens
 	}
 	if r.Thinking {
 		rr.think = r.ThinkPrompt
@@ -52,7 +54,7 @@ func (r Role) runtime(label string, temp float64) *role {
 			rr.think = DefaultThinkPrompt
 		}
 	}
-	rr.guide = !r.Thinking && caps.CanGuide(&agent.GuidedDecoding{Grammar: "root ::= \"x\""})
+	rr.guide = !r.Thinking && !r.Reasoning && caps.CanGuide(&agent.GuidedDecoding{Grammar: "root ::= \"x\""})
 	return rr
 }
 
@@ -215,10 +217,12 @@ type loop struct {
 
 	shown *agent.Message // the preview block the retrieval stage put before the question, nil for none
 
-	recorded agent.Usage // the part of the current turn's usage already on a Try or Step
-	pending  agent.Usage // the last step's tokens, not yet on a Step
-	calls    int         // the model calls since the last Try or Step
-	mark     time.Time   // when the last Try or Step was recorded, or the turn began
+	recorded  agent.Usage // the part of the current turn's usage already on a Try or Step
+	pending   agent.Usage // the last step's tokens, not yet on a Step
+	calls     int         // the model calls since the last Try or Step
+	cap       int         // the current role's token cap, which a call reaching it was likely cut off by
+	truncated bool        // a call since the last Try or Step reached cap
+	mark      time.Time   // when the last Try or Step was recorded, or the turn began
 }
 
 // turn asks r for an answer in conversation c: one Runner turn with the actions as tools, or read
@@ -291,6 +295,7 @@ func (l *loop) runTurn(ctx context.Context, cfg agent.RunnerConfig, r *role, mod
 		return nil, err
 	}
 	l.recorded, l.pending, l.mark, l.calls = agent.Usage{}, agent.Usage{}, time.Now(), 0
+	l.cap, l.truncated = r.gen.MaxTokens, false
 	req.Emit = l.emit
 	res, err := runner.RunTurn(ctx, req)
 	switch {
@@ -354,6 +359,9 @@ func (l *loop) emit(e agent.Event) {
 		l.mu.Lock()
 		l.pending = add(l.pending, *e.Usage)
 		l.calls++
+		if l.cap > 0 && e.Usage.OutputTokens >= l.cap {
+			l.truncated = true
+		}
 		l.mu.Unlock()
 	case e.Kind == agent.EventRetrieved && e.Retrieval != nil && e.Retrieval.Block != "":
 		l.mu.Lock()
@@ -374,8 +382,8 @@ func (l *loop) try(r *role, text string, turn agent.Usage) nl.Try {
 	}
 	l.recorded, l.pending = turn, agent.Usage{}
 	now := time.Now()
-	try := nl.Try{Model: r.label, Text: text, TokensIn: u.InputTokens, TokensOut: u.OutputTokens, TokensCached: u.CachedInputTokens, Latency: now.Sub(l.mark), Calls: calls}
-	l.mark, l.calls = now, 0
+	try := nl.Try{Model: r.label, Text: text, TokensIn: u.InputTokens, TokensOut: u.OutputTokens, TokensCached: u.CachedInputTokens, Latency: now.Sub(l.mark), Calls: calls, Truncated: l.truncated}
+	l.mark, l.calls, l.truncated = now, 0, false
 	return try
 }
 
@@ -676,8 +684,8 @@ func (l *loop) act(ctx context.Context, c *nl.Conversation, r *role, action, arg
 	result := c.Act(ctx, action, arg)
 	now := time.Now()
 	l.tr.Steps = append(l.tr.Steps, nl.Step{Model: r.label, Action: action, Text: nl.ActionText(action, arg), Result: result, After: len(l.tr.Tries),
-		TokensIn: u.InputTokens, TokensOut: u.OutputTokens, TokensCached: u.CachedInputTokens, Latency: now.Sub(l.mark), Calls: l.calls})
-	l.mark, l.calls = now, 0
+		TokensIn: u.InputTokens, TokensOut: u.OutputTokens, TokensCached: u.CachedInputTokens, Latency: now.Sub(l.mark), Calls: l.calls, Truncated: l.truncated})
+	l.mark, l.calls, l.truncated = now, 0, false
 	return result
 }
 
@@ -761,7 +769,8 @@ func (l *loop) vote(ctx context.Context, s *nl.Session, r *role, history []agent
 				return s.Key(first), true
 			}
 			u := res.Usage
-			try, p, err := s.Draw(ctx, nl.Try{Model: r.label, Text: r.answer(res.Text), TokensIn: u.InputTokens, TokensOut: u.OutputTokens, TokensCached: u.CachedInputTokens, Calls: 1})
+			try, p, err := s.Draw(ctx, nl.Try{Model: r.label, Text: r.answer(res.Text), TokensIn: u.InputTokens, TokensOut: u.OutputTokens, TokensCached: u.CachedInputTokens, Calls: 1,
+				Truncated: r.gen.MaxTokens > 0 && u.OutputTokens >= r.gen.MaxTokens})
 			mu.Lock()
 			drawn[res] = struct {
 				try  nl.Try

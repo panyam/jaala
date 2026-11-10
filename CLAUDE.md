@@ -251,7 +251,9 @@ GOARCH=wasm go test ./ns` (#417 ran `ns` that way).
   seed, Anthropic neither) and a temperature only where it says `Temperature`, which is 0 by default,
   since chakra omits a nil one and llama-server then samples at 0.8. Its `translator`
   package (#490) is the entry point a host calls (`translator.New(v, pack, cfg)`, `Ask`): jaala owns
-  each role's tuning (temperature 0 and a fallback's 0.7, 512 tokens, a `Thinking` model's 3072, no
+  each role's tuning (temperature 0 and a fallback's 0.7, 512 tokens, a `Thinking` model's 3072, a `Reasoning` one's 16384
+  (#549: gpt-5.5's hidden reasoning counts against the cap, and chakra hands a cut-off reply on as the
+  answer; `Try.Truncated` marks a call that reached it, `TestEvalOnOpenAI` is the opt-in live check), no
   grammar, a think line and its last fenced block), a `Role` overrides it, and a temperature goes only to a provider whose
   `CapabilitiesOf` says it takes one (chakra#191, v0.2.4). A `Role` with `TextActions` (#509) is for a
   model that can't call tools (Qwen2.5-Coder under `--jinja` writes a call as JSON text): it gets no

@@ -225,3 +225,20 @@ func TestHistoryTableGivesCostPerCorrectAnswer(t *testing.T) {
 		t.Error("an unknown format writes nothing and no error")
 	}
 }
+
+// Report counts the tries, steps and votes a cap cut off, and a record keeps the mark on each.
+func TestTruncatedCallsAreCountedAndRecorded(t *testing.T) {
+	tr := nl.Trace{
+		Tries: []nl.Try{{Model: "big", Kind: nl.KindParse, Err: errors.New("cut"), Truncated: true}, {Model: "big"}},
+		Steps: []nl.Step{{Model: "big", Action: nl.ActionLook, Truncated: true}},
+		Votes: []nl.Try{{Model: "big", Truncated: true}, {Model: "big"}},
+	}
+	rep := scored(t, []nl.Case{{Name: "p", Question: "pass", Want: [][]string{{"a"}}}}, map[string]nl.Trace{"pass": tr})
+	if rep.Truncated != 3 {
+		t.Errorf("report counts %d truncated, want 3", rep.Truncated)
+	}
+	c := nl.NewRecord(rep, nil).Cases[0]
+	if !c.Tries[0].Truncated || c.Tries[1].Truncated || !c.Steps[0].Truncated || !c.Votes[0].Truncated || c.Votes[1].Truncated {
+		t.Errorf("record marks %+v %+v %+v", c.Tries, c.Steps, c.Votes)
+	}
+}

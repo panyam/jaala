@@ -279,6 +279,7 @@ type TryRecord struct {
 	Repair                            string `json:",omitempty"`
 	Reasked                           bool   `json:",omitempty"`
 	Tier                              string `json:",omitempty"`
+	Truncated                         bool   `json:",omitempty"`
 	TokensIn, TokensCached, TokensOut int
 	Calls                             int     `json:",omitempty"`
 	Seconds                           float64 `json:",omitempty"`
@@ -288,6 +289,7 @@ type TryRecord struct {
 type StepRecord struct {
 	Model, Action, Text               string
 	Tier                              string `json:",omitempty"`
+	Truncated                         bool   `json:",omitempty"`
 	After                             int
 	TokensIn, TokensCached, TokensOut int
 	Calls                             int     `json:",omitempty"`
@@ -312,7 +314,7 @@ func NewRecord(rep Report, p Prices) Record {
 			cr.Votes = append(cr.Votes, tryRecord(t))
 		}
 		for _, s := range r.Trace.Steps {
-			cr.Steps = append(cr.Steps, StepRecord{Model: s.Model, Action: s.Action, Text: s.Text, Tier: s.Tier, After: s.After,
+			cr.Steps = append(cr.Steps, StepRecord{Model: s.Model, Action: s.Action, Text: s.Text, Tier: s.Tier, Truncated: s.Truncated, After: s.After,
 				TokensIn: s.TokensIn, TokensCached: s.TokensCached, TokensOut: s.TokensOut, Calls: s.Calls, Seconds: s.Latency.Seconds()})
 		}
 		cr.Reads, cr.WouldPass = r.Reads, r.WouldPass
@@ -325,7 +327,7 @@ func NewRecord(rep Report, p Prices) Record {
 
 func tryRecord(t Try) TryRecord {
 	tr := TryRecord{Model: t.Model, Text: t.Text, Language: t.Language, Kind: t.Kind, Class: t.Class(), Mode: t.Mode,
-		Repair: t.Repair, Reasked: t.Reasked, Tier: t.Tier, TokensIn: t.TokensIn, TokensCached: t.TokensCached, TokensOut: t.TokensOut,
+		Repair: t.Repair, Reasked: t.Reasked, Tier: t.Tier, Truncated: t.Truncated, TokensIn: t.TokensIn, TokensCached: t.TokensCached, TokensOut: t.TokensOut,
 		Calls: t.Calls, Seconds: t.Latency.Seconds()}
 	if t.Err != nil {
 		tr.Err = t.Err.Error()
