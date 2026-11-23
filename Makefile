@@ -55,7 +55,7 @@ secrets: ## gitleaks over the whole history, allowlisting exact values in .gitle
 audit: lint seccheck secrets vulncheck ## Every scanner, vulncheck included
 
 # =============================================================================
-# Release (after mcpkit's): CLAUDE.md, Releasing, says when
+# Release (after mcpkit's): contributing/releasing.md says when
 # =============================================================================
 
 # The sub-modules published with jaala, each tagged <dir>/vX at the same commit as jaala's vX. A
