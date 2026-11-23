@@ -97,7 +97,7 @@ against [Soufflé](https://souffle-lang.github.io/), the docs, and the scanners 
 | `make -C docsite check` | Builds the site and runs every example on it. |
 | `make setup` | Installs Soufflé and llama.cpp for selfcheck. |
 
-[CLAUDE.md](CLAUDE.md) holds the project's constraints and conventions in detail.
+[CLAUDE.md](CLAUDE.md) holds the rules every change follows, and [contributing/](contributing/README.md) the constraints and conventions of each part in detail.
 
 ## Security and license
 
