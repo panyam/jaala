@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -30,6 +32,10 @@ type ExtractOptions struct {
 	Pack *Pack
 	// Budget caps the tokens and time the extraction spends on the text.
 	Budget Budget
+	// HeldMax caps how many held keys the text's turn lists (#563): with a Base and Pack.Keys, the
+	// turn shows the key values the Base holds for each keyed relation, so a model updating a fact
+	// writes its key as the Base spells it and the fact is replaced. 200 when 0; negative lists none.
+	HeldMax int
 }
 
 // An Extraction is what an extraction accepted: the change set, every line read from the draft in order,
@@ -68,7 +74,14 @@ const (
 	KindSpan = "span"
 	// KindDerived is a fact of a relation the vocabulary derives, which only changes through its rules.
 	KindDerived = "derived"
+	// KindTruncated is a reply that reached its call's token cap (Try.Truncated), so it may have been
+	// cut before its last fact, or before its first.
+	KindTruncated = "truncated"
 )
+
+// ErrTruncated is a truncated reply's refusal: an extraction never reads a reply that may have been
+// cut short as all the text states (#563).
+var ErrTruncated = errors.New("nl: the reply reached its token cap")
 
 // extractInstructions follow the relations in every extraction's prefix.
 const extractInstructions = `
@@ -92,11 +105,11 @@ const extractInstructions = `
 // Pack.Keys replaces the facts the Base, or an earlier line, holds under the same key with other
 // values: the change set removes them, since the engine never decides which facts are one.
 type ExtractSession struct {
-	text, prefix, grammar string
-	v                     *ns.Vocabulary
-	o                     ExtractOptions
-	pr                    Prompts
-	tries                 int
+	text, prefix, grammar, held string
+	v                           *ns.Vocabulary
+	o                           ExtractOptions
+	pr                          Prompts
+	tries                       int
 }
 
 // NewExtractSession prepares text over v's base relations, as an extraction does before asking any
@@ -120,6 +133,9 @@ func NewExtractSession(text string, v *ns.Vocabulary, o ExtractOptions) (*Extrac
 	if s.tries <= 0 {
 		s.tries = 3
 	}
+	if s.held, err = heldKeys(context.Background(), v, o, s.pr); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -127,8 +143,14 @@ func NewExtractSession(text string, v *ns.Vocabulary, o ExtractOptions) (*Extrac
 // pack's About, Card and extraction examples.
 func (s *ExtractSession) Prefix() string { return s.prefix }
 
-// Ask is the session's first message, the text.
-func (s *ExtractSession) Ask() string { return "Text:\n" + s.text }
+// Ask is the session's first message: the text, then the keys the Base holds already, when it holds
+// any under Pack.Keys.
+func (s *ExtractSession) Ask() string {
+	if s.held == "" {
+		return "Text:\n" + s.text
+	}
+	return "Text:\n" + s.text + "\n\n" + s.held
+}
 
 // Grammar is the GBNF a reply is held to, ExtractGrammar by default, "" with NoGrammar.
 func (s *ExtractSession) Grammar() string { return s.grammar }
@@ -170,6 +192,13 @@ func (c *ExtractConversation) Judge(ctx context.Context, try Try) ExtractVerdict
 	s := c.s
 	c.tries++
 	try.Text = unfence(try.Text)
+	if try.Truncated {
+		try.Err, try.Kind = ErrTruncated, KindTruncated
+		if c.tries >= s.tries {
+			return ExtractVerdict{Stop: try.Err, Try: try}
+		}
+		return ExtractVerdict{Continue: s.pr.ExtractTruncated, Try: try}
+	}
 	if first, ok := c.refused[try.Text]; ok {
 		try.Err, try.Kind = fmt.Errorf("the same draft as before: %w", first), KindRepeat
 		return ExtractVerdict{Stop: try.Err, Try: try}
@@ -637,4 +666,73 @@ func valuesKey(vals []ns.Value) string {
 		}
 	}
 	return b.String()
+}
+
+// heldKeys lists, under Prompts.ExtractHeld, each key the Base holds for a relation with Pack.Keys,
+// written as a call with _ for the other arguments, by relation name and then in the answer's order,
+// at most HeldMax of them, then how many it left out. It is "" without a Base, keys, or a held fact.
+func heldKeys(ctx context.Context, v *ns.Vocabulary, o ExtractOptions, pr Prompts) (string, error) {
+	limit := o.HeldMax
+	if limit == 0 {
+		limit = 200
+	}
+	if o.Base == nil || o.Pack == nil || len(o.Pack.Keys) == 0 || limit < 0 {
+		return "", nil
+	}
+	rels := make([]string, 0, len(o.Pack.Keys))
+	for rel := range o.Pack.Keys {
+		rels = append(rels, rel)
+	}
+	sort.Strings(rels)
+	var lines []string
+	for _, rel := range rels {
+		s, ok := v.Schema(rel)
+		if !ok {
+			continue
+		}
+		isKey := map[int]bool{}
+		var cols []string
+		for _, k := range o.Pack.Keys[rel] {
+			isKey[k] = true
+		}
+		args := make([]string, s.Arity)
+		for i := range args {
+			args[i] = "_"
+			if isKey[i] {
+				args[i] = fmt.Sprintf("?k%d", i)
+				cols = append(cols, args[i])
+			}
+		}
+		q, err := datalog.Parse(fmt.Sprintf("%s(%s) => %s", rel, strings.Join(args, ", "), strings.Join(cols, ", ")))
+		if err != nil {
+			return "", err
+		}
+		tab, err := datalog.SemiNaive{}.EvalTable(ctx, q, o.Base, o.Eval...)
+		if err != nil {
+			return "", err
+		}
+		for _, row := range tab.Rows {
+			call := append([]string(nil), args...)
+			c := 0
+			for i := range call {
+				if isKey[i] {
+					call[i] = quotedValue(row[c])
+					c++
+				}
+			}
+			lines = append(lines, rel+"("+strings.Join(call, ", ")+")")
+		}
+	}
+	if len(lines) == 0 {
+		return "", nil
+	}
+	more := 0
+	if len(lines) > limit {
+		lines, more = lines[:limit], len(lines)-limit
+	}
+	out := pr.ExtractHeld + "\n" + strings.Join(lines, "\n")
+	if more > 0 {
+		out += "\n" + fmt.Sprintf(pr.ExtractHeldMore, strconv.Itoa(more))
+	}
+	return out, nil
 }

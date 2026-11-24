@@ -218,10 +218,14 @@ func sessionText(s longmemeval.Session) string {
 }
 
 // cited is c with each "text:start-end" citation an extraction writes replaced by the session's id
-// and the words at those offsets, so a row read across sessions says which one said it.
+// and the words at those offsets, so a row read across sessions says which one said it. It drops any
+// session lines the model wrote, since Ingest writes the session's own row.
 func cited(c ns.Changes, session, text string) ns.Changes {
 	var out ns.Changes
 	for _, rel := range c.Relations() {
+		if rel == RelSession {
+			continue
+		}
 		for _, t := range c.Removed(rel) {
 			out.Remove(rel, t)
 		}
