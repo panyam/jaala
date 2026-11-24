@@ -33,11 +33,11 @@ require (
 
 require (
 	github.com/panyam/chakra v0.3.6
-	github.com/panyam/jaala v0.1.103
-	github.com/panyam/jaala/frontends/cypher v0.1.103
-	github.com/panyam/jaala/frontends/mcp v0.1.103
-	github.com/panyam/jaala/frontends/nl v0.1.103
-	github.com/panyam/jaala/frontends/nlmodels v0.1.103
+	github.com/panyam/jaala v0.1.104
+	github.com/panyam/jaala/frontends/cypher v0.1.104
+	github.com/panyam/jaala/frontends/mcp v0.1.104
+	github.com/panyam/jaala/frontends/nl v0.1.104
+	github.com/panyam/jaala/frontends/nlmodels v0.1.104
 	github.com/panyam/mcpkit v0.8.21
 	github.com/panyam/s3gen v0.1.6
 	gopkg.in/yaml.v3 v3.0.1
