@@ -1,8 +1,6 @@
 module github.com/panyam/jaala/docsite
 
-go 1.26.9
-
-require github.com/panyam/s3gen v0.1.6
+go 1.27.4
 
 require (
 	github.com/BurntSushi/toml v0.3.1 // indirect
@@ -41,6 +39,7 @@ require (
 	github.com/panyam/jaala/frontends/nl v0.1.103
 	github.com/panyam/jaala/frontends/nlmodels v0.1.103
 	github.com/panyam/mcpkit v0.8.20
+	github.com/panyam/s3gen v0.1.6
 	gopkg.in/yaml.v3 v3.0.1
 )
 

@@ -16,11 +16,13 @@ build: wasm
 
 # jaala compiled for the browser, for the in-page editor, and the wasm_exec.js glue from the same Go
 # toolchain, which it has to match. Both go in static/wasm, which git ignores; pages link them with a
-# hash of their content (assetURL), so a browser never pairs an old glue file with a new module.
+# hash of their content (assetURL), so a browser never pairs an old glue file with a new module. The
+# glue is read-only when the Go is a GOTOOLCHAIN download, which lives in the module cache, and the
+# copy keeps that mode, so -f lets the next build replace it.
 wasm:
 	mkdir -p static/wasm
 	GOOS=js GOARCH=wasm go build -trimpath -ldflags="-s -w" -o static/wasm/jaala.wasm ./wasm
-	cp "$$(go env GOROOT)/lib/wasm/wasm_exec.js" static/wasm/
+	cp -f "$$(go env GOROOT)/lib/wasm/wasm_exec.js" static/wasm/
 
 # The demo package's tests compiled to wasm and run under Node, so the code the browser runs is
 # tested as wasm, not only as Go. Needs node on the PATH. wasm_exec.js refuses a program whose
