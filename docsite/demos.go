@@ -48,13 +48,13 @@ func demoHTML(path string) template.HTML {
 	s, err := loadSpec(path)
 	if err != nil {
 		failDemo(path, err)
-		return template.HTML(`<p class="demo-error">` + html.EscapeString(err.Error()) + `</p>`)
+		return template.HTML(`<p class="demo-error">` + html.EscapeString(err.Error()) + `</p>`) // #nosec G203 -- fixed markup around escaped error text
 	}
 	t, runErr := demo.Run(s)
 	if err := demo.Check(s, t, runErr); err != nil {
 		failDemo(path, err)
 	}
-	return template.HTML(renderDemo(path, s, t, runErr))
+	return template.HTML(renderDemo(path, s, t, runErr)) // #nosec G203 -- renderDemo escapes every value it writes
 }
 
 // renderDemo writes the example as one raw-HTML block with no blank line in it, because markdown

@@ -64,7 +64,7 @@ var Site = &s3.Site{
 		"HasPrefix":     strings.HasPrefix,
 		"HasSuffix":     strings.HasSuffix,
 		"BytesToString": func(b []byte) string { return string(b) },
-		"HTML":          func(s string) template.HTML { return template.HTML(s) },
+		"HTML":          func(s string) template.HTML { return template.HTML(s) }, // #nosec G203 -- templates call it on this repo's own content
 	},
 }
 
@@ -91,7 +91,7 @@ func includeFile(relativePath string) template.HTML {
 	if !ok {
 		return ""
 	}
-	return template.HTML(data)
+	return template.HTML(data) // #nosec G203 -- a figure or include from this repo, meant as HTML
 }
 
 // includeFileText returns a docsite-relative file as escaped text, for a source snippet.
@@ -108,7 +108,7 @@ func readDocsiteFile(relativePath string) ([]byte, bool) {
 	if !ok {
 		return nil, false
 	}
-	data, err := os.ReadFile(absPath)
+	data, err := os.ReadFile(absPath) // #nosec G304 -- safeJoin keeps the path inside the docsite
 	if err != nil {
 		log.Printf("include: %v", err)
 		return nil, false
