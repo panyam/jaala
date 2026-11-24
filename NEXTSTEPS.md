@@ -5,17 +5,18 @@ Maintained by /checkpoint: one thread per branch, pruned when the branch merges.
 
 ## At a glance
 
-- No open branches or PRs here. `main` is edeef61: v0.1.103 plus #558, #559 (every module on
-  `go 1.27.4`), #561 (`nlmodels/memory`, chakra v0.3.6) and #562. Unreleased: the next tag needs an
-  upgrade note that hosts need Go 1.27.4 or newer.
-- Mission #437 (`mission_text_memory`) is 3/4. #415 is open for the LongMemEval pilot: download
-  `longmemeval_oracle.json`, set `LONGMEMEVAL_DATA_PATH`, then run `TestPilot` (see #561's "Try it";
-  paid calls). Its failures decide the tickets for dates, a similarity contract and the recall audit.
+- No open branches or PRs here. `main` is c4c0e2e: v0.1.104 plus #564 (the pilot samples each type,
+  judged by gpt-4o-2024-08-06) and #565 (Extract lists held keys and refuses a cut reply, chakra
+  v0.3.7). Unreleased: the next tag needs an upgrade note that hosts need Go 1.27.4 or newer.
+- Mission #437 (`mission_text_memory`) is 4/5. Pilot on c4c0e2e: long context 11/12, jaala one shot
+  9/12, with jaala spending more tokens at setup on oracle histories (log on #437). #415 is next: arm 4
+  (`MemoryArm`, `read_session`) and an S-size run. Run `TestPilot` as #561's "Try it" says (paid
+  calls). panyam/chakra#343 is still open, so the pilot keeps its own judge wrapper.
 - Mission #322 (`mission_agent_frontend`) is 49/51 and waits on Declaire's gpt-5.5 arms (declaire#300,
   declaire#371). #547 is parked `waiting`. #544 (P2) is next in the queue, but its evidence is all
   `14b:loop`, which frontier-first parks.
-- Selfcheck: passed on 0d0a16b (2026-11-24). Check `make selfcheck-status` before the next merge.
-- This run: dropped memory/415-longmemeval (PR #561 merged).
+- Selfcheck is due (6 PRs merged since the last pass on 0d0a16b). Run `make selfcheck`.
+- This run: dropped memory/563-pilot-findings (PR #565 merged).
 
 ## Across threads
 
