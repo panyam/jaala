@@ -46,7 +46,7 @@ func TestACallReachingItsCapIsMarkedTruncated(t *testing.T) {
 	ask := func(limit int) nl.Trace {
 		// calls: 1 the look (out 1), 2 the answer (out 2), 3 its guided rewrite (out 3, no event)
 		m := &metered{script: scripted("big", map[string][]string{mitQ: {"look pkg", mit}}), in: 10, out: 1}
-		tr, err := New(v, nil, Config{Model: Role{Provider: m, MaxTokens: limit}, Base: b, Actions: &nl.Actions{}})
+		tr, err := New(v, nil, Config{Model: Role{Provider: m, MaxTokens: limit}, Base: b, Actions: &nl.Actions{SkipDraft: true}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -70,7 +70,7 @@ func TestACallReachingItsCapIsMarkedTruncated(t *testing.T) {
 func TestAStepAndADrawReachingTheCapAreMarked(t *testing.T) {
 	v, b := guide.Deps(t)
 	m := &metered{script: scripted("big", map[string][]string{mitQ: {"look pkg", mit}}), in: 10, out: 1}
-	tr, err := New(v, nil, Config{Model: Role{Provider: m, MaxTokens: 1}, Base: b, Actions: &nl.Actions{}})
+	tr, err := New(v, nil, Config{Model: Role{Provider: m, MaxTokens: 1}, Base: b, Actions: &nl.Actions{SkipDraft: true}})
 	if err != nil {
 		t.Fatal(err)
 	}

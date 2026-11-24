@@ -54,9 +54,9 @@ type Prompts struct {
 	LookFound string
 	// LookNothing follows the error of a look that names nothing and matches nothing.
 	LookNothing string
-	// DraftFirst follows the question when Actions.DraftFirst's one-shot draft was refused (#521), so
-	// the model's turn with actions starts from that draft rather than from nothing. Placeholders:
-	// the draft, why it was refused, and "program" or "query".
+	// DraftFirst follows the question when the one-shot draft the action loop starts with was refused
+	// (#521, Actions.SkipDraft), so the model's turn with actions starts from that draft rather than
+	// from nothing. Placeholders: the draft, why it was refused, and "program" or "query".
 	DraftFirst string
 	// Decline follows the instructions under Abstain.Declined (#551): how the model says the data
 	// can't answer the question, which it writes as DeclinePrefix and a line of why. It says counting

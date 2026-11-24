@@ -60,7 +60,7 @@ func (m *metered) Stream(ctx context.Context, req agent.ProviderRequest) (agent.
 func TestEachStepAndTryCarriesItsOwnTokens(t *testing.T) {
 	v, b := guide.Deps(t)
 	m := &metered{script: scripted("small", map[string][]string{mitQ: {"look pkg", mit}}), in: 10, out: 1}
-	tr, err := New(v, nil, Config{Model: Role{Provider: m, Label: "small"}, Base: b, Actions: &nl.Actions{}})
+	tr, err := New(v, nil, Config{Model: Role{Provider: m, Label: "small"}, Base: b, Actions: &nl.Actions{SkipDraft: true}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +134,7 @@ func TestTheRunnerOffersToolsUntilTheStepsRunOut(t *testing.T) {
 	v, b := guide.Deps(t)
 	m := scripted("small", map[string][]string{mitQ: {"look pkg", `pkg(?p, "nope") => ?p`, mit}})
 	rec := &recordingProvider{Provider: m}
-	tr, err := New(v, nil, Config{Model: Role{Provider: rec}, Base: b, Actions: &nl.Actions{Steps: 1}})
+	tr, err := New(v, nil, Config{Model: Role{Provider: rec}, Base: b, Actions: &nl.Actions{SkipDraft: true, Steps: 1}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +175,7 @@ func TestATextRoleTakesItsActionsInItsReplies(t *testing.T) {
 	v, b := guide.Deps(t)
 	replies := map[string][]string{mitQ: {"look pkg", `pkg(?p, "nope") => ?p`, mit}}
 	rec := &recordingProvider{Provider: scripted("small", replies)}
-	tr, err := New(v, nil, Config{Model: Role{Provider: rec, TextActions: true}, Base: b, Actions: &nl.Actions{Steps: 1}})
+	tr, err := New(v, nil, Config{Model: Role{Provider: rec, TextActions: true}, Base: b, Actions: &nl.Actions{SkipDraft: true, Steps: 1}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +210,7 @@ func TestATextRoleTakesItsActionsInItsReplies(t *testing.T) {
 	}
 
 	ctl := &recordingProvider{Provider: scripted("small", replies)}
-	tools, err := New(v, nil, Config{Model: Role{Provider: ctl}, Base: b, Actions: &nl.Actions{Steps: 1}})
+	tools, err := New(v, nil, Config{Model: Role{Provider: ctl}, Base: b, Actions: &nl.Actions{SkipDraft: true, Steps: 1}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,7 +224,7 @@ func TestATextRoleTakesItsActionsInItsReplies(t *testing.T) {
 func TestATextStepCarriesItsOwnTokens(t *testing.T) {
 	v, b := guide.Deps(t)
 	m := &metered{script: scripted("small", map[string][]string{mitQ: {"look pkg", mit}}), in: 10, out: 1}
-	tr, err := New(v, nil, Config{Model: Role{Provider: m, Label: "small", TextActions: true}, Base: b, Actions: &nl.Actions{}})
+	tr, err := New(v, nil, Config{Model: Role{Provider: m, Label: "small", TextActions: true}, Base: b, Actions: &nl.Actions{SkipDraft: true}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,7 +250,7 @@ func TestATextModelFallsBackToAToolModel(t *testing.T) {
 	v, b := guide.Deps(t)
 	small := &recordingProvider{Provider: scripted("small", map[string][]string{mitQ: {"look pkg", `pkg(?p, "nope") => ?p`}})}
 	big := &recordingProvider{Provider: scripted("big", map[string][]string{mitQ: {"look pkg", mit}})}
-	tr, err := New(v, nil, Config{Model: Role{Provider: small, TextActions: true}, Fallback: Role{Provider: big}, Base: b, Actions: &nl.Actions{}})
+	tr, err := New(v, nil, Config{Model: Role{Provider: small, TextActions: true}, Fallback: Role{Provider: big}, Base: b, Actions: &nl.Actions{SkipDraft: true}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -273,7 +273,7 @@ func TestATextModelFallsBackToAToolModel(t *testing.T) {
 func TestATextRoleCompacts(t *testing.T) {
 	v, b := guide.Deps(t)
 	rec := &recordingProvider{Provider: scripted("small", map[string][]string{mitQ: {"values pkg.license", mit}})}
-	tr, err := New(v, nil, Config{Model: Role{Provider: rec, TextActions: true}, Base: b, Actions: &nl.Actions{Compact: true}})
+	tr, err := New(v, nil, Config{Model: Role{Provider: rec, TextActions: true}, Base: b, Actions: &nl.Actions{SkipDraft: true, Compact: true}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +292,7 @@ func TestATextRoleStuckOnATryIsNudgedThenMadeToAnswer(t *testing.T) {
 	v, b := guide.Deps(t)
 	nope := "try\n" + `pkg(?p, "nope") => ?p`
 	rec := &recordingProvider{Provider: scripted("small", map[string][]string{mitQ: {nope, nope, nope, "try\n" + mit}})}
-	tr, err := New(v, nil, Config{Model: Role{Provider: rec, TextActions: true}, Base: b, Actions: &nl.Actions{Steps: 6}})
+	tr, err := New(v, nil, Config{Model: Role{Provider: rec, TextActions: true}, Base: b, Actions: &nl.Actions{SkipDraft: true, Steps: 6}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -322,7 +322,7 @@ func TestATextRoleStuckOnATryIsNudgedThenMadeToAnswer(t *testing.T) {
 	}
 
 	ctl := &recordingProvider{Provider: scripted("small", map[string][]string{mitQ: {"look pkg", nope, mit}})}
-	tools, err := New(v, nil, Config{Model: Role{Provider: ctl, TextActions: true}, Base: b, Actions: &nl.Actions{Steps: 6}})
+	tools, err := New(v, nil, Config{Model: Role{Provider: ctl, TextActions: true}, Base: b, Actions: &nl.Actions{SkipDraft: true, Steps: 6}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -343,7 +343,7 @@ func TestAToolRoleAlternatingTriesGetsTheNote(t *testing.T) {
 	v, b := guide.Deps(t)
 	a, c := "try\n"+`pkg(?p, "nope") => ?p`, "try\n"+`pkg(?p, "none") => ?p`
 	rec := &recordingProvider{Provider: scripted("big", map[string][]string{mitQ: {a, c, a, c, mit}})}
-	tr, err := New(v, nil, Config{Model: Role{Provider: rec}, Base: b, Actions: &nl.Actions{Steps: 6}})
+	tr, err := New(v, nil, Config{Model: Role{Provider: rec}, Base: b, Actions: &nl.Actions{SkipDraft: true, Steps: 6}})
 	if err != nil {
 		t.Fatal(err)
 	}

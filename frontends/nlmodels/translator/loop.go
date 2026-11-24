@@ -153,8 +153,8 @@ func (t *Translator) runIn(ctx context.Context, l *loop, question string, o nl.O
 		}
 		return p, true, nil
 	}
-	var draft *nl.Try // the one-shot draft a DraftFirst turn starts from, when it was refused
-	if o.Actions != nil && o.Actions.DraftFirst {
+	var draft *nl.Try // the one-shot draft the turn starts from, when it was refused
+	if o.Actions != nil && !o.Actions.SkipDraft {
 		one := o
 		one.Actions, one.MaxTries = nil, 1
 		os, err := nl.NewSession(ctx, question, t.v, t.grounder, one)

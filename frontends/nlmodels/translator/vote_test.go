@@ -207,7 +207,7 @@ func TestFindAsksTheGrounder(t *testing.T) {
 	v, b := guide.Deps(t)
 	g := &finder{}
 	m := model("small", "find mit license", mit)
-	p, tr, err := translate(context.Background(), mitQ, v, g, m, nl.Options{Base: b, Actions: &nl.Actions{}})
+	p, tr, err := translate(context.Background(), mitQ, v, g, m, nl.Options{Base: b, Actions: &nl.Actions{SkipDraft: true}})
 	if err != nil || p.Text != mit || len(tr.Steps) != 1 || tr.Steps[0].Action != nl.ActionFind {
 		t.Fatalf("%q %+v %v", p.Text, tr.Steps, err)
 	}
@@ -222,7 +222,7 @@ func TestFindAsksTheGrounder(t *testing.T) {
 		t.Errorf("offered %+v, want %+v", tr.Offered, want)
 	}
 	blind := model("small", "find mit license", mit)
-	_, tr, _ = translate(context.Background(), mitQ, v, nil, blind, nl.Options{Base: b, Actions: &nl.Actions{}})
+	_, tr, _ = translate(context.Background(), mitQ, v, nil, blind, nl.Options{Base: b, Actions: &nl.Actions{SkipDraft: true}})
 	if slices.Contains(blind.offered[0], nl.ActionFind) || len(tr.Steps) != 0 || tr.Tries[0].Kind != nl.KindParse {
 		t.Errorf("control: without a finder, offered %v, steps %+v, tries %+v", blind.offered[0], tr.Steps, tr.Tries)
 	}
