@@ -26,7 +26,7 @@ func datasetHTML(name string) template.HTML {
 	d, err := demo.LoadDataset(name)
 	if err != nil {
 		failDemo("dataset "+name, err)
-		return template.HTML(`<p class="demo-error">` + html.EscapeString(err.Error()) + `</p>`)
+		return template.HTML(`<p class="demo-error">` + html.EscapeString(err.Error()) + `</p>`) // #nosec G203 -- fixed markup around escaped error text
 	}
 	var b strings.Builder
 	b.WriteString(`<div class="dataset">`)
@@ -50,7 +50,7 @@ func datasetHTML(name string) template.HTML {
 	}
 	b.WriteString(`<details><summary>The facts as written</summary><pre><code>` + preText(strings.TrimSpace(d.Text)) + `</code></pre></details>`)
 	b.WriteString(`</div>`)
-	return template.HTML(b.String())
+	return template.HTML(b.String()) // #nosec G203 -- built above from fixed markup and escaped dataset text
 }
 
 // parserFile is the parser whose doc comment holds the grammar the reference shows.
@@ -69,7 +69,7 @@ func grammar() string {
 
 // extractGrammar reads the indented block after "Grammar (EBNF" in a Go file's comments.
 func extractGrammar(path string) (string, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- a parser file in this repo, read at build time
 	if err != nil {
 		return "", err
 	}
@@ -96,7 +96,7 @@ func builtinsHTML() template.HTML {
 	entries, err := builtins()
 	if err != nil {
 		failDemo("builtins", err)
-		return template.HTML(`<p class="demo-error">` + html.EscapeString(err.Error()) + `</p>`)
+		return template.HTML(`<p class="demo-error">` + html.EscapeString(err.Error()) + `</p>`) // #nosec G203 -- fixed markup around escaped error text
 	}
 	var b strings.Builder
 	b.WriteString(`<div class="demo-answer"><table><thead><tr><th>Name and arguments</th><th>What it does</th></tr></thead><tbody>`)
@@ -105,7 +105,7 @@ func builtinsHTML() template.HTML {
 		fmt.Fprintf(&b, `<tr><td><code>%s</code></td><td>%s</td></tr>`, html.EscapeString(e.Signature()), doc)
 	}
 	b.WriteString(`</tbody></table></div>`)
-	return template.HTML(b.String())
+	return template.HTML(b.String()) // #nosec G203 -- built above from fixed markup and escaped builtin docs
 }
 
 // builtins is every member the standard library registers on an empty vocabulary, walking modules.

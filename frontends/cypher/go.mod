@@ -1,6 +1,6 @@
 module github.com/panyam/jaala/frontends/cypher
 
-go 1.26.4
+go 1.27.4
 
 require (
 	github.com/panyam/jaala v0.1.103

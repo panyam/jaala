@@ -1,6 +1,6 @@
 module github.com/panyam/jaala/stores/bolt
 
-go 1.26.4
+go 1.27.4
 
 require (
 	github.com/neo4j/neo4j-go-driver/v5 v5.28.5

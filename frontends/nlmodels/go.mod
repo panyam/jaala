@@ -1,10 +1,11 @@
 module github.com/panyam/jaala/frontends/nlmodels
 
-go 1.26.9
+go 1.27.4
 
 require (
 	github.com/panyam/chakra v0.3.5
 	github.com/panyam/jaala v0.1.103
+	github.com/panyam/jaala/frontends/cypher v0.1.103
 	github.com/panyam/jaala/frontends/nl v0.1.103
 )
 
@@ -15,7 +16,6 @@ require (
 	github.com/invopop/jsonschema v0.14.0 // indirect
 	github.com/panyam/gocurrent v0.1.2 // indirect
 	github.com/panyam/goutils v0.1.13 // indirect
-	github.com/panyam/jaala/frontends/cypher v0.1.103
 	github.com/panyam/mcpkit v0.8.20 // indirect
 	github.com/panyam/servicekit v0.2.2 // indirect
 	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect
