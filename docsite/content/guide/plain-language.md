@@ -177,6 +177,10 @@ The same loop runs the other way: the translator's `Extract(ctx, text, opts)` tu
 
 The engine never decides which facts are one (#183), so a pack says it: `Pack.Keys` maps a relation to the argument positions that identify its fact. Under `{"owner": {0}}`, a line adding `owner("app", "bob")` removes the `owner("app", "alice")` that `ExtractOptions.Base` holds, or that an earlier line added, in the same change set. A relation without keys only gains facts. `Pack.ExtractExamples` are texts with the lines they should give, which follow the pack's `About` and `Card`; `Pack.Validate` reads each one, and checks every key names a base relation and a position within its arity, before any model is asked. `MaxTries`, `Fallback`, a repeated draft and `Budget` work as they do for the translator, and the `Trace` records each try with its kind, `span` for words the text doesn't hold and `derived` for a derived relation among them.
 
+### A memory over a long chat history
+
+`nlmodels/memory` uses `Extract` to keep a long chat history as versions ([#415](https://github.com/panyam/jaala/issues/415)). Each session is read into `fact(subject, attribute, value)` and `event(what, date)` rows and committed as the next version, with a `session(id, date)` row of its own. `fact` is keyed on its subject and attribute, so "I moved to Denver" replaces "I live in Boston" in the newer version, while the version before still answers Boston. Each fact cites the session and the words that stated it. A `Memory` is chakra's `SessionMemory`, so chakra's LongMemEval harness grades an agent answering with its `query` and `read_session` tools. `OneShotArm` grades the other way: the translator writes one program for the question, and the agent phrases its cited rows.
+
 ## Serving agents
 
 The same pack makes an MCP server, so an agent asks over the vocabulary with its own tools: [Serving agents]({{.Site.PathPrefix}}/guide/mcp-server/) covers `frontends/mcp`.
