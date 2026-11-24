@@ -143,9 +143,16 @@
   statement replace an earlier one, and `At(v)` still reads the old one. `cited` turns Extract's
   `text:start-end` citations into the session id and the quoted words, since a row read across
   sessions has to say which one. Its tools (`query`, `read_session`) call no model, so chakra's
-  `MemoryArm` counts all of the agent's spend. `OneShotArm` runs `Ask` in setup and puts the cited rows
+  `MemoryArm` counts all of the agent's spend. `fact` and `event` hold both speakers' statements,
+  and `cited` drops `session` lines the model writes, since `Ingest` writes the row (#563). `OneShotArm` runs `Ask` in setup and puts the cited rows
   in the instructions. Its text is the package's `Prompts`. `TestPilot` (tag `eval_llm`, opt-in) runs
   it against the long-context arm with the benchmark's judge.
+- **Extract lists held keys and refuses a cut reply** (#563). With `ExtractOptions.Base` and
+  `Pack.Keys`, `heldKeys` evaluates each keyed relation for its key values, in the answer's order and
+  at most `HeldMax` (200), and `Ask` puts them after the text under `Prompts.ExtractHeld`, so the
+  prefix stays the same per text. `NewExtractSession` reads them with `context.Background()`, since
+  its signature has no context. A `Try.Truncated` reply is `KindTruncated` before any reading, never
+  in `refused` (the same text uncut is fine), and the last one stops with `ErrTruncated`.
 - **`nl.Grammar()` is GBNF built from a rule table** (`frontends/nl/grammar.go`, #323), and every text it
   accepts must parse: `TestEveryProgramTheGrammarWritesParses` samples 21,000 programs from the table
   over 70 seeds and every depth (one seed alone missed `-(9)` as a column). The other direction lives

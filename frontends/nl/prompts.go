@@ -117,6 +117,12 @@ type Prompts struct {
 	Extract string
 	// ExtractFix ends a refused extraction's feedback.
 	ExtractFix string
+	// ExtractHeld heads the keys the Base holds already, after the text (ExtractOptions.HeldMax).
+	ExtractHeld string
+	// ExtractHeldMore follows them when some were left out. Placeholder: how many.
+	ExtractHeldMore string
+	// ExtractTruncated is what a model is told when its reply reached its token cap.
+	ExtractTruncated string
 }
 
 // DefaultPrompts is jaala's text for every field of Prompts.
@@ -156,17 +162,20 @@ func DefaultPrompts() Prompts {
 		EmptyFallback: "A program written for this answered nothing; the question may need other members or values.",
 		Reask: "That is the same %[1]s you sent before, and it answers nothing for the same reason:\n\n%[2]s%[3]s" +
 			"\n\nDon't send it again. Change %[4]s to other members or values, and write the whole %[1]s again.",
-		Without:        "Without %[1]s, the rest of the goal gives %[2]s values such as:",
-		Grounded:       "Values the question's names may stand for, likeliest first (use them exactly as written):",
-		Pick:           pickInstructions,
-		PickRetry:      "Call another relation, or this one with other values, or reply none.",
-		CompactFound:   "What you have found so far:",
-		CompactRefused: "Your last answer was refused:",
-		LedgerFound:    "What your actions found so far:",
-		LedgerTried:    "Drafts you have tried, and what each did (don't send one again):",
-		LedgerHeader:   "What you have done on this question so far:",
-		Extract:        extractInstructions,
-		ExtractFix:     "Write all the lines again, fixed.",
+		Without:          "Without %[1]s, the rest of the goal gives %[2]s values such as:",
+		Grounded:         "Values the question's names may stand for, likeliest first (use them exactly as written):",
+		Pick:             pickInstructions,
+		PickRetry:        "Call another relation, or this one with other values, or reply none.",
+		CompactFound:     "What you have found so far:",
+		CompactRefused:   "Your last answer was refused:",
+		LedgerFound:      "What your actions found so far:",
+		LedgerTried:      "Drafts you have tried, and what each did (don't send one again):",
+		LedgerHeader:     "What you have done on this question so far:",
+		Extract:          extractInstructions,
+		ExtractFix:       "Write all the lines again, fixed.",
+		ExtractHeld:      "Facts already held, by the values that identify each one. To update one, write those values exactly as they appear here:",
+		ExtractHeldMore:  "(and %s more)",
+		ExtractTruncated: "Your reply reached its length limit and was cut off. Write the lines again, fewer and shorter.",
 	}
 }
 
@@ -188,7 +197,8 @@ func (p *Pack) prompts() Prompts {
 		{&h.EmptyFallback, &d.EmptyFallback}, {&h.Reask, &d.Reask}, {&h.Grounded, &d.Grounded}, {&h.Without, &d.Without},
 		{&h.Pick, &d.Pick}, {&h.PickRetry, &d.PickRetry}, {&h.CompactFound, &d.CompactFound},
 		{&h.CompactRefused, &d.CompactRefused}, {&h.LedgerFound, &d.LedgerFound}, {&h.LedgerTried, &d.LedgerTried}, {&h.LedgerHeader, &d.LedgerHeader},
-		{&h.Extract, &d.Extract}, {&h.ExtractFix, &d.ExtractFix},
+		{&h.Extract, &d.Extract}, {&h.ExtractFix, &d.ExtractFix}, {&h.ExtractHeld, &d.ExtractHeld},
+		{&h.ExtractHeldMore, &d.ExtractHeldMore}, {&h.ExtractTruncated, &d.ExtractTruncated},
 	} {
 		if *f.host != "" {
 			*f.def = *f.host
@@ -207,7 +217,7 @@ func (t Prompts) templates() []struct {
 		name, text string
 		n          int
 	}{{"Actions", t.Actions, 2}, {"ToolValues", t.ToolValues, 1}, {"Fix", t.Fix, 1}, {"FixEmpty", t.FixEmpty, 1}, {"Reask", t.Reask, 4},
-		{"LookFound", t.LookFound, 1}, {"Stuck", t.Stuck, 1}, {"DraftFirst", t.DraftFirst, 3}, {"Decline", t.Decline, 1}, {"Handoff", t.Handoff, 3}, {"Dropped", t.Dropped, 2}, {"PathsFound", t.PathsFound, 2}, {"PathsNone", t.PathsNone, 3}, {"PathsNoKind", t.PathsNoKind, 1}, {"PathsUnbound", t.PathsUnbound, 1}, {"Without", t.Without, 2}}
+		{"LookFound", t.LookFound, 1}, {"Stuck", t.Stuck, 1}, {"DraftFirst", t.DraftFirst, 3}, {"Decline", t.Decline, 1}, {"Handoff", t.Handoff, 3}, {"Dropped", t.Dropped, 2}, {"PathsFound", t.PathsFound, 2}, {"PathsNone", t.PathsNone, 3}, {"PathsNoKind", t.PathsNoKind, 1}, {"PathsUnbound", t.PathsUnbound, 1}, {"Without", t.Without, 2}, {"ExtractHeldMore", t.ExtractHeldMore, 1}}
 }
 
 // checkTemplates refuses a template that drops one of its placeholders or reads one it isn't given:

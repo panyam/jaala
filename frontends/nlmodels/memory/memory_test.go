@@ -24,6 +24,7 @@ type script struct {
 	name    string
 	replies map[string][]string
 	asked   map[string]int
+	seen    []string
 }
 
 func scripted(name string, replies map[string][]string) *script {
@@ -37,6 +38,7 @@ func (m *script) Complete(_ context.Context, p modeltest.Prompt) (modeltest.Comp
 	for _, t := range p.Turns {
 		text.WriteString(t.Text + "\n")
 	}
+	m.seen = append(m.seen, text.String())
 	for key, rs := range m.replies {
 		if !strings.Contains(text.String(), key) {
 			continue
@@ -50,6 +52,9 @@ func (m *script) Complete(_ context.Context, p modeltest.Prompt) (modeltest.Comp
 	}
 	return modeltest.Completion{}, fmt.Errorf("no reply for a prompt holding %q", text.String())
 }
+
+// prompts are the texts of every turn m was asked, in order.
+func (m *script) prompts() []string { return m.seen }
 
 func role(m *script) translator.Role {
 	return translator.Role{Provider: modeltest.Provider(m), Label: m.name}
@@ -280,5 +285,53 @@ func TestPromptsKeepTheirPlaceholdersAndAHostsOwnText(t *testing.T) {
 	got := Prompts{Query: "mine"}.withDefaults()
 	if got.Query != "mine" || got.ReadSession != DefaultPrompts.ReadSession {
 		t.Errorf("withDefaults: %+v", got)
+	}
+}
+
+// A later session's prompt lists the fact keys the memory holds, so the model can update one under
+// the same key (#563). control: the first session's prompt lists none.
+func TestALaterSessionIsShownTheKeysHeld(t *testing.T) {
+	x := scripted("x", readsBoth)
+	ingested(t, Config{Extract: role(x)}, boston, denver)
+	p := x.prompts()
+	if len(p) != 2 {
+		t.Fatalf("%d prompts, want one per session", len(p))
+	}
+	if strings.Contains(p[0], `fact("user"`) {
+		t.Errorf("the first session was shown keys:\n%s", p[0])
+	}
+	if !strings.Contains(p[1], `fact("user", "lives in", _)`) {
+		t.Errorf("the second session wasn't shown the key the first left:\n%s", p[1])
+	}
+}
+
+// A session line the model writes is dropped, so each session keeps the one row Ingest writes, with
+// the session's full date.
+func TestASessionLineTheModelWritesIsDropped(t *testing.T) {
+	m := ingested(t, Config{Extract: role(scripted("x", map[string][]string{"I live in Boston": {`+ session("s1", "2023/05/20") from "Session s1, 2023/05/20"
++ fact("user", "lives in", "Boston") from "I live in Boston"`}}))}, boston)
+	if got := column(t, m, `session(?id, ?d) => ?d`); fmt.Sprint(got) != "["+boston.Date+"]" {
+		t.Errorf("session rows %v, want the one with %q", got, boston.Date)
+	}
+}
+
+// An extraction whose every reply reached its token cap fails the session, rather than committing it
+// as one that states nothing (#563). control: the same model with room to reply commits the session.
+func TestACutExtractionFailsTheSession(t *testing.T) {
+	line := readsBoth["I live in Boston"][0]
+	cut := role(scripted("x", map[string][]string{"I live in Boston": {line, line, line}}))
+	cut.MaxTokens = 1
+	m, err := New(Config{Extract: cut})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Ingest(bg, boston); !errors.Is(err, nl.ErrTruncated) {
+		t.Errorf("a session every reply of which was cut: %v, want ErrTruncated", err)
+	}
+	if m.Version() != 0 {
+		t.Errorf("version %d after a cut session, want 0", m.Version())
+	}
+	if ok := ingested(t, Config{Extract: role(scripted("x", readsBoth))}, boston); ok.Version() != 1 {
+		t.Errorf("control: version %d, want 1", ok.Version())
 	}
 }
