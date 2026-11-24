@@ -137,6 +137,15 @@
   1 MB model caps a slot at 2048 tokens, so its vocabulary leaves out stdlib. Cypher's translator tests
   and its `TestEval` are `nlmodels/cypherarm`'s, so nlmodels requires the cypher module (its tests
   only), and `internal/guide.CypherDrafts` feeds both that eval and cypher's `FuzzCompile` seeds.
+- **`nlmodels/memory` is #415's LongMemEval memory** on chakra's `eval/longmemeval` (v0.3.6). A
+  `Memory` is a chakra `SessionMemory`. Each session goes through `Translator.Extract` and is committed
+  to an `ns.TimedMemSource` as the next version. `fact`'s key (subject, attribute) makes a later
+  statement replace an earlier one, and `At(v)` still reads the old one. `cited` turns Extract's
+  `text:start-end` citations into the session id and the quoted words, since a row read across
+  sessions has to say which one. Its tools (`query`, `read_session`) call no model, so chakra's
+  `MemoryArm` counts all of the agent's spend. `OneShotArm` runs `Ask` in setup and puts the cited rows
+  in the instructions. Its text is the package's `Prompts`. `TestPilot` (tag `eval_llm`, opt-in) runs
+  it against the long-context arm with the benchmark's judge.
 - **`nl.Grammar()` is GBNF built from a rule table** (`frontends/nl/grammar.go`, #323), and every text it
   accepts must parse: `TestEveryProgramTheGrammarWritesParses` samples 21,000 programs from the table
   over 70 seeds and every depth (one seed alone missed `-(9)` as a column). The other direction lives

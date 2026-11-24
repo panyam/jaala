@@ -6,7 +6,7 @@ require (
 	github.com/panyam/jaala v0.1.103
 	github.com/panyam/jaala/frontends/cypher v0.1.103
 	github.com/panyam/jaala/frontends/nl v0.1.103
-	github.com/panyam/mcpkit v0.8.20
+	github.com/panyam/mcpkit v0.8.21
 )
 
 require (
