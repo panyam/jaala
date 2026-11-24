@@ -28,7 +28,7 @@ func repaired(tr nl.Trace) bool {
 func TestARepairFixesASpellingTheConversationSaw(t *testing.T) {
 	v, b := guide.Deps(t)
 	guess := `pkg(?p, "mit") => ?p`
-	o := nl.Options{Base: b, Actions: &nl.Actions{}}
+	o := nl.Options{Base: b, Actions: &nl.Actions{SkipDraft: true}}
 	p, tr, err := translate(context.Background(), mitQ, v, nil, model("small", "values pkg.license", guess), o)
 	if err != nil || p.Text != mit || len(p.Rows) != 1 {
 		t.Fatalf("Translate = %q %v", p.Text, err)
@@ -65,7 +65,7 @@ func TestARepairFixesASpellingTheDomainNames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, tr, err := translate(context.Background(), "which functions are there?", v, nil, model("small", `node(?n, "Func") => ?n`), nl.Options{Base: b, Actions: &nl.Actions{}})
+	p, tr, err := translate(context.Background(), "which functions are there?", v, nil, model("small", `node(?n, "Func") => ?n`), nl.Options{Base: b, Actions: &nl.Actions{SkipDraft: true}})
 	if err != nil || p.Text != `node(?n, "func") => ?n` || len(tr.Tries) != 2 || tr.Tries[1].Repair != `"Func" to "func"` {
 		t.Errorf("%q %v, tries %+v", p.Text, err, tr.Tries)
 	}
@@ -80,7 +80,7 @@ func TestCompactSendsWhatWasFoundInPlaceOfTheConversation(t *testing.T) {
 	v, b := guide.Deps(t)
 	replies := []string{"values pkg.license", "look pkg", `pkg(?p, "nope") => ?p`, mit}
 	m := model("small", replies...)
-	p, _, err := translate(context.Background(), mitQ, v, nil, m, nl.Options{Base: b, Actions: &nl.Actions{Compact: true}})
+	p, _, err := translate(context.Background(), mitQ, v, nil, m, nl.Options{Base: b, Actions: &nl.Actions{SkipDraft: true, Compact: true}})
 	if err != nil || p.Text != mit {
 		t.Fatalf("Translate = %q %v", p.Text, err)
 	}
@@ -99,7 +99,7 @@ func TestCompactSendsWhatWasFoundInPlaceOfTheConversation(t *testing.T) {
 		t.Errorf("the first turn = %q, want the question alone", m.asked[0].Turns[0].Text)
 	}
 	plain := model("small", replies...)
-	if _, _, err := translate(context.Background(), mitQ, v, nil, plain, nl.Options{Base: b, Actions: &nl.Actions{}}); err != nil || len(plain.asked[3].Turns) != 7 {
+	if _, _, err := translate(context.Background(), mitQ, v, nil, plain, nl.Options{Base: b, Actions: &nl.Actions{SkipDraft: true}}); err != nil || len(plain.asked[3].Turns) != 7 {
 		t.Errorf("control: the conversation's last ask sent %d turns: %v", len(plain.asked[3].Turns), err)
 	}
 }
@@ -110,7 +110,7 @@ func TestAFailedRepairLeavesTheModelsDraft(t *testing.T) {
 	v, b := guide.Deps(t)
 	guess := `pkg(?p, "mit"), pkg(?p, "nope") => ?p`
 	m := model("small", "values pkg.license", guess, mit)
-	p, tr, err := translate(context.Background(), mitQ, v, nil, m, nl.Options{Base: b, Actions: &nl.Actions{}})
+	p, tr, err := translate(context.Background(), mitQ, v, nil, m, nl.Options{Base: b, Actions: &nl.Actions{SkipDraft: true}})
 	if err != nil || p.Text != mit || len(tr.Tries) != 2 || tr.Tries[0].Text != guess || repaired(tr) {
 		t.Fatalf("%q %v, tries %+v", p.Text, err, tr.Tries)
 	}

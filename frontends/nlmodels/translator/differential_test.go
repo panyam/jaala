@@ -181,6 +181,7 @@ func guideCases() []nl.Case {
 func arms() []arm {
 	mitCase := []nl.Case{{Name: "mit", Question: mitQ, Want: [][]string{{"app"}}}}
 	actions := func(a nl.Actions) func(*datalog.Base) nl.Options {
+		a.SkipDraft = true // these arms script the turn with actions from its first reply
 		return func(b *datalog.Base) nl.Options { return nl.Options{Base: b, Actions: &a} }
 	}
 	return []arm{

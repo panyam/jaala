@@ -141,7 +141,7 @@ func TestActionsSpeakCypher(t *testing.T) {
 	v, b := guide.Deps(t)
 	m := &looker{ask: "values Package.license", right: `MATCH (p:Package {license: 'MIT'}) RETURN p.name`, wrong: `MATCH (p:Package {license: 'mit'}) RETURN p.name`}
 	fe := cypher.NewFrontEnd(depsGraph)
-	p, tr, err := modeltest.Translate(context.Background(), "which packages are MIT licensed?", v, nil, m, nl.Options{Base: b, FrontEnd: fe, Actions: &nl.Actions{}})
+	p, tr, err := modeltest.Translate(context.Background(), "which packages are MIT licensed?", v, nil, m, nl.Options{Base: b, FrontEnd: fe, Actions: &nl.Actions{SkipDraft: true}})
 	if err != nil || p.Text != m.right || len(p.Rows) != 1 || len(tr.Tries) != 1 || len(tr.Steps) != 1 {
 		t.Fatalf("Translate = %+v, %v, steps %+v", p, err, tr.Steps)
 	}
@@ -154,7 +154,7 @@ func TestActionsSpeakCypher(t *testing.T) {
 	}
 
 	r := &replies{texts: []string{"look Package", "look Nope", "values Package.licence", "try\nMATCH (p:Package {license: 'GPL'}) RETURN p.name", m.right}}
-	if _, tr, err = modeltest.Translate(context.Background(), "which packages are MIT licensed?", v, nil, r, nl.Options{Base: b, FrontEnd: fe, Actions: &nl.Actions{}}); err != nil || len(tr.Steps) != 4 {
+	if _, tr, err = modeltest.Translate(context.Background(), "which packages are MIT licensed?", v, nil, r, nl.Options{Base: b, FrontEnd: fe, Actions: &nl.Actions{SkipDraft: true}}); err != nil || len(tr.Steps) != 4 {
 		t.Fatalf("%v, steps %+v", err, tr.Steps)
 	}
 	for i, want := range []string{"(:Package {license, name})", "the graph's labels are Package", `did you mean "license"?`, "line 1, column 7:\n  MATCH (p:Package {license: 'GPL'})"} {

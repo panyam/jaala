@@ -30,7 +30,7 @@ func (m *looker) Name() string { return "small" }
 func TestActionsLookAtTheDataBeforeAnswering(t *testing.T) {
 	v, b := guide.Deps(t)
 	m := &looker{ask: "values pkg.license", right: `pkg(?p, "MIT") => ?p`, wrong: `pkg(?p, "mit") => ?p`}
-	p, tr, err := translate(context.Background(), "which packages are MIT licensed?", v, nil, m, nl.Options{Base: b, Actions: &nl.Actions{}})
+	p, tr, err := translate(context.Background(), "which packages are MIT licensed?", v, nil, m, nl.Options{Base: b, Actions: &nl.Actions{SkipDraft: true}})
 	if err != nil || p.Text != m.right || len(p.Rows) != 1 {
 		t.Fatalf("Translate = %+v, %v", p, err)
 	}
@@ -45,7 +45,7 @@ func TestActionsLookAtTheDataBeforeAnswering(t *testing.T) {
 	}
 	rep := nl.Eval(context.Background(), []nl.Case{{Name: "mit", Question: "which packages are MIT licensed?", Want: [][]string{{"app"}}}}, b,
 		func(ctx context.Context, q string) (nl.Program, nl.Trace, error) {
-			return translate(ctx, q, v, nil, &looker{ask: m.ask, right: m.right, wrong: m.wrong}, nl.Options{Base: b, Actions: &nl.Actions{}})
+			return translate(ctx, q, v, nil, &looker{ask: m.ask, right: m.right, wrong: m.wrong}, nl.Options{Base: b, Actions: &nl.Actions{SkipDraft: true}})
 		})
 	if rep.Passed != 1 || rep.PassedFirstTry != 1 || rep.Steps != 1 || rep.TokensOut != 8 || !strings.Contains(rep.String(), "1 tries and 1 steps") {
 		t.Errorf("report: %+v\n%s", rep, rep.String())
@@ -70,7 +70,7 @@ func TestEachActionSendsBackWhatItFound(t *testing.T) {
 		"values pkg.nope",
 		"values pkg.1",
 		`pkg(?p, "MIT") => ?p`)
-	p, tr, err := translate(context.Background(), "which packages are MIT licensed?", v, nil, m, nl.Options{Base: b, Actions: &nl.Actions{Steps: 6, Sample: 2}})
+	p, tr, err := translate(context.Background(), "which packages are MIT licensed?", v, nil, m, nl.Options{Base: b, Actions: &nl.Actions{SkipDraft: true, Steps: 6, Sample: 2}})
 	if err != nil || p.Text != `pkg(?p, "MIT") => ?p` || len(tr.Tries) != 1 || len(tr.Steps) != 6 {
 		t.Fatalf("Translate = %+v, %v, %d tries, %d steps", p, err, len(tr.Tries), len(tr.Steps))
 	}
@@ -97,7 +97,7 @@ func TestEachActionSendsBackWhatItFound(t *testing.T) {
 func TestStepsRunOut(t *testing.T) {
 	v, b := guide.Deps(t)
 	m := model("small", "look pkg", "look pkg", "values pkg.license", "look pkg", "look pkg")
-	_, tr, err := translate(context.Background(), "which packages are MIT licensed?", v, nil, m, nl.Options{Base: b, MaxTries: 2, Actions: &nl.Actions{Steps: 2}})
+	_, tr, err := translate(context.Background(), "which packages are MIT licensed?", v, nil, m, nl.Options{Base: b, MaxTries: 2, Actions: &nl.Actions{SkipDraft: true, Steps: 2}})
 	if err == nil || len(tr.Steps) != 3 || len(tr.Tries) != 2 || tr.Tries[0].Kind != nl.KindParse {
 		t.Fatalf("%v, steps %d, tries %+v", err, len(tr.Steps), tr.Tries)
 	}

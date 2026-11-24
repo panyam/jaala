@@ -9,13 +9,13 @@ import (
 	"github.com/panyam/jaala/internal/guide"
 )
 
-// With DraftFirst, a one-shot draft that passes is the answer, and the turn with actions never
-// starts (#521): no request offers a tool. control: without it, the first request offers them.
+// By default, a one-shot draft that passes is the answer, and the turn with actions never starts
+// (#521, #560): no request offers a tool. control: with SkipDraft, the first request offers them.
 func TestADraftThatPassesSkipsTheActions(t *testing.T) {
 	v, b := guide.Deps(t)
 	for _, first := range []bool{true, false} {
 		rec := &recordingProvider{Provider: scripted("small", map[string][]string{mitQ: {mit}})}
-		tr, err := New(v, nil, Config{Model: Role{Provider: rec}, Base: b, Actions: &nl.Actions{DraftFirst: first}})
+		tr, err := New(v, nil, Config{Model: Role{Provider: rec}, Base: b, Actions: &nl.Actions{SkipDraft: !first}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -32,14 +32,14 @@ func TestADraftThatPassesSkipsTheActions(t *testing.T) {
 // A refused one-shot draft starts the turn with actions (#521): the turn's first message carries it
 // and its refusal, and the model sending it again is a repeat, which ends the turn after one
 // re-ask, rather than a fresh empty answer. x05's model sent its refused draft five more times.
-// control: without DraftFirst, the same replies judge that draft empty, as new.
+// It's the default (#560). control: with SkipDraft, the same replies judge that draft empty, as new.
 func TestARefusedDraftStartsTheTurnWithActions(t *testing.T) {
 	v, b := guide.Deps(t)
 	nope := `pkg(?p, "nope") => ?p`
 	d := nl.DefaultPrompts()
 	head, _, _ := strings.Cut(d.DraftFirst, "%")
 	rec := &recordingProvider{Provider: scripted("small", map[string][]string{mitQ: {nope, nope, mit}})}
-	tr, err := New(v, nil, Config{Model: Role{Provider: rec}, Base: b, Actions: &nl.Actions{DraftFirst: true}})
+	tr, err := New(v, nil, Config{Model: Role{Provider: rec}, Base: b, Actions: &nl.Actions{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,9 +66,9 @@ func TestARefusedDraftStartsTheTurnWithActions(t *testing.T) {
 		t.Errorf("the turn's first message %q leaves out the draft", ask)
 	}
 	ctl := &recordingProvider{Provider: scripted("small", map[string][]string{mitQ: {nope, mit}})}
-	plain, _ := New(v, nil, Config{Model: Role{Provider: ctl}, Base: b, Actions: &nl.Actions{}})
+	plain, _ := New(v, nil, Config{Model: Role{Provider: ctl}, Base: b, Actions: &nl.Actions{SkipDraft: true}})
 	if _, trace, _ := plain.Ask(context.Background(), mitQ); strings.Join(tryKinds(trace), " ") != "empty " {
-		t.Errorf("control: without DraftFirst, kinds %v", tryKinds(trace))
+		t.Errorf("control: with SkipDraft, kinds %v", tryKinds(trace))
 	}
 }
 

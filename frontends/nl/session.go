@@ -256,9 +256,10 @@ func (s *Session) NewConversation(after error, last bool) *Conversation {
 }
 
 // From starts the conversation from draft, a reply another Session's conversation refused: the
-// one-shot draft of Actions.DraftFirst (#521). The draft counts as refused here too, so the model
-// sending it again is a repeat, and Ask carries it with its refusal (Prompts.DraftFirst). It counts
-// no try: the loop keeps all of its own. A draft with no error, or whose model failed, is ignored.
+// one-shot draft the action loop starts with unless Actions.SkipDraft (#521). The draft counts as
+// refused here too, so the model sending it again is a repeat, and Ask carries it with its refusal
+// (Prompts.DraftFirst). It counts no try: the loop keeps all of its own. A draft with no error, or
+// whose model failed, is ignored.
 func (c *Conversation) From(draft Try) { c.from(draft, c.s.pr.DraftFirst) }
 
 // Handoff starts the conversation from draft, the closest draft of the local tier, for the frontier

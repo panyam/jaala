@@ -23,7 +23,7 @@ func TestARepeatedActionCostsNoStep(t *testing.T) {
 	d := nl.DefaultPrompts()
 	for _, text := range []bool{false, true} {
 		rec := &recordingProvider{Provider: scripted("small", map[string][]string{mitQ: cycle})}
-		tr, err := New(v, nil, Config{Model: Role{Provider: rec, TextActions: text}, Base: b, Actions: &nl.Actions{Steps: 4},
+		tr, err := New(v, nil, Config{Model: Role{Provider: rec, TextActions: text}, Base: b, Actions: &nl.Actions{SkipDraft: true, Steps: 4},
 			Options: func(o *nl.Options) { o.MaxTries = 1 }})
 		if err != nil {
 			t.Fatal(err)
@@ -127,7 +127,7 @@ func TestTheLedgerFollowsTheConversation(t *testing.T) {
 	d := nl.DefaultPrompts()
 	for _, ledger := range []bool{true, false} {
 		rec := &recordingProvider{Provider: scripted("small", map[string][]string{mitQ: {"values pkg.license", mit}})}
-		tr, err := New(v, nil, Config{Model: Role{Provider: rec}, Base: b, Actions: &nl.Actions{Ledger: ledger}})
+		tr, err := New(v, nil, Config{Model: Role{Provider: rec}, Base: b, Actions: &nl.Actions{SkipDraft: true, Ledger: ledger}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -158,7 +158,7 @@ func TestAModelBuildsItsProgramALiteralAtATime(t *testing.T) {
 	script := []string{"add pkg(?p, ?l)", `add ?l = "mit"`, "drop", `add ?l = "MIT"`, "=> ?p"}
 	for _, text := range []bool{false, true} {
 		rec := &recordingProvider{Provider: scripted("small", map[string][]string{mitQ: script})}
-		tr, err := New(v, nil, Config{Model: Role{Provider: rec, TextActions: text}, Base: b, Actions: &nl.Actions{Build: true}})
+		tr, err := New(v, nil, Config{Model: Role{Provider: rec, TextActions: text}, Base: b, Actions: &nl.Actions{SkipDraft: true, Build: true}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -174,7 +174,7 @@ func TestAModelBuildsItsProgramALiteralAtATime(t *testing.T) {
 		}
 	}
 	ctl := &recordingProvider{Provider: scripted("small", map[string][]string{mitQ: script})}
-	tr, err := New(v, nil, Config{Model: Role{Provider: ctl, TextActions: true}, Base: b, Actions: &nl.Actions{}})
+	tr, err := New(v, nil, Config{Model: Role{Provider: ctl, TextActions: true}, Base: b, Actions: &nl.Actions{SkipDraft: true}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +206,7 @@ func TestAModelPicksAJoinFromPaths(t *testing.T) {
 	answer := `node(?from, "func"), str.glob(?from, "goapp/*"), contains(?from, ?n1), node(?n1, "callsite"), attr(?n1, "callee", ?to), node(?to, "func"), str.glob(?to, "oneauth/*") => ?to, ?from`
 	script := []string{`paths func str.glob(?x, "goapp/*") => func str.glob(?x, "oneauth/*")`, answer}
 	for _, text := range []bool{false, true} {
-		tr, err := New(v, &nl.Pack{Shape: &shape}, Config{Model: Role{Provider: scripted("small", map[string][]string{q: script}), TextActions: text}, Base: b, Actions: &nl.Actions{}})
+		tr, err := New(v, &nl.Pack{Shape: &shape}, Config{Model: Role{Provider: scripted("small", map[string][]string{q: script}), TextActions: text}, Base: b, Actions: &nl.Actions{SkipDraft: true}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -218,7 +218,7 @@ func TestAModelPicksAJoinFromPaths(t *testing.T) {
 			t.Errorf("text %v: steps %+v", text, trace.Steps)
 		}
 	}
-	tr, err := New(v, &nl.Pack{}, Config{Model: Role{Provider: scripted("small", map[string][]string{q: script}), TextActions: true}, Base: b, Actions: &nl.Actions{}})
+	tr, err := New(v, &nl.Pack{}, Config{Model: Role{Provider: scripted("small", map[string][]string{q: script}), TextActions: true}, Base: b, Actions: &nl.Actions{SkipDraft: true}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -285,7 +285,7 @@ func TestAWindowOfRepeatsDrawsTheStuckNote(t *testing.T) {
 	nope := "try\n" + `pkg(?p, "nope") => ?p`
 	run := func(script []string) bool {
 		rec := &recordingProvider{Provider: scripted("small", map[string][]string{mitQ: script})}
-		tr, err := New(v, nil, Config{Model: Role{Provider: rec}, Base: b, Actions: &nl.Actions{Steps: 8}})
+		tr, err := New(v, nil, Config{Model: Role{Provider: rec}, Base: b, Actions: &nl.Actions{SkipDraft: true, Steps: 8}})
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -107,7 +107,7 @@ func TestAPacksPromptsReplaceJaalasText(t *testing.T) {
 		replies []string
 		check   func(m *scripted, tr nl.Trace) string
 	}{
-		{"instructions, the tools and find", nl.Options{Base: b, Actions: &nl.Actions{}}, g, []string{`edge("a", ?b) => ?b`}, func(m *scripted, _ nl.Trace) string {
+		{"instructions, the tools and find", nl.Options{Base: b, Actions: &nl.Actions{SkipDraft: true}}, g, []string{`edge("a", ?b) => ?b`}, func(m *scripted, _ nl.Trace) string {
 			pre := m.asked[0].Prefix
 			d := m.descs
 			tools := fmt.Sprintf("%s|%s|%s|%s", d[nl.ActionLook], d[nl.ActionValues], d[nl.ActionTry], d[nl.ActionFind])
@@ -118,7 +118,7 @@ func TestAPacksPromptsReplaceJaalasText(t *testing.T) {
 		{"a front end's instructions", nl.Options{Base: b, FrontEnd: shout{}}, nil, []string{`SAY edge("a", ?b) => ?b`}, func(m *scripted, _ nl.Trace) string {
 			return want(m.asked[0].Prefix, "H-SHOUT") + absent(m.asked[0].Prefix, "# Say SAY", "H-INSTRUCTIONS")
 		}},
-		{"asked again and the last look", nl.Options{Base: b, Actions: &nl.Actions{Steps: 2}}, nil, []string{"look edge", "look edge", "values edge.0", `edge("a", ?b) => ?b`}, func(_ *scripted, tr nl.Trace) string {
+		{"asked again and the last look", nl.Options{Base: b, Actions: &nl.Actions{SkipDraft: true, Steps: 2}}, nil, []string{"look edge", "look edge", "values edge.0", `edge("a", ?b) => ?b`}, func(_ *scripted, tr nl.Trace) string {
 			if r := tr.Steps[1].Result; !strings.HasPrefix(r, "H-ASKED ") {
 				return fmt.Sprintf("second look's result %q", r)
 			}
@@ -127,7 +127,7 @@ func TestAPacksPromptsReplaceJaalasText(t *testing.T) {
 			}
 			return ""
 		}},
-		{"building a literal at a time", nl.Options{Base: b, Actions: &nl.Actions{Steps: 6, Build: true}}, nil, []string{`add edge("a", ?b)`, "add edge(", "drop", "drop", `edge("a", ?b) => ?b`}, func(m *scripted, tr nl.Trace) string {
+		{"building a literal at a time", nl.Options{Base: b, Actions: &nl.Actions{SkipDraft: true, Steps: 6, Build: true}}, nil, []string{`add edge("a", ?b)`, "add edge(", "drop", "drop", `edge("a", ?b) => ?b`}, func(m *scripted, tr nl.Trace) string {
 			if len(tr.Steps) != 4 {
 				return fmt.Sprintf("%d steps", len(tr.Steps))
 			}
@@ -138,11 +138,11 @@ func TestAPacksPromptsReplaceJaalasText(t *testing.T) {
 		{"the rest without the culprit", nl.Options{Base: b}, nil, []string{`edge(?a, ?b), edge(?b, "zz") => ?a`, `edge(?a, ?b) => ?a`}, func(m *scripted, _ nl.Trace) string {
 			return want(m.asked[1].Turns[2].Text, `H-WITHOUT ?b|edge(?b, "zz")`)
 		}},
-		{"the ledger", nl.Options{Base: b, Actions: &nl.Actions{Steps: 2, Ledger: true}}, nil, []string{"values edge.0", "try\n" + `edge("zz", ?b) => ?b`, `edge("a", ?b) => ?b`}, func(m *scripted, _ nl.Trace) string {
+		{"the ledger", nl.Options{Base: b, Actions: &nl.Actions{SkipDraft: true, Steps: 2, Ledger: true}}, nil, []string{"values edge.0", "try\n" + `edge("zz", ?b) => ?b`, `edge("a", ?b) => ?b`}, func(m *scripted, _ nl.Trace) string {
 			ledger := m.asked[2].Turns[len(m.asked[2].Turns)-1].Text
 			return want(ledger, "H-LEDGERHEADER\n\n[H-LEDGERFOUND]\n- values edge.0", "\n\n[H-LEDGERTRIED]\n- try ")
 		}},
-		{"a try tried again and the stuck note", nl.Options{Base: b, Actions: &nl.Actions{}}, nil, []string{"try\n" + `edge("zz", ?b) => ?b`, "try\n" + `edge("zz", ?b) => ?b`, `edge("a", ?b) => ?b`}, func(m *scripted, tr nl.Trace) string {
+		{"a try tried again and the stuck note", nl.Options{Base: b, Actions: &nl.Actions{SkipDraft: true}}, nil, []string{"try\n" + `edge("zz", ?b) => ?b`, "try\n" + `edge("zz", ?b) => ?b`, `edge("a", ?b) => ?b`}, func(m *scripted, tr nl.Trace) string {
 			if r := tr.Steps[1].Result; !strings.HasPrefix(r, "H-TRIED\n") {
 				return fmt.Sprintf("the second try's result %q", r)
 			}
@@ -153,7 +153,7 @@ func TestAPacksPromptsReplaceJaalasText(t *testing.T) {
 			}
 			return fmt.Sprintf("no stuck note in %+v", m.asked[2].Turns)
 		}},
-		{"a look for a plain word", nl.Options{Base: b, Actions: &nl.Actions{}}, nil, []string{"look dge", "look zebra", `edge("a", ?b) => ?b`}, func(_ *scripted, tr nl.Trace) string {
+		{"a look for a plain word", nl.Options{Base: b, Actions: &nl.Actions{SkipDraft: true}}, nil, []string{"look dge", "look zebra", `edge("a", ?b) => ?b`}, func(_ *scripted, tr nl.Trace) string {
 			if found, none := tr.Steps[0].Result, tr.Steps[1].Result; !strings.HasPrefix(found, "H-LOOKFOUND dge\n") || !strings.HasSuffix(none, "\nH-LOOKNOTHING") {
 				return fmt.Sprintf("the looks' results %q, %q", found, none)
 			}
@@ -171,10 +171,10 @@ func TestAPacksPromptsReplaceJaalasText(t *testing.T) {
 			return want(m.asked[0].Prefix, "H-PICK\n") + absent(m.asked[0].Prefix, "# Answer the question with one call") +
 				want(m.asked[1].Turns[2].Text, "\n\nH-PICKRETRY")
 		}},
-		{"a refused draft first", nl.Options{Base: b, Actions: &nl.Actions{DraftFirst: true}}, nil, []string{`nope(?a) => ?a`, `edge("a", ?b) => ?b`}, func(m *scripted, _ nl.Trace) string {
+		{"a refused draft first", nl.Options{Base: b, Actions: &nl.Actions{}}, nil, []string{`nope(?a) => ?a`, `edge("a", ?b) => ?b`}, func(m *scripted, _ nl.Trace) string {
 			return want(m.asked[1].Turns[0].Text, "q\n\nH-DRAFTFIRST program|nope(?a) => ?a|query: unknown relation")
 		}},
-		{"the compact turn", nl.Options{Base: b, Actions: &nl.Actions{Steps: 2, Compact: true}}, nil, []string{"look edge", `edge("zz", ?b) => ?b`, `edge("a", ?b) => ?b`}, func(m *scripted, _ nl.Trace) string {
+		{"the compact turn", nl.Options{Base: b, Actions: &nl.Actions{SkipDraft: true, Steps: 2, Compact: true}}, nil, []string{"look edge", `edge("zz", ?b) => ?b`, `edge("a", ?b) => ?b`}, func(m *scripted, _ nl.Trace) string {
 			return want(m.asked[2].Turns[0].Text, "\n\nH-FOUND\n", "\n\nH-REFUSED\n")
 		}},
 	} {
@@ -276,7 +276,7 @@ func TestAPacksPathsPromptsReplaceJaalasText(t *testing.T) {
 			pack.Prompts = hostPrompts()
 		}
 		m := model("small", replies...)
-		_, tr, err := translate(context.Background(), "q", b.Vocabulary(), nil, m, nl.Options{Base: b, Pack: pack, Actions: &nl.Actions{}})
+		_, tr, err := translate(context.Background(), "q", b.Vocabulary(), nil, m, nl.Options{Base: b, Pack: pack, Actions: &nl.Actions{SkipDraft: true}})
 		if err != nil || len(tr.Steps) != 2 {
 			t.Fatalf("host %v: %v, steps %+v", host, err, tr.Steps)
 		}
@@ -302,7 +302,7 @@ func TestAPacksPathsRefusalsReplaceJaalasText(t *testing.T) {
 			pack.Prompts = hostPrompts()
 		}
 		m := model("small", replies...)
-		_, tr, err := translate(context.Background(), "q", b.Vocabulary(), nil, m, nl.Options{Base: b, Pack: pack, Actions: &nl.Actions{}})
+		_, tr, err := translate(context.Background(), "q", b.Vocabulary(), nil, m, nl.Options{Base: b, Pack: pack, Actions: &nl.Actions{SkipDraft: true}})
 		if err != nil || len(tr.Steps) != 1 {
 			t.Fatalf("host %v: %v, steps %+v", host, err, tr.Steps)
 		}
