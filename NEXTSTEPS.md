@@ -5,17 +5,19 @@ Maintained by /checkpoint: one thread per branch, pruned when the branch merges.
 
 ## At a glance
 
-- No open branches or PRs. `main` is v0.1.103 (58df908, CI green): #550 `Role.Reasoning` and
-  `Try.Truncated`, #552 `Abstain.Declined`.
+- No open branches or PRs. `main` is 8a478a0: v0.1.103 plus #558, which runs vulncheck through
+  `panyam/ci-actions` v0.1.1 (#553). The old step piped the scan into `tee` without pipefail, so it
+  never failed on a finding.
+- #557 (P1, bug): vulncheck is red on `main` from three standard-library advisories. The fix is
+  raising the modules' `go` lines (nlmodels, mcp, docsite on 1.26.9; root, nl, cypher, bolt on
+  1.26.4) past go1.26.11. Next up, ahead of the missions.
 - Mission #322 (`mission_agent_frontend`) is 49/51 and waits on Declaire's gpt-5.5 arms (declaire#300,
-  declaire#371): chakra's agent driver, Codex, and the translator with `Role.Reasoning` and
-  `Abstain.Declined`, all on one model. Exercise at 06e8062: `TestEval` unchanged; `TestEvalOnOpenAI`
-  7 passed, 0 wrong, 1 correct decline. #547 (`Actions.Collapse`'s measuring) is parked `waiting` until
-  the work reaches the small-model step. #544 (P2) is the next ready jaala ticket.
-- Mission #437 (`mission_text_memory`) is 3/4; next ready is #415 (P1). Its exercise was last logged at
-  d56ca11, and 30 PRs have merged since.
-- Selfcheck: last pass 9bf08e4 (2026-11-09); 5 PRs merged since, so `make selfcheck` is due now.
-- This run: rewrote the file from v0.1.91's state; no threads to carry.
+  declaire#371). #547 is parked `waiting`. #544 (P2) is next in the queue, but its evidence is all
+  `14b:loop`, which frontier-first parks.
+- Mission #437 (`mission_text_memory`) is 3/4; next ready is #415 (P1), unblocked now that
+  panyam/chakra#246 is closed. Its exercise was last logged at d56ca11, and 31 PRs have merged since.
+- Selfcheck: passed on 0d0a16b (2026-11-24); 1 PR merged since.
+- This run: closed out #553 (PR #558 merged).
 
 ## Across threads
 
