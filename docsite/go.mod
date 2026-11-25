@@ -32,7 +32,7 @@ require (
 )
 
 require (
-	github.com/panyam/chakra v0.3.7
+	github.com/panyam/chakra v0.3.8
 	github.com/panyam/jaala v0.1.106
 	github.com/panyam/jaala/frontends/cypher v0.1.106
 	github.com/panyam/jaala/frontends/mcp v0.1.106

@@ -94,9 +94,9 @@ jobs:
       - name: standard library, jaala and chakra only
         run: |
           deps() { go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' "$@" | grep -v '^github.com/panyam/jaala' | sort -u; }
-          # chakra's presets package (#528) and its LongMemEval harness (memory, #415) are chakra's too,
-          # though its root package imports neither
-          extra=$(comm -23 <(deps ./...) <(deps github.com/panyam/chakra github.com/panyam/chakra/presets github.com/panyam/chakra/eval/longmemeval))
+          # chakra's presets package (#528), its LongMemEval harness (memory, #415) and its connection
+          # router (route, #579) are chakra's too, though its root package imports none of them
+          extra=$(comm -23 <(deps ./...) <(deps github.com/panyam/chakra github.com/panyam/chakra/presets github.com/panyam/chakra/eval/longmemeval github.com/panyam/chakra/connection))
           if [ -n "$extra" ]; then echo "dependencies outside jaala and chakra:"; echo "$extra"; exit 1; fi
 
   # The Cypher front end is a module of its own (#352), so no core package can import it and what it
