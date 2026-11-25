@@ -11,7 +11,7 @@ require (
 	github.com/dlclark/regexp2 v1.11.4 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/gorilla/mux v1.8.1 // indirect
-	github.com/gorilla/websocket v1.5.3 // indirect
+	github.com/gorilla/websocket v1.5.4-0.20240701034025-d67f41855da4 // indirect
 	github.com/invopop/jsonschema v0.14.0 // indirect
 	github.com/morrisxyang/xreflect v0.0.0-20231001053442-6df0df9858ba // indirect
 	github.com/panyam/gocurrent v0.1.3 // indirect
@@ -26,19 +26,20 @@ require (
 	github.com/yuin/goldmark-highlighting v0.0.0-20220208100518-594be1970594 // indirect
 	go.abhg.dev/goldmark/anchor v0.2.0 // indirect
 	go.yaml.in/yaml/v4 v4.0.0-rc.6 // indirect
+	golang.org/x/net v0.61.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
 	golang.org/x/time v0.16.0 // indirect
 	gopkg.in/yaml.v2 v2.3.0 // indirect
 )
 
 require (
-	github.com/panyam/chakra v0.3.8
+	github.com/panyam/chakra v0.3.9
 	github.com/panyam/jaala v0.1.106
 	github.com/panyam/jaala/frontends/cypher v0.1.106
 	github.com/panyam/jaala/frontends/mcp v0.1.106
 	github.com/panyam/jaala/frontends/nl v0.1.106
 	github.com/panyam/jaala/frontends/nlmodels v0.1.106
-	github.com/panyam/mcpkit v0.8.21
+	github.com/panyam/mcpkit v0.8.23
 	github.com/panyam/s3gen v0.1.6
 	gopkg.in/yaml.v3 v3.0.1
 )
