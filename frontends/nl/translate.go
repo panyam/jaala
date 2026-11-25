@@ -290,6 +290,9 @@ type BudgetStopped struct {
 	// Literal is the literal that did the most work, as it ran, and Rule the rule as written whose
 	// body holds it, "" for the goal's.
 	Literal, Rule string
+	// Through is the program's own literal that reaches Rule when Rule is a module's (#569), "" when
+	// Literal is the program's. A model can't change a module's rule, but it can bind what it calls.
+	Through string
 	// Where says so in the pack's words (Prompts.BudgetWhere, then Prompts.BudgetFix).
 	Where string
 }
@@ -301,20 +304,20 @@ func (e *BudgetStopped) Unwrap() error { return e.Err }
 
 // budgetWhere is err with where the work went when the budget stopped it and r shows a literal that
 // did any, and err as it was otherwise.
-func budgetWhere(err error, r *datalog.Report, pr Prompts) error {
+func budgetWhere(err error, r *datalog.Report, q datalog.Query, v *ns.Vocabulary, pr Prompts) error {
 	var be *datalog.BudgetExceeded
 	if r == nil || !errors.As(err, &be) {
 		return err
 	}
 	var hot *datalog.LiteralReport
-	rule := ""
+	rule, rel := "", ""
 	for _, body := range append([]*datalog.BodyReport{r.Goal}, r.Rules...) {
 		if body == nil {
 			continue
 		}
 		for _, l := range body.Literals {
 			if hot == nil || l.Work > hot.Work || l.Work == hot.Work && l.Stopped && !hot.Stopped {
-				hot, rule = l, body.Rule
+				hot, rule, rel = l, body.Rule, body.Relation
 			}
 		}
 	}
@@ -325,13 +328,86 @@ func budgetWhere(err error, r *datalog.Report, pr Prompts) error {
 	if rule != "" {
 		lit = fmt.Sprintf(pr.BudgetInRule, lit, rule)
 	}
+	through := callerOf(q, v, rel)
+	if through != "" {
+		lit = fmt.Sprintf(pr.BudgetThrough, through, lit)
+	}
 	access := strings.Join(hot.Access, ", ")
 	if access == "" {
 		access = "-"
 	}
 	where := fmt.Sprintf(pr.BudgetWhere, lit, strconv.FormatInt(hot.Reached, 10), strconv.FormatInt(hot.Work, 10),
 		strconv.FormatInt(hot.Passed, 10), access) + "\n" + pr.BudgetFix
-	return &BudgetStopped{Err: be, Literal: hot.Literal, Rule: rule, Where: where}
+	return &BudgetStopped{Err: be, Literal: hot.Literal, Rule: rule, Through: through, Where: where}
+}
+
+// callerOf is the first literal of q's own, its goal's then its rules', that reaches rel through
+// the modules' rules, "" when rel is q's own relation or none reaches it.
+func callerOf(q datalog.Query, v *ns.Vocabulary, rel string) string {
+	own := map[string]bool{}
+	for _, r := range q.Rules {
+		own[r.Head.Relation] = true
+	}
+	if rel == "" || v == nil {
+		return ""
+	}
+	linked, err := datalog.Link(q, v)
+	if err != nil {
+		return ""
+	}
+	reads := map[string][]string{}
+	for _, r := range linked.Rules {
+		reads[r.Head.Relation] = append(reads[r.Head.Relation], bodyRelations(r.Body)...)
+	}
+	reaches := func(from string) bool {
+		seen := map[string]bool{}
+		next := []string{from}
+		for len(next) > 0 {
+			n := next[len(next)-1]
+			next = next[:len(next)-1]
+			if n == rel {
+				return true
+			}
+			if !seen[n] {
+				seen[n] = true
+				next = append(next, reads[n]...)
+			}
+		}
+		return false
+	}
+	bodies := []datalog.Body{q.Goal}
+	for _, r := range q.Rules {
+		bodies = append(bodies, r.Body)
+	}
+	for _, b := range bodies {
+		for _, l := range b.Literals {
+			for _, name := range bodyRelations(datalog.Body{Literals: []datalog.Literal{l}}) {
+				if !own[name] && reaches(name) {
+					return l.String()
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// bodyRelations are the relations b's atoms call, those inside its aggregates and optionals too.
+func bodyRelations(b datalog.Body) []string {
+	var out []string
+	for _, l := range b.Literals {
+		for _, a := range []*datalog.Atom{l.Pos, l.Neg} {
+			if a != nil {
+				out = append(out, a.Relation)
+			}
+		}
+		if l.Agg != nil {
+			out = append(out, bodyRelations(l.Agg.Body)...)
+		}
+		if l.Opt != nil {
+			out = append(out, bodyRelations(*l.Opt)...)
+		}
+	}
+	return out
 }
 
 // hintFor is p's Hint for why, "" when there is no pack, no hint or nothing to explain.
@@ -387,7 +463,7 @@ func check(ctx context.Context, try Try, v *ns.Vocabulary, o Options, limit int)
 	opts := append(o.Eval[:len(o.Eval):len(o.Eval)], datalog.Explain(try.Report))
 	rows, err := datalog.SemiNaive{}.Eval(ctx, q, o.Base, opts...)
 	if err != nil {
-		return refuse(budgetWhere(err, try.Report, o.Pack.prompts()), kindOf(err, KindEval))
+		return refuse(budgetWhere(err, try.Report, q, v, o.Pack.prompts()), kindOf(err, KindEval))
 	}
 	if len(rows) == 0 {
 		why := try.Report.Empty

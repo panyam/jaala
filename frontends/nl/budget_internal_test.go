@@ -20,14 +20,14 @@ func TestBudgetWhereNamesTheCostliestLiteral(t *testing.T) {
 		{"most work", []*datalog.LiteralReport{{Literal: "a(?x)", Work: 90}, {Literal: "b(?x)", Work: 11, Stopped: true}}, "a(?x)"},
 		{"tie", []*datalog.LiteralReport{{Literal: "a(?x)", Work: 50}, {Literal: "b(?x)", Work: 50, Stopped: true}}, "b(?x)"},
 	} {
-		err := budgetWhere(be, &datalog.Report{Goal: &datalog.BodyReport{Literals: c.lits}}, DefaultPrompts())
+		err := budgetWhere(be, &datalog.Report{Goal: &datalog.BodyReport{Literals: c.lits}}, datalog.Query{}, nil, DefaultPrompts())
 		var bs *BudgetStopped
 		if !errors.As(err, &bs) || bs.Literal != c.want {
 			t.Errorf("%s: %v", c.name, err)
 		}
 	}
 	idle := &datalog.Report{Goal: &datalog.BodyReport{Literals: []*datalog.LiteralReport{{Literal: "a(?x)"}}}}
-	if err := budgetWhere(be, idle, DefaultPrompts()); err != be {
+	if err := budgetWhere(be, idle, datalog.Query{}, nil, DefaultPrompts()); err != be {
 		t.Errorf("control: with no work, %v", err)
 	}
 }

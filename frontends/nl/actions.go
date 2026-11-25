@@ -324,9 +324,15 @@ const lookMatches = 10
 // first doc line holds the word, names first; with nothing listed and a Grounder, it answers as find
 // does; and otherwise it says what look takes, after err. A Prober's front end lists nothing, since
 // jaala's names aren't its language.
+//
+// A word written relation.argument, as values takes it, gets the relation's look and a line pointing
+// at values (#569). On Declaire's x06b, look attr.callee was told attr was no module and offered http.
 func lookFor(ctx context.Context, v *ns.Vocabulary, o Options, word string, err error) (string, []string) {
 	pr := o.Pack.prompts()
 	if _, ok := o.FrontEnd.(Prober); !ok {
+		if text, ok := lookArgument(v, word, pr); ok {
+			return text, nil
+		}
 		if lines := membersMentioning(v, word); len(lines) > 0 {
 			return fmt.Sprintf(pr.LookFound, word) + "\n" + strings.TrimRight(strings.Join(lines, ""), "\n"), nil
 		}
@@ -337,6 +343,28 @@ func lookFor(ctx context.Context, v *ns.Vocabulary, o Options, word string, err 
 		}
 	}
 	return err.Error() + "\n" + pr.LookNothing, nil
+}
+
+// lookArgument is look's answer for rel.arg when rel is a relation: rel's look, then
+// Prompts.LookArgument, or the arguments rel takes when it has no arg. ok is false when the part
+// before the last dot isn't a relation.
+func lookArgument(v *ns.Vocabulary, word string, pr Prompts) (string, bool) {
+	i := strings.LastIndexByte(word, '.')
+	if i <= 0 {
+		return "", false
+	}
+	e, err := v.Lookup(word[:i])
+	if err != nil || e.Kind == ns.EntryModule {
+		return "", false
+	}
+	text, err := look(v, word[:i])
+	if err != nil {
+		return "", false
+	}
+	if _, err := valuesProgram(v, word, 1); err != nil {
+		return text + "\n" + err.Error(), true
+	}
+	return text + "\n" + fmt.Sprintf(pr.LookArgument, word), true
 }
 
 // find asks the Grounder what name may stand for: the text that goes back, "" when it found nothing,
