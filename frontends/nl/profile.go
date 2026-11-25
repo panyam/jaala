@@ -223,6 +223,14 @@ func (s *Summary) merge(o Summary) {
 		m.Abstain += t.Abstain
 		s.Tags[tag] = m
 	}
+	for tag, c := range o.TagCost {
+		if s.TagCost == nil {
+			s.TagCost = map[string]Cost{}
+		}
+		m := s.TagCost[tag]
+		m.add(c)
+		s.TagCost[tag] = m
+	}
 	s.Cost.add(o.Cost)
 }
 

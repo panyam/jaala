@@ -168,7 +168,10 @@ type Summary struct {
 	// Tags is a Tally per Case tag. A case with several tags counts in each, and one with none in
 	// the run's Tally alone.
 	Tags map[string]Tally `json:",omitempty"`
-	Cost Cost
+	// TagCost is the Cost per Case tag, counted as Tags is (#574): a case with several tags costs in
+	// each. A router reads it beside Tags to weigh a model's passes against what they cost.
+	TagCost map[string]Cost `json:",omitempty"`
+	Cost    Cost
 	// Tiers is the Cost per tier under Options.Tiers (Result.TierCost), and Answered how many cases
 	// each tier answered (Trace.Tier), so a local-then-frontier run says what each tier spent and
 	// what it bought.
@@ -200,7 +203,16 @@ func (rep Report) Summary(p Prices) Summary {
 			t.Add(o)
 			s.Tags[tag] = t
 		}
-		s.Cost.add(r.Cost(p))
+		c := r.Cost(p)
+		for _, tag := range r.Tags {
+			if s.TagCost == nil {
+				s.TagCost = map[string]Cost{}
+			}
+			tc := s.TagCost[tag]
+			tc.add(c)
+			s.TagCost[tag] = tc
+		}
+		s.Cost.add(c)
 		for tier, c := range r.TierCost(p) {
 			if s.Tiers == nil {
 				s.Tiers = map[string]Cost{}
@@ -401,6 +413,23 @@ func TagTallies(cases []CaseRecord) map[string]Tally {
 			t := out[tag]
 			t.Add(c.Outcome)
 			out[tag] = t
+		}
+	}
+	return out
+}
+
+// TagCosts is the Cost per tag over cases, as Summary.TagCost counts it, for records a host built
+// without Results (#574). nil when no case has a tag.
+func TagCosts(cases []CaseRecord) map[string]Cost {
+	var out map[string]Cost
+	for _, c := range cases {
+		for _, tag := range c.Tags {
+			if out == nil {
+				out = map[string]Cost{}
+			}
+			tc := out[tag]
+			tc.add(c.Cost)
+			out[tag] = tc
 		}
 	}
 	return out
