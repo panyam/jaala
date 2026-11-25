@@ -301,7 +301,8 @@ var profileColumns = []string{"model", "usd_per_mtok_in", "usd_per_mtok_cached",
 // ProfileTable writes a row per profile as "csv" or "md": its price per million tokens (empty when
 // unpriced), its outcomes, its cost and time per correct answer, each skill as hit/of, and each tag's
 // pass/wrong/abstain. Cost per correct answer is marked "+" when some model went unpriced, since it
-// is then a lower bound.
+// is then a lower bound. Time per correct answer is empty when any case's time is unknown
+// (Cost.Untimed).
 func ProfileTable(w io.Writer, ps []ModelProfile, format string) error {
 	var rows [][]string
 	for _, p := range ps {
@@ -315,6 +316,9 @@ func ProfileTable(w io.Writer, ps []ModelProfile, format string) error {
 			perUSD, perSec = fmt.Sprintf("%.4f", d), fmt.Sprintf("%.1f", sec)
 			if len(s.Cost.Unpriced) > 0 {
 				perUSD += "+"
+			}
+			if s.Cost.Untimed > 0 {
+				perSec = "" // a case with no time would read as instant (#581)
 			}
 		}
 		var tags []string
