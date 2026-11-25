@@ -751,7 +751,7 @@ An `Eval` that stops partway returns one of these, and no answer.
 
 `query: evaluation stopped: work passed its budget of … (at …)`
 
-The query did more work than `Budget` allows. A host can test for it with `errors.As` and a `*datalog.BudgetExceeded`.
+The query did more work than `Budget` allows. A host can test for it with `errors.As` and a `*datalog.BudgetExceeded`. The plain-language translator adds a line naming the literal that did the most work, and a line saying what to change, as an `*nl.BudgetStopped` wrapping it ([#544](https://github.com/panyam/jaala/issues/544)).
 
 {{ demo "demos/errors/work-passed-its-budget.yaml" }}
 

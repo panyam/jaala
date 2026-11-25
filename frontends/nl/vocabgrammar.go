@@ -166,7 +166,118 @@ func vocabRules(v *ns.Vocabulary, o grammarOpts) ([]rule, error) {
 		}
 		out = append(out, rule{r.name, e})
 	}
-	return reachable(append(out, extra...)), nil
+	out = append(out, extra...)
+	if !o.goalOnly {
+		out = membersOnly(out)
+	}
+	return reachable(out), nil
+}
+
+// membersOnly makes a program with no rules call members only (#567). Without it, a call that names
+// no member reads as a call to one of the program's own rules, so prose passed as one: a model
+// explaining a refusal wrote Thequerywasrefusedbecauseitranse(1000001). Each rule reaching local
+// gets a copy, suffixed -m, whose atom and call leave local out, and root becomes that copy's goal,
+// or rules then the goal as before. A copy left with nothing to match is dropped with its mentions,
+// and when the goal's copy is, the grammar stays as it was.
+func membersOnly(rules []rule) []rule {
+	// copied are the rules that reach local, found as a fixpoint: a rule reaches it when it mentions
+	// local or a rule that does
+	copied := map[string]bool{}
+	for changed := true; changed; {
+		changed = false
+		for _, r := range rules {
+			if copied[r.name] || r.name == "local" || r.name == "root" {
+				continue
+			}
+			hit := mentions(r.e, "local")
+			for n := range copied {
+				hit = hit || mentions(r.e, n)
+			}
+			if hit {
+				copied[r.name], changed = true, true
+			}
+		}
+	}
+	if !copied["goal"] {
+		return rules
+	}
+	var rename func(e gexpr) gexpr
+	rename = func(e gexpr) gexpr {
+		switch e := e.(type) {
+		case ref:
+			if copied[string(e)] {
+				return ref(string(e) + "-m")
+			}
+		case seq:
+			out := make(seq, len(e))
+			for i, x := range e {
+				out[i] = rename(x)
+			}
+			return out
+		case alt:
+			out := make(alt, len(e))
+			for i, x := range e {
+				out[i] = rename(x)
+			}
+			return out
+		case rep:
+			return rep{rename(e.e), e.min, e.max}
+		}
+		return e
+	}
+	copies := map[string]gexpr{}
+	var order []string
+	for _, r := range rules {
+		if !copied[r.name] {
+			continue
+		}
+		e := r.e
+		if a, ok := e.(alt); ok && (r.name == "atom" || r.name == "call") {
+			e = without(a, "local")
+		}
+		copies[r.name+"-m"] = rename(e)
+		order = append(order, r.name+"-m")
+	}
+	// A copy dies when it is an alternation left with nothing. An alternation then loses the
+	// alternatives mentioning it, and any other copy mentioning it dies on the next pass.
+	for {
+		dead := ""
+		for _, n := range order {
+			if a, ok := copies[n].(alt); ok && len(a) == 0 {
+				dead = n
+				break
+			}
+		}
+		if dead == "" {
+			break
+		}
+		delete(copies, dead)
+		order = slices.DeleteFunc(order, func(n string) bool { return n == dead })
+		for _, n := range order {
+			switch e := copies[n].(type) {
+			case alt:
+				copies[n] = without(e, dead)
+			default:
+				if mentions(e, dead) {
+					copies[n] = alt{} // dies on the next pass
+				}
+			}
+		}
+	}
+	if _, ok := copies["goal-m"]; !ok {
+		return rules
+	}
+	out := make([]rule, 0, len(rules)+len(order))
+	for _, r := range rules {
+		if r.name == "root" {
+			r.e = alt{ref("goal-m"), seq{plus(seq{ref("rule"), ref("sep")}), ref("goal")}}
+		}
+		out = append(out, r)
+	}
+	for _, n := range order {
+		out = append(out, rule{n, copies[n]})
+	}
+	return out
 }
 
 // args are the arguments of a call taking n: a term each, or for a closed domain a variable or one of

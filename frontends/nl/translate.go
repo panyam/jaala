@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -281,6 +282,58 @@ func (e *EmptyAnswer) Error() string {
 	return s
 }
 
+// A BudgetStopped is the error of a draft whose evaluation passed its work budget, with where the
+// work went (#544). The budget's numbers alone gave a model nothing to change, so it sent the same
+// draft again. errors.As still finds the *datalog.BudgetExceeded in it.
+type BudgetStopped struct {
+	Err *datalog.BudgetExceeded
+	// Literal is the literal that did the most work, as it ran, and Rule the rule as written whose
+	// body holds it, "" for the goal's.
+	Literal, Rule string
+	// Where says so in the pack's words (Prompts.BudgetWhere, then Prompts.BudgetFix).
+	Where string
+}
+
+func (e *BudgetStopped) Error() string { return e.Err.Error() + "\n" + e.Where }
+
+// Unwrap is the budget's own error.
+func (e *BudgetStopped) Unwrap() error { return e.Err }
+
+// budgetWhere is err with where the work went when the budget stopped it and r shows a literal that
+// did any, and err as it was otherwise.
+func budgetWhere(err error, r *datalog.Report, pr Prompts) error {
+	var be *datalog.BudgetExceeded
+	if r == nil || !errors.As(err, &be) {
+		return err
+	}
+	var hot *datalog.LiteralReport
+	rule := ""
+	for _, body := range append([]*datalog.BodyReport{r.Goal}, r.Rules...) {
+		if body == nil {
+			continue
+		}
+		for _, l := range body.Literals {
+			if hot == nil || l.Work > hot.Work || l.Work == hot.Work && l.Stopped && !hot.Stopped {
+				hot, rule = l, body.Rule
+			}
+		}
+	}
+	if hot == nil || hot.Work == 0 {
+		return err
+	}
+	lit := hot.Literal
+	if rule != "" {
+		lit = fmt.Sprintf(pr.BudgetInRule, lit, rule)
+	}
+	access := strings.Join(hot.Access, ", ")
+	if access == "" {
+		access = "-"
+	}
+	where := fmt.Sprintf(pr.BudgetWhere, lit, strconv.FormatInt(hot.Reached, 10), strconv.FormatInt(hot.Work, 10),
+		strconv.FormatInt(hot.Passed, 10), access) + "\n" + pr.BudgetFix
+	return &BudgetStopped{Err: be, Literal: hot.Literal, Rule: rule, Where: where}
+}
+
 // hintFor is p's Hint for why, "" when there is no pack, no hint or nothing to explain.
 func hintFor(ctx context.Context, p *Pack, why *datalog.EmptyReport) string {
 	if p == nil || p.Hint == nil || why == nil {
@@ -334,7 +387,7 @@ func check(ctx context.Context, try Try, v *ns.Vocabulary, o Options, limit int)
 	opts := append(o.Eval[:len(o.Eval):len(o.Eval)], datalog.Explain(try.Report))
 	rows, err := datalog.SemiNaive{}.Eval(ctx, q, o.Base, opts...)
 	if err != nil {
-		return refuse(err, kindOf(err, KindEval))
+		return refuse(budgetWhere(err, try.Report, o.Pack.prompts()), kindOf(err, KindEval))
 	}
 	if len(rows) == 0 {
 		why := try.Report.Empty

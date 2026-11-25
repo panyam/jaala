@@ -240,7 +240,10 @@ func TestAVocabularysGrammarHoldsItsProgramsAndNoOthers(t *testing.T) {
 		{`?c = count(?b) : { edge(?a, ?b) }, kind(?a, "type") => ?a, ?c`, true, true},
 		{`far(?a, ?c) :- edge(?a, ?b), edge(?b, ?c); far("a", ?c) => ?c`, true, false},
 		{`reach2(?a) :- graph.reach("a", ?a); reach2(?x) => ?x`, true, false},
-		{`egde(?a, ?b) => ?a`, true, false},                                // a call no rule defines: Validate's to refuse
+		{`egde(?a, ?b) => ?a`, false, false},                               // no rules, so every call is a member's (#567)
+		{`Thequerywasrefusedbecauseitranse(1000001)`, false, false},        // prose run into one name (#567)
+		{`edge(?a, ?b), ?c = (egde(?b) + 1) => ?c`, false, false},          // nor inside brackets
+		{`far(?a) :- egde(?a, ?b); far(?x) => ?x`, true, false},            // with a rule, a call no rule defines is Validate's to refuse
 		{`graph.reahc(?a, ?b) => ?a`, false, false},                        // a dotted name is only ever a member
 		{`edge(?a) => ?a`, false, false},                                   // wrong count
 		{`edge(?a, ?b, ?c) => ?a`, false, false},                           // wrong count
@@ -281,5 +284,71 @@ func TestAVocabularysGrammarIsBuiltOncePerState(t *testing.T) {
 	after, _ := GrammarFor(v)
 	if after == first || !strings.Contains(after, `"weight("`) {
 		t.Fatal("a registration didn't reach the grammar")
+	}
+}
+
+// With no member a call can compute from (no relation of two arguments or more, no standard
+// predicates), the members-only copy of call has nothing to match, and the copies drop it with
+// what mentions it, so the grammar still parses (#567). control: a program with a rule still calls
+// its rule.
+func TestAGrammarWithNothingToComputeStillParses(t *testing.T) {
+	src := ns.NewMemSource().DeclareSchema("node", ns.Schema{Arity: 1, Labels: []string{"name"}})
+	v, err := ns.NewVocabulary(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := v.AddLanguage(datalog.Language); err != nil {
+		t.Fatal(err)
+	}
+	text, err := GrammarFor(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(text, "call-m") {
+		t.Errorf("the grammar names call-m, which it dropped:\n%s", text)
+	}
+	g := mustGBNF(t, text)
+	for _, c := range []struct {
+		text string
+		in   bool
+	}{
+		{`node(?x) => ?x`, true},
+		{`nodes(?x) => ?x`, false},
+		{`node(?x), ?y = - => ?x`, false}, // an empty copy of call would match nothing at all
+		{`far(?x) :- node(?x); far(?y) => ?y`, true},
+		{`far(?x) :- node(?x); far(?y), ?z = far(?y) => ?y`, true},
+	} {
+		if got := g.Accepts(c.text); got != c.in {
+			t.Errorf("accepts %q: %v, want %v", c.text, got, c.in)
+		}
+	}
+}
+
+// A vocabulary with no members leaves a program with no rules nothing to call, and the copies of
+// atom and of what needs one (fact) are dropped rather than named (#567). control: a program with a
+// rule calls it.
+func TestAGrammarWithNoMembersCallsOnlyItsRules(t *testing.T) {
+	v, err := ns.NewVocabulary(ns.NewMemSource())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := v.AddLanguage(datalog.Language); err != nil {
+		t.Fatal(err)
+	}
+	text, err := GrammarFor(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, dropped := range []string{"atom-m", "fact-m"} {
+		if strings.Contains(text, dropped) {
+			t.Errorf("the grammar names %s, which it dropped:\n%s", dropped, text)
+		}
+	}
+	g := mustGBNF(t, text)
+	if g.Accepts(`far(?x) => ?x`) {
+		t.Error("a program with no rules called a rule")
+	}
+	if !g.Accepts(`far(?x) :- ?x = 1; far(?y) => ?y`) {
+		t.Error("control: a program's rule was refused")
 	}
 }

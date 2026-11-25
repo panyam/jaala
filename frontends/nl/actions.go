@@ -106,6 +106,10 @@ const (
 	ActionPaths  = "paths" // Pack.Shape: the joins between two kinds of node, run
 	ActionAdd    = "add"   // Actions.Build: append a literal to the body
 	ActionDrop   = "drop"  // Actions.Build: take the body's last literal off
+	// ActionNote is a thought on one line (#567). It runs nothing and takes a step, but no try. Under
+	// a grammar a small model explaining a refusal ran its words into one name, and the reply cost
+	// one of its answers.
+	ActionNote = "note"
 )
 
 // replies says the model asks for an action in its reply: Actions are set and not AsTools.
@@ -157,6 +161,11 @@ func readAction(text string) (action, arg string, ok bool) {
 			return "", "", false
 		}
 		return word, "", true
+	case ActionNote:
+		if rest != "" || strings.TrimSpace(inline) == "" {
+			return "", "", false
+		}
+		return word, strings.TrimSpace(inline), true
 	case ActionPaths:
 		if rest != "" || !strings.Contains(inline, " => ") {
 			return "", "", false
@@ -172,7 +181,8 @@ const actionInstructions = `
 #   look NAME       what a relation, module or label holds
 #   values TARGET   some values of one argument or property, such as %s
 #   try             on its own line, then a draft: it runs on a few rows, and says why when none come back
-%s# Any other reply is your answer.
+%s#   note TEXT       a thought on one line, such as why a draft was refused; it isn't your answer
+# Any other reply is your answer.
 `
 
 // buildInstruction is actionInstructions' lines for add and drop, under Actions.Build.
@@ -231,7 +241,7 @@ func run(ctx context.Context, text string, v *ns.Vocabulary, o Options, what str
 
 // runRows is run with a refusal as its error, whose text is the draft's explanation.
 func runRows(ctx context.Context, text string, v *ns.Vocabulary, o Options, what string, limit int) (string, []string, error) {
-	o.Pack = nil // a look at the data isn't an answer the pack's Check judges
+	o.Pack = o.Pack.withoutCheck()
 	try, prog, err := check(ctx, Try{Text: text, explain: func(err error) string { return Explain(text, err) }}, v, o, limit)
 	if err != nil {
 		return "", nil, errors.New(strings.TrimRight(try.explain(err), "\n"))
@@ -444,7 +454,8 @@ func valuesProgram(v *ns.Vocabulary, target string, limit int) (string, error) {
 
 // actionGrammar wraps a draft's grammar so a reply is an action or a draft: the draft grammar's root
 // becomes program, a NAME or TARGET is a dotted name of nameMax characters at most, which look and
-// values check, and with find a phrase of words, which the Grounder reads.
+// values check, and with find a phrase of words, which the Grounder reads. A note is one line of up
+// to noteMax characters.
 func actionGrammar(grammar string, find, build, paths bool) string {
 	if grammar == "" {
 		return ""
@@ -470,7 +481,8 @@ func actionGrammar(grammar string, find, build, paths bool) string {
 		root = append(root, gbnf.Seq{gbnf.Lit("find "), gbnf.Ref("phrase")})
 		rules = append(rules, gbnf.Rule{Name: "phrase", E: gbnf.Seq{gbnf.Class{Spec: "A-Za-z0-9_", Sample: "aP1_"}, gbnf.UpTo(gbnf.Class{Spec: "A-Za-z0-9_. /-", Sample: "a1. /"}, 2*nameMax-1)}})
 	}
-	root = append(root, gbnf.Ref("program"))
+	root = append(root, gbnf.Seq{gbnf.Lit("note "), gbnf.Ref("notetext")}, gbnf.Ref("program"))
+	rules = append(rules, gbnf.Rule{Name: "notetext", E: gbnf.Seq{gbnf.Class{Spec: "^\\x00-\\x20", Sample: "aT,"}, gbnf.UpTo(gbnf.Class{Spec: "^\\x00-\\x1F", Sample: "a ,."}, noteMax-1)}})
 	rules = append(rules, pathRules...)
 	return gbnf.Render(append([]gbnf.Rule{{Name: "root", E: root}}, rules...)) + rootRule.ReplaceAllString(grammar, "program ::=")
 }
@@ -495,6 +507,9 @@ func withoutTry(text string) string {
 	}
 	return text
 }
+
+// noteMax caps a note's length, so a model can't run one to its token limit.
+const noteMax = 300
 
 var rootRule = regexp.MustCompile(`(?m)^root ::=`)
 

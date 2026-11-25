@@ -170,13 +170,16 @@ func (s *Session) MaxSteps() int {
 	return s.o.Actions.steps()
 }
 
-// Act runs one action (ActionLook, ActionValues, ActionTry or ActionFind) and returns what goes back
-// to the model. The text values its result shows are kept, so a later answer guessing one's spelling
-// can be repaired. A bad argument is answered in the text, never as an error, since the model reads
+// Act runs one action (ActionLook, ActionValues, ActionTry, ActionFind or ActionNote) and returns
+// what goes back to the model. The text values its result shows are kept, so a later answer guessing
+// one's spelling can be repaired. A bad argument is answered in the text, never as an error, since the model reads
 // it. It needs Options.Actions.
 func (s *Session) Act(ctx context.Context, action, arg string) string {
-	if action == ActionPaths {
+	switch action {
+	case ActionPaths:
 		return s.paths(ctx, arg)
+	case ActionNote:
+		return s.pr.Noted
 	}
 	result, seen := act(ctx, action, arg, s.v, s.o)
 	s.mem.see(seen)
@@ -258,7 +261,8 @@ func (s *Session) NewConversation(after error, last bool) *Conversation {
 // From starts the conversation from draft, a reply another Session's conversation refused: the
 // one-shot draft the action loop starts with unless Actions.SkipDraft (#521). The draft counts as
 // refused here too, so the model sending it again is a repeat, and Ask carries it with its refusal
-// (Prompts.DraftFirst). It counts no try: the loop keeps all of its own. A draft with no error, or
+// (Prompts.DraftFirst). A try of it is a repeat as well: Act answers it with the refusal, and it
+// takes no step. It counts no try: the loop keeps all of its own. A draft with no error, or
 // whose model failed, is ignored.
 func (c *Conversation) From(draft Try) { c.from(draft, c.s.pr.DraftFirst) }
 
@@ -284,6 +288,11 @@ func (c *Conversation) from(draft Try, prompt string) {
 	}
 	c.refused[draft.Text] = draft.Err
 	c.why[draft.Text] = told
+	// A try of the draft would get the same refusal, so it counts as a repeat (#567). Check doesn't
+	// judge a try, so a draft Check refused still runs and shows its rows. A disputed handoff is one.
+	if draft.Kind != KindAnswer && draft.Kind != KindDeclined {
+		c.asked[ActionTry+"\x00"+draft.Text] = told
+	}
 	s.mem.add(true, fact(draft.Text, "refused ("+draft.Kind+"): "+strings.Join(strings.Fields(told), " ")))
 	s.mem.last = draft.Text + "\n" + told
 	c.ask += "\n\n" + fmt.Sprintf(prompt, draft.Text, told, what)
@@ -341,6 +350,15 @@ func (s *Session) LedgerHeader() string { return s.pr.LedgerHeader }
 func (c *Conversation) Act(ctx context.Context, action, arg string) string {
 	s := c.s
 	key := action + "\x00" + arg
+	if action == ActionNote {
+		// a thought, not a finding, so the Ledger and Compact leave it out. It takes a step, so the
+		// steps cap a model's notes too.
+		c.steps++
+		if c.steps == s.MaxSteps() {
+			return s.pr.Noted + "\n\n" + s.pr.LastLook
+		}
+		return s.pr.Noted
+	}
 	if (action == ActionAdd || action == ActionDrop) && !c.Repeats(action, arg) {
 		result := c.build(ctx, action, arg)
 		c.asked[key] = result
@@ -414,7 +432,7 @@ func (c *Conversation) build(ctx context.Context, action, arg string) string {
 	}
 	body := strings.Join(append(slices.Clip(c.body), arg), ", ")
 	o := s.o
-	o.Pack = nil // a look at the data isn't an answer the pack's Check judges
+	o.Pack = o.Pack.withoutCheck()
 	try, prog, err := check(ctx, Try{Text: body, explain: func(err error) string { return Explain(body, err) }}, s.v, o, o.Actions.sample())
 	switch {
 	case err != nil && try.Kind != KindEmpty:

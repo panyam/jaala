@@ -46,6 +46,19 @@ type Prompts struct {
 	AskedAgain string
 	// LastLook ends the last action's result the model may ask for.
 	LastLook string
+	// BudgetWhere follows the budget's error when a draft's evaluation passed it (#544): the literal
+	// that did the most work. Placeholders: the literal (with BudgetInRule when a rule holds it), how
+	// often solving reached it, the candidates it examined, the bindings it passed on, and how it was
+	// read ("scan", "index (from)").
+	BudgetWhere string
+	// BudgetInRule is the literal BudgetWhere names when a rule's body holds it. Placeholders: the
+	// literal and the rule as written.
+	BudgetInRule string
+	// BudgetFix follows BudgetWhere: what the model can change.
+	BudgetFix string
+	// Noted is what a note sends back (#567). A note runs nothing, so the line points the model at its
+	// next action or answer.
+	Noted string
 	// TriedAgain opens what a try sends back when the model tried that draft before, which isn't run
 	// again (#512); what it answered then follows.
 	TriedAgain string
@@ -146,6 +159,10 @@ func DefaultPrompts() Prompts {
 		ToolDrop:      "Take the last literal off the program you are building.",
 		AskedAgain:    "You asked that already.",
 		LastLook:      "That was the last look: reply with your answer alone, not another action.",
+		Noted:         "Noted. Reply with an action, or with your answer.",
+		BudgetWhere:   "Most of the work went to %[1]s: solving reached it %[2]s times, and it examined %[3]s candidates and passed %[4]s on (read by %[5]s).",
+		BudgetInRule:  "%[1]s in the rule %[2]s",
+		BudgetFix:     "Give it fewer candidates: bind one of its arguments to a value, or to a variable a literal before it binds, or start from a narrower relation.",
 		TriedAgain:    "You tried that draft already, so it wasn't run again. Last time:",
 		LookFound:     "Nothing is named %s; these mention it:",
 		LookNothing:   "look takes a relation, module or label name, as the card lists them.",
@@ -191,7 +208,7 @@ func (p *Pack) prompts() Prompts {
 		{&h.Instructions, &d.Instructions}, {&h.Actions, &d.Actions}, {&h.Find, &d.Find},
 		{&h.Build, &d.Build}, {&h.Paths, &d.Paths}, {&h.PathsFound, &d.PathsFound}, {&h.PathsNone, &d.PathsNone}, {&h.PathsUsage, &d.PathsUsage}, {&h.PathsNoKind, &d.PathsNoKind}, {&h.PathsUnbound, &d.PathsUnbound}, {&h.ToolPaths, &d.ToolPaths}, {&h.Dropped, &d.Dropped}, {&h.DropNothing, &d.DropNothing}, {&h.NotAdded, &d.NotAdded},
 		{&h.ToolAdd, &d.ToolAdd}, {&h.ToolDrop, &d.ToolDrop},
-		{&h.AskedAgain, &d.AskedAgain}, {&h.LastLook, &d.LastLook}, {&h.TriedAgain, &d.TriedAgain},
+		{&h.AskedAgain, &d.AskedAgain}, {&h.LastLook, &d.LastLook}, {&h.Noted, &d.Noted}, {&h.BudgetWhere, &d.BudgetWhere}, {&h.BudgetInRule, &d.BudgetInRule}, {&h.BudgetFix, &d.BudgetFix}, {&h.TriedAgain, &d.TriedAgain},
 		{&h.LookFound, &d.LookFound}, {&h.LookNothing, &d.LookNothing}, {&h.Stuck, &d.Stuck}, {&h.DraftFirst, &d.DraftFirst}, {&h.Decline, &d.Decline}, {&h.Handoff, &d.Handoff}, {&h.ToolLook, &d.ToolLook},
 		{&h.ToolValues, &d.ToolValues}, {&h.ToolTry, &d.ToolTry}, {&h.ToolFind, &d.ToolFind}, {&h.Fix, &d.Fix}, {&h.FixEmpty, &d.FixEmpty},
 		{&h.EmptyFallback, &d.EmptyFallback}, {&h.Reask, &d.Reask}, {&h.Grounded, &d.Grounded}, {&h.Without, &d.Without},
@@ -217,7 +234,7 @@ func (t Prompts) templates() []struct {
 		name, text string
 		n          int
 	}{{"Actions", t.Actions, 2}, {"ToolValues", t.ToolValues, 1}, {"Fix", t.Fix, 1}, {"FixEmpty", t.FixEmpty, 1}, {"Reask", t.Reask, 4},
-		{"LookFound", t.LookFound, 1}, {"Stuck", t.Stuck, 1}, {"DraftFirst", t.DraftFirst, 3}, {"Decline", t.Decline, 1}, {"Handoff", t.Handoff, 3}, {"Dropped", t.Dropped, 2}, {"PathsFound", t.PathsFound, 2}, {"PathsNone", t.PathsNone, 3}, {"PathsNoKind", t.PathsNoKind, 1}, {"PathsUnbound", t.PathsUnbound, 1}, {"Without", t.Without, 2}, {"ExtractHeldMore", t.ExtractHeldMore, 1}}
+		{"LookFound", t.LookFound, 1}, {"Stuck", t.Stuck, 1}, {"DraftFirst", t.DraftFirst, 3}, {"Decline", t.Decline, 1}, {"Handoff", t.Handoff, 3}, {"Dropped", t.Dropped, 2}, {"PathsFound", t.PathsFound, 2}, {"PathsNone", t.PathsNone, 3}, {"PathsNoKind", t.PathsNoKind, 1}, {"PathsUnbound", t.PathsUnbound, 1}, {"Without", t.Without, 2}, {"ExtractHeldMore", t.ExtractHeldMore, 1}, {"BudgetWhere", t.BudgetWhere, 5}, {"BudgetInRule", t.BudgetInRule, 2}}
 }
 
 // checkTemplates refuses a template that drops one of its placeholders or reads one it isn't given:
