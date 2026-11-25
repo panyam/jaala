@@ -5,18 +5,19 @@ Maintained by /checkpoint: one thread per branch, pruned when the branch merges.
 
 ## At a glance
 
-- No open branches or PRs here. `main` is c4c0e2e: v0.1.104 plus #564 (the pilot samples each type,
-  judged by gpt-4o-2024-08-06) and #565 (Extract lists held keys and refuses a cut reply, chakra
-  v0.3.7). Unreleased: the next tag needs an upgrade note that hosts need Go 1.27.4 or newer.
-- Mission #437 (`mission_text_memory`) is 4/5. Pilot on c4c0e2e: long context 11/12, jaala one shot
-  9/12, with jaala spending more tokens at setup on oracle histories (log on #437). #415 is next: arm 4
-  (`MemoryArm`, `read_session`) and an S-size run. Run `TestPilot` as #561's "Try it" says (paid
-  calls). panyam/chakra#343 is still open, so the pilot keeps its own judge wrapper.
-- Mission #322 (`mission_agent_frontend`) is 49/51 and waits on Declaire's gpt-5.5 arms (declaire#300,
-  declaire#371). #547 is parked `waiting`. #544 (P2) is next in the queue, but its evidence is all
-  `14b:loop`, which frontier-first parks.
-- Selfcheck: passed on 62f70a3 (2026-11-25). Check `make selfcheck-status` before the next merge.
-- This run: dropped memory/563-pilot-findings (PR #565 merged).
+- No open branches or PRs here. `main` is 38313f8: v0.1.104 plus #564 to #578 (the loop after a
+  refused draft: #566, #568, #570, #576; the Scorer #577; per-tag cost and `RouteFor` #578; the
+  memory's held keys #565). Unreleased: the next tag needs an upgrade note that hosts need Go 1.27.4
+  or newer.
+- Mission #322 (`mission_agent_frontend`) is 56/57; only #547 (`waiting`) is open. Declaire's
+  `14b` and `14b:loop` arms stay at 2/15 through four loop PRs (logs on #322). Next is Declaire's:
+  a `local-then-frontier` arm with a scope Scorer (declaire#300), and `RouteFor` live (#574's arm).
+  Declaire's Grounder fixes for x06 and x09 are declaire#389.
+- Mission #437 (`mission_text_memory`) is 4/5. #415 is next: arm 4 (`MemoryArm`, `read_session`)
+  and an S-size run (paid calls; `TestPilot` as #561's "Try it" says). chakra#343 is still open.
+- #573 (a ladder of N tiers) is `waiting` for a third model that earns a rung.
+- Selfcheck is due (6 PRs merged since the pass on 62f70a3). Run `make selfcheck`.
+- This run: merged #566, #568, #570, #576, #577, #578; no threads left.
 
 ## Across threads
 
