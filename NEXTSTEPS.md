@@ -5,10 +5,9 @@ Maintained by /checkpoint: one thread per branch, pruned when the branch merges.
 
 ## At a glance
 
-- No open branches or PRs here. `main` is 38313f8: v0.1.104 plus #564 to #578 (the loop after a
-  refused draft: #566, #568, #570, #576; the Scorer #577; per-tag cost and `RouteFor` #578; the
-  memory's held keys #565). Unreleased: the next tag needs an upgrade note that hosts need Go 1.27.4
-  or newer.
+- No open branches or PRs here. `main` is v0.1.106: #564 to #578 (the loop after a refused draft:
+  #566, #568, #570, #576; the Scorer #577; per-tag cost and `RouteFor` #578; the memory's held keys
+  #565; another session's `Candidate.Note` #575). Go 1.27.4's upgrade note went out with v0.1.104.
 - Mission #322 (`mission_agent_frontend`) is 56/57; only #547 (`waiting`) is open. Declaire's
   `14b` and `14b:loop` arms stay at 2/15 through four loop PRs (logs on #322). Next is Declaire's:
   a `local-then-frontier` arm with a scope Scorer (declaire#300), and `RouteFor` live (#574's arm).
