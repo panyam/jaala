@@ -54,6 +54,9 @@ type Prompts struct {
 	// BudgetInRule is the literal BudgetWhere names when a rule's body holds it. Placeholders: the
 	// literal and the rule as written.
 	BudgetInRule string
+	// BudgetThrough is the literal BudgetWhere names when the work went into a module's rule (#569):
+	// the program's own literal that calls it, then the module's literal (with BudgetInRule).
+	BudgetThrough string
 	// BudgetFix follows BudgetWhere: what the model can change.
 	BudgetFix string
 	// Noted is what a note sends back (#567). A note runs nothing, so the line points the model at its
@@ -67,6 +70,9 @@ type Prompts struct {
 	LookFound string
 	// LookNothing follows the error of a look that names nothing and matches nothing.
 	LookNothing string
+	// LookArgument follows a relation's look when the model asked to look at one of its arguments
+	// (#569). Placeholder: what it asked for, relation.argument.
+	LookArgument string
 	// DraftFirst follows the question when the one-shot draft the action loop starts with was refused
 	// (#521, Actions.SkipDraft), so the model's turn with actions starts from that draft rather than
 	// from nothing. Placeholders: the draft, why it was refused, and "program" or "query".
@@ -162,10 +168,12 @@ func DefaultPrompts() Prompts {
 		Noted:         "Noted. Reply with an action, or with your answer.",
 		BudgetWhere:   "Most of the work went to %[1]s: solving reached it %[2]s times, and it examined %[3]s candidates and passed %[4]s on (read by %[5]s).",
 		BudgetInRule:  "%[1]s in the rule %[2]s",
+		BudgetThrough: "%[1]s, through %[2]s",
 		BudgetFix:     "Give it fewer candidates: bind one of its arguments to a value, or to a variable a literal before it binds, or start from a narrower relation.",
 		TriedAgain:    "You tried that draft already, so it wasn't run again. Last time:",
 		LookFound:     "Nothing is named %s; these mention it:",
 		LookNothing:   "look takes a relation, module or label name, as the card lists them.",
+		LookArgument:  "%[1]s is one of that relation's arguments; values %[1]s lists some of its values.",
 		DraftFirst:    "You drafted this %[3]s for it first:\n%[1]s\nIt was refused:\n%[2]s\n\nUse the actions to find what it got wrong, then answer with a %[3]s that fixes it.",
 		Decline:       "# If no relation above holds the facts the question asks about, reply none: and the fact that is missing, in place of a %[1]s.\n# Counting, adding up or ordering the facts is part of the %[1]s, so it is no reason to reply none.\n",
 		Handoff:       "A smaller model drafted this %[3]s for it first:\n%[1]s\nIt wasn't taken:\n%[2]s\n\nAnswer with a %[3]s that fixes what was wrong with it.",
@@ -208,8 +216,8 @@ func (p *Pack) prompts() Prompts {
 		{&h.Instructions, &d.Instructions}, {&h.Actions, &d.Actions}, {&h.Find, &d.Find},
 		{&h.Build, &d.Build}, {&h.Paths, &d.Paths}, {&h.PathsFound, &d.PathsFound}, {&h.PathsNone, &d.PathsNone}, {&h.PathsUsage, &d.PathsUsage}, {&h.PathsNoKind, &d.PathsNoKind}, {&h.PathsUnbound, &d.PathsUnbound}, {&h.ToolPaths, &d.ToolPaths}, {&h.Dropped, &d.Dropped}, {&h.DropNothing, &d.DropNothing}, {&h.NotAdded, &d.NotAdded},
 		{&h.ToolAdd, &d.ToolAdd}, {&h.ToolDrop, &d.ToolDrop},
-		{&h.AskedAgain, &d.AskedAgain}, {&h.LastLook, &d.LastLook}, {&h.Noted, &d.Noted}, {&h.BudgetWhere, &d.BudgetWhere}, {&h.BudgetInRule, &d.BudgetInRule}, {&h.BudgetFix, &d.BudgetFix}, {&h.TriedAgain, &d.TriedAgain},
-		{&h.LookFound, &d.LookFound}, {&h.LookNothing, &d.LookNothing}, {&h.Stuck, &d.Stuck}, {&h.DraftFirst, &d.DraftFirst}, {&h.Decline, &d.Decline}, {&h.Handoff, &d.Handoff}, {&h.ToolLook, &d.ToolLook},
+		{&h.AskedAgain, &d.AskedAgain}, {&h.LastLook, &d.LastLook}, {&h.Noted, &d.Noted}, {&h.BudgetWhere, &d.BudgetWhere}, {&h.BudgetInRule, &d.BudgetInRule}, {&h.BudgetThrough, &d.BudgetThrough}, {&h.BudgetFix, &d.BudgetFix}, {&h.TriedAgain, &d.TriedAgain},
+		{&h.LookFound, &d.LookFound}, {&h.LookArgument, &d.LookArgument}, {&h.LookNothing, &d.LookNothing}, {&h.Stuck, &d.Stuck}, {&h.DraftFirst, &d.DraftFirst}, {&h.Decline, &d.Decline}, {&h.Handoff, &d.Handoff}, {&h.ToolLook, &d.ToolLook},
 		{&h.ToolValues, &d.ToolValues}, {&h.ToolTry, &d.ToolTry}, {&h.ToolFind, &d.ToolFind}, {&h.Fix, &d.Fix}, {&h.FixEmpty, &d.FixEmpty},
 		{&h.EmptyFallback, &d.EmptyFallback}, {&h.Reask, &d.Reask}, {&h.Grounded, &d.Grounded}, {&h.Without, &d.Without},
 		{&h.Pick, &d.Pick}, {&h.PickRetry, &d.PickRetry}, {&h.CompactFound, &d.CompactFound},
@@ -234,7 +242,7 @@ func (t Prompts) templates() []struct {
 		name, text string
 		n          int
 	}{{"Actions", t.Actions, 2}, {"ToolValues", t.ToolValues, 1}, {"Fix", t.Fix, 1}, {"FixEmpty", t.FixEmpty, 1}, {"Reask", t.Reask, 4},
-		{"LookFound", t.LookFound, 1}, {"Stuck", t.Stuck, 1}, {"DraftFirst", t.DraftFirst, 3}, {"Decline", t.Decline, 1}, {"Handoff", t.Handoff, 3}, {"Dropped", t.Dropped, 2}, {"PathsFound", t.PathsFound, 2}, {"PathsNone", t.PathsNone, 3}, {"PathsNoKind", t.PathsNoKind, 1}, {"PathsUnbound", t.PathsUnbound, 1}, {"Without", t.Without, 2}, {"ExtractHeldMore", t.ExtractHeldMore, 1}, {"BudgetWhere", t.BudgetWhere, 5}, {"BudgetInRule", t.BudgetInRule, 2}}
+		{"LookFound", t.LookFound, 1}, {"LookArgument", t.LookArgument, 1}, {"Stuck", t.Stuck, 1}, {"DraftFirst", t.DraftFirst, 3}, {"Decline", t.Decline, 1}, {"Handoff", t.Handoff, 3}, {"Dropped", t.Dropped, 2}, {"PathsFound", t.PathsFound, 2}, {"PathsNone", t.PathsNone, 3}, {"PathsNoKind", t.PathsNoKind, 1}, {"PathsUnbound", t.PathsUnbound, 1}, {"Without", t.Without, 2}, {"ExtractHeldMore", t.ExtractHeldMore, 1}, {"BudgetWhere", t.BudgetWhere, 5}, {"BudgetInRule", t.BudgetInRule, 2}, {"BudgetThrough", t.BudgetThrough, 2}}
 }
 
 // checkTemplates refuses a template that drops one of its placeholders or reads one it isn't given:

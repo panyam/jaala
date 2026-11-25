@@ -147,7 +147,10 @@ type Tally struct {
 // Cases is how many cases the Tally counts.
 func (t Tally) Cases() int { return t.Pass + t.Wrong + t.Abstain }
 
-func (t *Tally) add(outcome string) {
+// Add counts one case by its outcome (OutcomePass, OutcomeWrong or OutcomeAbstain), as Summary
+// does, so a host whose arms aren't nl.Result counts by jaala's rules (#556). Any other outcome
+// counts nowhere.
+func (t *Tally) Add(outcome string) {
 	switch outcome {
 	case OutcomePass:
 		t.Pass++
@@ -188,13 +191,13 @@ func (rep Report) Summary(p Prices) Summary {
 	var s Summary
 	for _, r := range rep.Cases {
 		o := r.Outcome()
-		s.Tally.add(o)
+		s.Tally.Add(o)
 		for _, tag := range r.Tags {
 			if s.Tags == nil {
 				s.Tags = map[string]Tally{}
 			}
 			t := s.Tags[tag]
-			t.add(o)
+			t.Add(o)
 			s.Tags[tag] = t
 		}
 		s.Cost.add(r.Cost(p))
@@ -383,6 +386,65 @@ func ReadRecords(dir string) ([]Record, error) {
 	return recs, nil
 }
 
+// TagTallies is a Tally per tag over cases, as Summary.Tags counts them: a case with several tags
+// counts in each, and one with none in no tag (#556). A history step has records, not Results, so it
+// counts from these. nil when no case has a tag.
+func TagTallies(cases []CaseRecord) map[string]Tally {
+	var out map[string]Tally
+	for _, c := range cases {
+		for _, tag := range c.Tags {
+			if out == nil {
+				out = map[string]Tally{}
+			}
+			t := out[tag]
+			t.Add(c.Outcome)
+			out[tag] = t
+		}
+	}
+	return out
+}
+
+var tagColumns = []string{"when", "commit", "bench", "agent", "model", "run", "tag", "pass", "wrong", "abstain", "of"}
+
+// HistoryTagTable writes a row per record and tag, as "csv" or "md" like HistoryTable: the tag's
+// outcomes in that run, counted from the record's cases (TagTallies), tags in name order (#556).
+// A record whose cases have no tags writes no row.
+func HistoryTagTable(w io.Writer, recs []Record, format string) error {
+	var rows [][]string
+	for _, r := range recs {
+		tallies := TagTallies(r.Cases)
+		tags := make([]string, 0, len(tallies))
+		for tag := range tallies {
+			tags = append(tags, tag)
+		}
+		sort.Strings(tags)
+		for _, tag := range tags {
+			t := tallies[tag]
+			rows = append(rows, []string{r.When.UTC().Format(time.RFC3339), r.Commit, r.Bench, r.Agent, r.Model, fmt.Sprint(r.Run), tag,
+				fmt.Sprint(t.Pass), fmt.Sprint(t.Wrong), fmt.Sprint(t.Abstain), fmt.Sprint(t.Cases())})
+		}
+	}
+	return writeTable(w, tagColumns, rows, format)
+}
+
+// writeTable writes rows under columns as "csv" or "md" (a Markdown table).
+func writeTable(w io.Writer, columns []string, rows [][]string, format string) error {
+	switch format {
+	case "csv":
+		cw := csv.NewWriter(w)
+		cw.Write(columns)
+		cw.WriteAll(rows)
+		return cw.Error()
+	case "md":
+		fmt.Fprintf(w, "| %s |\n|%s\n", strings.Join(columns, " | "), strings.Repeat(" --- |", len(columns)))
+		for _, row := range rows {
+			fmt.Fprintf(w, "| %s |\n", strings.Join(row, " | "))
+		}
+		return nil
+	}
+	return fmt.Errorf("nl: no history format %q (csv or md)", format)
+}
+
 var historyColumns = []string{"when", "commit", "bench", "agent", "model", "settings", "run", "pass", "wrong", "abstain", "of",
 	"calls", "tokens_in", "tokens_cached", "tokens_out", "usd", "seconds", "usd_per_correct", "seconds_per_correct"}
 
@@ -414,18 +476,5 @@ func HistoryTable(w io.Writer, recs []Record, format string) error {
 			fmt.Sprint(s.Cost.Calls), fmt.Sprint(s.Cost.TokensIn), fmt.Sprint(s.Cost.TokensCached), fmt.Sprint(s.Cost.TokensOut),
 			usd, fmt.Sprintf("%.1f", s.Cost.Seconds), perUSD, perSec})
 	}
-	switch format {
-	case "csv":
-		cw := csv.NewWriter(w)
-		cw.Write(historyColumns)
-		cw.WriteAll(rows)
-		return cw.Error()
-	case "md":
-		fmt.Fprintf(w, "| %s |\n|%s\n", strings.Join(historyColumns, " | "), strings.Repeat(" --- |", len(historyColumns)))
-		for _, row := range rows {
-			fmt.Fprintf(w, "| %s |\n", strings.Join(row, " | "))
-		}
-		return nil
-	}
-	return fmt.Errorf("nl: no history format %q (csv or md)", format)
+	return writeTable(w, historyColumns, rows, format)
 }
