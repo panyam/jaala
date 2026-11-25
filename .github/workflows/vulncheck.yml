@@ -25,6 +25,6 @@ jobs:
       # a schedule is easy to miss, so the action files an issue on failure, or comments on the open
       # one whose title starts with "vulncheck:". Its defaults key the Go cache on every go.sum and
       # label the issue P1,bug.
-      - uses: panyam/ci-actions/vulncheck@ecf33181dffa847874b7797b0593badea92cd2a4 # v0.1.1
+      - uses: panyam/ci-actions/vulncheck@73f816432c03fc3680877114f22ebe54659eb175 # v0.1.4
         with:
           command: make vulncheck
