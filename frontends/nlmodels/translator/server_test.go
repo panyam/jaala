@@ -97,7 +97,8 @@ func TestARealServerHoldsATextRolesRepliesToTheActionGrammar(t *testing.T) {
 		t.Fatal(err)
 	}
 	b := datalog.MustBase(v, src)
-	acts := &nl.Actions{Steps: 2, Sample: 2}
+	// The model starts with an action, so the turn fits stories260K's 2048-token context (#560).
+	acts := &nl.Actions{Steps: 2, Sample: 2, SkipDraft: true}
 	s, err := nl.NewSession(context.Background(), "what calls what?", v, nil, nl.Options{Actions: acts})
 	if err != nil {
 		t.Fatal(err)
