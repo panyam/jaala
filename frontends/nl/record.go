@@ -250,11 +250,13 @@ type CaseRecord struct {
 	// Program is the text of the program the translator answered with, in its language.
 	Program string `json:",omitempty"`
 	// Tier is the tier that answered (Trace.Tier), and Tiers what each tier spent (Result.TierCost).
-	Tier     string          `json:",omitempty"`
-	Tiers    map[string]Cost `json:",omitempty"`
-	Language string          `json:",omitempty"`
-	Err      string          `json:",omitempty"`
-	Got      [][]string      `json:",omitempty"`
+	Tier  string          `json:",omitempty"`
+	Tiers map[string]Cost `json:",omitempty"`
+	// Scores are the Scorer's verdicts per tier (Trace.Scores, #572).
+	Scores   []RungScore `json:",omitempty"`
+	Language string      `json:",omitempty"`
+	Err      string      `json:",omitempty"`
+	Got      [][]string  `json:",omitempty"`
 	Cost     Cost
 	Tries    []TryRecord  `json:",omitempty"`
 	Steps    []StepRecord `json:",omitempty"`
@@ -306,7 +308,7 @@ func NewRecord(rep Report, p Prices) Record {
 	for _, r := range rep.Cases {
 		cr := CaseRecord{Name: r.Name, Tags: r.Tags, Outcome: r.Outcome(), Abstained: r.AbstainReason(), Class: r.Class(),
 			Program: r.Program.Text, Language: r.Program.Language, Got: r.Got, Cost: r.Cost(p),
-			Tier: r.Trace.Tier, Tiers: r.TierCost(p)}
+			Tier: r.Trace.Tier, Tiers: r.TierCost(p), Scores: r.Trace.Scores}
 		if r.Err != nil {
 			cr.Err = r.Err.Error()
 		}

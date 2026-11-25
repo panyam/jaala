@@ -167,9 +167,10 @@ func (t *Translator) Translate(ctx context.Context, question string, o nl.Option
 	return o.Abstain.Judge(p, tr, err)
 }
 
-// tiered runs o.Tiers' policy (#538): the local tier under its own cap, judged by o.Abstain, then,
-// under local-then-frontier when it didn't answer, the frontier tier from its closest draft. A
-// cancelled context ends the question at the local tier.
+// tiered runs o.Tiers' policy (#538): the local tier under its own cap, then, under
+// local-then-frontier when o.Scorer escalates it, the frontier tier from its closest draft. Each tier
+// is judged by o.Abstain and then the Scorer (nl.Settle, #572). A cancelled context ends the
+// question at the local tier, unscored.
 func (t *Translator) tiered(ctx context.Context, question string, o nl.Options) (nl.Program, nl.Trace, error) {
 	pol := *o.Tiers
 	if err := pol.Check(); err != nil {
@@ -184,14 +185,17 @@ func (t *Translator) tiered(ctx context.Context, question string, o nl.Options) 
 		lo := o
 		lo.Budget = pol.For(nl.TierLocal, o.Budget)
 		p, ltr, err := t.run(ctx, question, lo, []*role{t.model}, nil)
-		p, ltr, err = o.Abstain.Judge(p, ltr, err)
 		ltr.Stamp(nl.TierLocal)
-		tr = ltr
-		if err == nil {
-			tr.Tier = nl.TierLocal
-			return p, tr, nil
+		if ctx.Err() != nil {
+			return o.Abstain.Judge(p, ltr, err)
 		}
-		if pol.Policy == nl.TierLocal || ctx.Err() != nil {
+		var next bool
+		p, ltr, err, next = nl.Settle(ctx, o, nl.TierLocal, p, ltr, err, pol.Policy == nl.TierLocal)
+		tr = ltr
+		if !next {
+			if err == nil {
+				tr.Tier = nl.TierLocal
+			}
 			return p, tr, err
 		}
 		if d, ok := nl.HandoffDraft(ltr, err); ok {
@@ -202,11 +206,12 @@ func (t *Translator) tiered(ctx context.Context, question string, o nl.Options) 
 	fo.Budget = pol.For(nl.TierFrontier, o.Budget)
 	p, ftr, err := t.run(ctx, question, fo, []*role{t.fallback}, handoff)
 	ftr.Stamp(nl.TierFrontier)
-	if err == nil {
-		ftr.Tier = nl.TierFrontier
-	}
 	tr.Then(ftr)
-	return o.Abstain.Judge(p, tr, err)
+	p, tr, err, _ = nl.Settle(ctx, o, nl.TierFrontier, p, tr, err, true)
+	if err == nil {
+		tr.Tier = nl.TierFrontier
+	}
+	return p, tr, err
 }
 
 // HasFallback says the Config names a Fallback.

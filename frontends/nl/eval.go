@@ -129,6 +129,9 @@ type Report struct {
 	Checked, Fixed int
 	// Failures counts the cases that failed by Result.Class.
 	Failures map[string]int
+	// Escalated counts the tiers a Scorer escalated under Options.Tiers, by the Score's reason
+	// (Trace.Scores, #572).
+	Escalated map[string]int `json:",omitempty"`
 	// Repairs counts the drafts the harness repaired itself and then accepted (Try.Repair).
 	Repairs int
 	// Wrong and Abstained count the cases by Result.Outcome, beside Passed: an abstention isn't a
@@ -188,6 +191,14 @@ func (rep *Report) add(res Result) {
 		rep.Failures[c]++
 	}
 	rep.Escalations += len(res.Trace.Escalations)
+	for _, s := range res.Trace.Scores {
+		if s.Verdict == ScoreEscalate {
+			if rep.Escalated == nil {
+				rep.Escalated = map[string]int{}
+			}
+			rep.Escalated[s.Reason]++
+		}
+	}
 	for _, t := range res.Trace.Votes {
 		if t.Truncated {
 			rep.Truncated++
