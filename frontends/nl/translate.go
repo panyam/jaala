@@ -341,7 +341,15 @@ func budgetWhere(err error, r *datalog.Report, q datalog.Query, v *ns.Vocabulary
 		access = "-"
 	}
 	where := fmt.Sprintf(pr.BudgetWhere, lit, strconv.FormatInt(hot.Reached, 10), strconv.FormatInt(hot.Work, 10),
-		strconv.FormatInt(hot.Passed, 10), access) + "\n" + pr.BudgetFix
+		strconv.FormatInt(hot.Passed, 10), access)
+	named := hot.Literal
+	if through != "" {
+		named = through
+	}
+	if free := unboundAt(q, named); len(free) > 0 {
+		where += "\n" + fmt.Sprintf(pr.BudgetUnbound, strings.Join(free, ", "))
+	}
+	where += "\n" + pr.BudgetFix
 	return &BudgetStopped{Err: be, Literal: hot.Literal, Rule: rule, Through: through, Where: where}
 }
 
@@ -393,6 +401,38 @@ func callerOf(q datalog.Query, v *ns.Vocabulary, rel string) string {
 		}
 	}
 	return ""
+}
+
+// unboundAt are the variables of q's literal written lit that no positive atom written before it in
+// its body binds (#571), in its order, each once. On Declaire's x04 the hot literal came first, so
+// both its variables were free and the model didn't know which to bind. nil when q holds no such
+// literal.
+func unboundAt(q datalog.Query, lit string) []string {
+	bodies := []datalog.Body{q.Goal}
+	for _, r := range q.Rules {
+		bodies = append(bodies, r.Body)
+	}
+	for _, b := range bodies {
+		bound := map[datalog.Var]bool{}
+		for _, l := range b.Literals {
+			if l.String() == lit && l.Pos != nil {
+				var free []string
+				for _, t := range l.Pos.Args {
+					if t.Var != "" && t.Var != "_" && !bound[t.Var] {
+						bound[t.Var] = true // each once
+						free = append(free, "?"+string(t.Var))
+					}
+				}
+				return free
+			}
+			if l.Pos != nil {
+				for _, t := range l.Pos.Args {
+					bound[t.Var] = true
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // bodyRelations are the relations b's atoms call, those inside its aggregates and optionals too.

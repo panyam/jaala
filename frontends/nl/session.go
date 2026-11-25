@@ -234,6 +234,7 @@ type Conversation struct {
 	tries   int
 	steps   int               // actions taken
 	repeats int               // actions asked again, which took no step
+	retried map[string]int    // how often each draft's try was asked again (#571)
 	asked   map[string]string // what each action answered, keyed by action and argument
 	body    []string          // the literals add built (Actions.Build), in order
 }
@@ -374,6 +375,16 @@ func (c *Conversation) Act(ctx context.Context, action, arg string) string {
 		result := s.pr.AskedAgain + " " + before
 		if action == ActionTry {
 			result = s.pr.TriedAgain + "\n" + before
+			// the second try again of one draft ends the actions (#571): on Declaire's x04 and x07 a
+			// model tried a refused draft three and four times, each free, and never changed it
+			if c.retried == nil {
+				c.retried = map[string]int{}
+			}
+			c.retried[arg]++
+			if c.retried[arg] >= 2 && c.steps < s.MaxSteps() {
+				c.EndActions()
+				return result + "\n\n" + s.pr.TriedTwice
+			}
 		}
 		if c.repeats >= MaxRepeats && c.steps < s.MaxSteps() {
 			c.EndActions()

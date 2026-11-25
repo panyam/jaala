@@ -240,18 +240,21 @@ func TestAVocabularysGrammarHoldsItsProgramsAndNoOthers(t *testing.T) {
 		{`?c = count(?b) : { edge(?a, ?b) }, kind(?a, "type") => ?a, ?c`, true, true},
 		{`far(?a, ?c) :- edge(?a, ?b), edge(?b, ?c); far("a", ?c) => ?c`, true, false},
 		{`reach2(?a) :- graph.reach("a", ?a); reach2(?x) => ?x`, true, false},
-		{`egde(?a, ?b) => ?a`, false, false},                               // no rules, so every call is a member's (#567)
-		{`Thequerywasrefusedbecauseitranse(1000001)`, false, false},        // prose run into one name (#567)
-		{`edge(?a, ?b), ?c = (egde(?b) + 1) => ?c`, false, false},          // nor inside brackets
-		{`far(?a) :- egde(?a, ?b); far(?x) => ?x`, true, false},            // with a rule, a call no rule defines is Validate's to refuse
-		{`graph.reahc(?a, ?b) => ?a`, false, false},                        // a dotted name is only ever a member
-		{`edge(?a) => ?a`, false, false},                                   // wrong count
-		{`edge(?a, ?b, ?c) => ?a`, false, false},                           // wrong count
-		{`name.find(?a, "x", 1, 2) => ?a`, false, false},                   // past the optional argument
-		{`kind(?n, "functoin") => ?n`, false, false},                       // outside the domain
-		{`edge(?a, ?b) :- kind(?a, ?b); edge(?a, ?b) => ?a`, false, false}, // a rule named for a member
-		{`str(?a) :- edge(?a, ?a); str(?a) => ?a`, false, false},           // a rule named for a module
-		{`edge(?a, ?b), ?c = num.add(?b) => ?c`, false, false},             // num.add takes two inputs
+		{`egde(?a, ?b) => ?a`, false, false},                                                                               // no rules, so every call is a member's (#567)
+		{`Thequerywasrefusedbecauseitranse(1000001)`, false, false},                                                        // prose run into one name (#567)
+		{`edge(?a, ?b), ?c = (egde(?b) + 1) => ?c`, false, false},                                                          // nor inside brackets
+		{`To_address_the_question_of_ident(?a) :- edge(?a, ?b); To_address_the_question_of_ident(?x) => ?x`, false, false}, // prose as a rule head (#571)
+		{`Iaport(?a) :- edge(?a, ?b); Iaport(?x) => ?x`, false, false},                                                     // a rule starts lowercase
+		{`iaport(?a) :- edge(?a, ?b); iaport(?x) => ?x`, true, false},                                                      // control
+		{`far(?a) :- egde(?a, ?b); far(?x) => ?x`, true, false},                                                            // with a rule, a call no rule defines is Validate's to refuse
+		{`graph.reahc(?a, ?b) => ?a`, false, false},                                                                        // a dotted name is only ever a member
+		{`edge(?a) => ?a`, false, false},                                                                                   // wrong count
+		{`edge(?a, ?b, ?c) => ?a`, false, false},                                                                           // wrong count
+		{`name.find(?a, "x", 1, 2) => ?a`, false, false},                                                                   // past the optional argument
+		{`kind(?n, "functoin") => ?n`, false, false},                                                                       // outside the domain
+		{`edge(?a, ?b) :- kind(?a, ?b); edge(?a, ?b) => ?a`, false, false},                                                 // a rule named for a member
+		{`str(?a) :- edge(?a, ?a); str(?a) => ?a`, false, false},                                                           // a rule named for a module
+		{`edge(?a, ?b), ?c = num.add(?b) => ?c`, false, false},                                                             // num.add takes two inputs
 	} {
 		if got := g.Accepts(c.text); got != c.in {
 			t.Errorf("GrammarFor accepts %q: %v, want %v", c.text, got, c.in)
