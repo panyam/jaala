@@ -87,6 +87,9 @@ type Options struct {
 	// model alone, the frontier model alone, or the local one and then the frontier one, which starts
 	// from the local one's closest draft. It replaces the translator's own choice of models.
 	Tiers *Tiers
+	// Scorer, under Tiers, decides after each tier whether to take its result or ask the next (#572).
+	// nil is DefaultScore, which escalates only a tier that didn't answer.
+	Scorer Scorer
 
 	grounder Grounder // the Grounder a find action asks
 }
@@ -114,6 +117,8 @@ type Trace struct {
 	Votes []Try
 	// Escalations are the answers moved on from for agreeing too little (Options.Escalate).
 	Escalations []Escalation
+	// Scores are the Scorer's verdicts under Options.Tiers, a tier each, in order (#572).
+	Scores []RungScore
 	// Tier is the tier that answered under Options.Tiers (TierLocal, TierFrontier), "" when none did
 	// or no tiers were set.
 	Tier string
