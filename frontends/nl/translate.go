@@ -38,6 +38,10 @@ type Grounder interface {
 type Candidate struct {
 	Name   string
 	Values []string
+	// Note, when set, says what Name is in the data when that isn't a value to quote, such as Declaire's
+	// attr keys: `an attr key, attr(?id, "load_errors", ?v)`. It follows the values, or stands alone
+	// when there are none. Values a model was shown don't include it.
+	Note string
 }
 
 // Options tune the translator. The zero value tries the model three times and only checks the program.
@@ -513,7 +517,13 @@ func grounded(head string, cands []Candidate) string {
 		for i, v := range c.Values {
 			quoted[i] = fmt.Sprintf("%q", v)
 		}
-		fmt.Fprintf(&b, "\n%s: %s", c.Name, strings.Join(quoted, ", "))
+		line := strings.Join(quoted, ", ")
+		if c.Note != "" && line != "" {
+			line += "; " + c.Note
+		} else if c.Note != "" {
+			line = c.Note
+		}
+		fmt.Fprintf(&b, "\n%s: %s", c.Name, line)
 	}
 	return b.String()
 }
