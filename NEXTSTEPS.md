@@ -15,7 +15,7 @@ Maintained by /checkpoint: one thread per branch, pruned when the branch merges.
 - Mission #322 (`mission_agent_frontend`) is 49/51 and waits on Declaire's gpt-5.5 arms (declaire#300,
   declaire#371). #547 is parked `waiting`. #544 (P2) is next in the queue, but its evidence is all
   `14b:loop`, which frontier-first parks.
-- Selfcheck is due (6 PRs merged since the last pass on 0d0a16b). Run `make selfcheck`.
+- Selfcheck: passed on 62f70a3 (2026-11-25). Check `make selfcheck-status` before the next merge.
 - This run: dropped memory/563-pilot-findings (PR #565 merged).
 
 ## Across threads
