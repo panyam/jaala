@@ -33,6 +33,11 @@ type Cost struct {
 	Calls int
 	// Seconds is wall time: Result.Took, the translator's run and the evaluation together.
 	Seconds float64
+	// Untimed counts the cases summed whose time is unknown (Result.Untimed), such as a replay of
+	// transcripts that kept none (#581). Seconds counts only the others, so a Cost with Untimed set
+	// has no wall time to report, and the history and profile tables leave its seconds blank. A host
+	// building a CaseRecord itself sets it to 1 for such a case.
+	Untimed int `json:",omitempty"`
 	// Dollars prices the tokens by Prices. Unpriced lists the models that spent tokens with no Price,
 	// whose tokens Dollars leaves out, so a Cost with Unpriced set is a lower bound.
 	Dollars  float64
@@ -121,6 +126,9 @@ func (r Result) cost(p Prices, tier *string) Cost {
 		c.Unpriced = append(c.Unpriced, m)
 	}
 	sort.Strings(c.Unpriced)
+	if r.Untimed {
+		c.Seconds, c.Untimed = 0, 1
+	}
 	return c
 }
 
@@ -130,6 +138,7 @@ func (c *Cost) add(o Cost) {
 	c.TokensOut += o.TokensOut
 	c.Calls += o.Calls
 	c.Seconds += o.Seconds
+	c.Untimed += o.Untimed
 	c.Dollars += o.Dollars
 	for _, m := range o.Unpriced {
 		if !slices.Contains(c.Unpriced, m) {
@@ -181,7 +190,8 @@ type Summary struct {
 
 // PerCorrect is the cost and time per passing case: Cost's Dollars and Seconds over Pass. ok is false
 // when nothing passed, which has no cost per correct answer. A Cost with Unpriced models gives a
-// lower bound on dollars.
+// lower bound on dollars, and one with Untimed cases has no time per correct answer: its seconds
+// leave those cases out (#581).
 func (s Summary) PerCorrect() (dollars, seconds float64, ok bool) {
 	if s.Pass == 0 {
 		return 0, 0, false
@@ -482,6 +492,7 @@ var historyColumns = []string{"when", "commit", "bench", "agent", "model", "sett
 // HistoryTable writes a row per record, as "csv" or "md" (a Markdown table): its outcomes, what it
 // spent, and its cost and time per correct answer. Cost per correct answer is empty when nothing
 // passed, and marked with a trailing "+" when a model was unpriced, since it is then a lower bound.
+// Seconds and seconds per correct answer are empty when any case's time is unknown (Cost.Untimed).
 func HistoryTable(w io.Writer, recs []Record, format string) error {
 	var rows [][]string
 	for _, r := range recs {
@@ -502,10 +513,14 @@ func HistoryTable(w io.Writer, recs []Record, format string) error {
 				perUSD += "+"
 			}
 		}
+		secs := fmt.Sprintf("%.1f", s.Cost.Seconds)
+		if s.Cost.Untimed > 0 {
+			secs, perSec = "", "" // a case with no time would read as instant (#581)
+		}
 		rows = append(rows, []string{r.When.UTC().Format(time.RFC3339), r.Commit, r.Bench, r.Agent, r.Model, strings.Join(settings, " "),
 			fmt.Sprint(r.Run), fmt.Sprint(s.Pass), fmt.Sprint(s.Wrong), fmt.Sprint(s.Abstain), fmt.Sprint(s.Cases()),
 			fmt.Sprint(s.Cost.Calls), fmt.Sprint(s.Cost.TokensIn), fmt.Sprint(s.Cost.TokensCached), fmt.Sprint(s.Cost.TokensOut),
-			usd, fmt.Sprintf("%.1f", s.Cost.Seconds), perUSD, perSec})
+			usd, secs, perUSD, perSec})
 	}
 	return writeTable(w, historyColumns, rows, format)
 }

@@ -43,6 +43,9 @@ type Result struct {
 	Err     error
 	// Took is the case's wall time: the translator's run and the evaluation over Eval's Base.
 	Took time.Duration
+	// Untimed says the case's time is unknown, for a host replaying transcripts that kept none
+	// (#581). Its Cost then counts it in Untimed, with no Seconds, rather than as an instant answer.
+	Untimed bool
 	// WouldPass, for a case that abstained with a draft Eval could run, says whether that draft would
 	// have answered Want's rows (#537). A model profile's calibration reads it: an abstention is well
 	// placed when its draft was wrong. It is nil when there was no draft to run.
