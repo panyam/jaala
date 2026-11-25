@@ -166,7 +166,8 @@
 - **`nl.GrammarFor(v)` is that table with the calls replaced by v's members** (`vocabgrammar.go`,
   #324): each at the arities it takes, a closed domain's argument as a variable or one of its values,
   and a program's own rules named by `local`, a trie keeping them off every root name, whose tails (`lt<n>`) keep a local within `nameMax`. `GoalOnly()`
-  drops rules. Its soundness test also checks each sample against `Grammar()`, so it stays a
+  drops rules. Without it, `membersOnly` copies each rule reaching `local` with a `-m` suffix and no
+  `local`, so a program with no rules calls members only (#567: prose read as a call to a rule). Its soundness test also checks each sample against `Grammar()`, so it stays a
   sublanguage. The recognizer lives in `internal/gbnf` for both packages' tests, beside the table
   types, `Render` and the `Sampler` (#354, shared with the Cypher grammar; nl keeps its own short
   types and converts with `table`, since vet refuses unkeyed literals of another package's structs,

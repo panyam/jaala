@@ -86,6 +86,18 @@ type Example struct {
 	Question, Program string
 }
 
+// withoutCheck is p for a look at the data (try, add). Check judges answers, and a look isn't one. The
+// rest stays, so an empty look gets the pack's Hint and Without prompt as an answer does (#567). nil
+// stays nil.
+func (p *Pack) withoutCheck() *Pack {
+	if p == nil {
+		return nil
+	}
+	q := *p
+	q.Check = nil
+	return &q
+}
+
 // Validate checks that every example parses and checks against v, so a pack can't teach a model a
 // relation v doesn't have, that every callable is a relation of v described at its arity, that every key names a base relation of v and positions within its
 // arity, and that every extraction example's lines are facts its text states. The error names the
