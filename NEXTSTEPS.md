@@ -16,7 +16,7 @@ Maintained by /checkpoint: one thread per branch, pruned when the branch merges.
 - Mission #437 (`mission_text_memory`) is 4/5. #415 is next: arm 4 (`MemoryArm`, `read_session`)
   and an S-size run (paid calls; `TestPilot` as #561's "Try it" says). chakra#343 is still open.
 - #573 (a ladder of N tiers) is `waiting` for a third model that earns a rung.
-- Selfcheck is due (6 PRs merged since the pass on 62f70a3). Run `make selfcheck`.
+- Selfcheck: passed on 45b131a (2026-11-25). Check `make selfcheck-status` before the next merge.
 - This run: merged #566, #568, #570, #576, #577, #578; no threads left.
 
 ## Across threads
