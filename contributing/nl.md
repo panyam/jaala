@@ -137,6 +137,10 @@
   1 MB model caps a slot at 2048 tokens, so its vocabulary leaves out stdlib. Cypher's translator tests
   and its `TestEval` are `nlmodels/cypherarm`'s, so nlmodels requires the cypher module (its tests
   only), and `internal/guide.CypherDrafts` feeds both that eval and cypher's `FuzzCompile` seeds.
+- **`nlmodels/route` turns `nl.Profile`s into chakra's `connection.Row`s** and a `TableRouter`
+  (#579). jaala keeps no routing logic: `nl` can't import chakra, so the conversion lives here. A
+  row has `Dollars` only for a priced profile whose cost names no unpriced model, since
+  `Cost.Dollars` leaves unpriced tokens out and an unknown cost isn't zero.
 - **`nlmodels/memory` is #415's LongMemEval memory** on chakra's `eval/longmemeval` (v0.3.6). A
   `Memory` is a chakra `SessionMemory`. Each session goes through `Translator.Extract` and is committed
   to an `ns.TimedMemSource` as the next version. `fact`'s key (subject, attribute) makes a later
