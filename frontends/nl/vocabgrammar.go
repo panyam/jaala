@@ -361,9 +361,11 @@ func callees(v *ns.Vocabulary) ([]callee, []string, error) {
 // localRules make local: an ident none of the root names spells. They walk the names' characters as a
 // trie, a rule per prefix, leaving it at any other character, so the grammar keeps a program's rule
 // from taking a member's or a module's name rather than trusting a model to. Leaving after p, a tail
-// rule (lt<n>) allows the rest of nameMax, so a local is never longer than an ident.
+// rule (lt<n>) allows the rest of nameMax, so a local is never longer than an ident. A local starts
+// lowercase (#571): a model writing prose under the grammar opened a sentence as a rule head,
+// To_address_the_question_of_ident(...), and no program's own rule starts with a capital.
 func localRules(names []string) []rule {
-	const start = letters
+	const start = lower
 	const rest = letters + digits + "_"
 	taken, prefixes := map[string]bool{}, map[string]bool{}
 	for _, n := range names {

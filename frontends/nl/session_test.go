@@ -268,15 +268,13 @@ func TestRepeatsEndTheActionsAtTheCap(t *testing.T) {
 	s, _ := nl.NewSession(context.Background(), mitQ, v, nil, nl.Options{Base: b, Actions: &nl.Actions{Steps: 10}})
 	c := s.NewConversation(nil, true)
 	nope := `pkg(?p, "nope") => ?p`
+	// three actions, each asked again once, so no one draft is tried twice again (#571's TriedTwice)
 	c.Act(context.Background(), nl.ActionTry, nope)
 	c.Act(context.Background(), nl.ActionLook, "pkg")
-	for i := 1; i < nl.MaxRepeats; i++ {
-		action, arg := nl.ActionTry, nope
-		if i%2 == 0 {
-			action, arg = nl.ActionLook, "pkg"
-		}
-		if r := c.Act(context.Background(), action, arg); strings.HasSuffix(r, d.LastLook) || c.Steps() != 2 {
-			t.Fatalf("repeat %d answered %q, steps %d", i, r, c.Steps())
+	c.Act(context.Background(), nl.ActionValues, "pkg.license")
+	for i, a := range [][2]string{{nl.ActionLook, "pkg"}, {nl.ActionValues, "pkg.license"}}[:nl.MaxRepeats-1] {
+		if r := c.Act(context.Background(), a[0], a[1]); strings.HasSuffix(r, d.LastLook) || c.Steps() != 3 {
+			t.Fatalf("repeat %d answered %q, steps %d", i+1, r, c.Steps())
 		}
 	}
 	last := c.Act(context.Background(), nl.ActionTry, nope)

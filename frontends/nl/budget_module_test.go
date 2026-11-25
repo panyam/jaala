@@ -34,9 +34,16 @@ func TestABudgetRefusalNamesTheProgramsLiteralIntoAModule(t *testing.T) {
 	if !errors.As(err, &bs) {
 		t.Fatalf("the draft's error %v", err)
 	}
+	if strings.Contains(bs.Where, "No literal before it binds") {
+		t.Errorf("?a is bound by pkg(?a, \"MIT\") before lib.wide(?a), but the line says %q", bs.Where)
+	}
 	if bs.Through != "lib.wide(?a)" || !strings.HasPrefix(bs.Rule, "lib.triple(") ||
 		!strings.HasPrefix(bs.Where, "Most of the work went to lib.wide(?a), through "+bs.Literal+" in the rule "+bs.Rule+": ") {
 		t.Errorf("through %q, literal %q, rule %q, told %q", bs.Through, bs.Literal, bs.Rule, bs.Where)
+	}
+	_, _, err = s.Draw(ctx, reply(`lib.wide(?a) => ?a`))
+	if !errors.As(err, &bs) || bs.Through != "lib.wide(?a)" || !strings.Contains(bs.Where, "\nNo literal before it binds ?a, so ") {
+		t.Errorf("a call into the module first: through %q, told %q", bs.Through, bs.Where)
 	}
 	// two rules, so mine isn't inlined; the call into the module is in mine's body
 	_, _, err = s.Draw(ctx, reply(`mine(?a) :- lib.wide(?a); mine(?a) :- pkg(?a, "none"); pkg(?b, "MIT"), mine(?b) => ?b`))
@@ -44,7 +51,7 @@ func TestABudgetRefusalNamesTheProgramsLiteralIntoAModule(t *testing.T) {
 		t.Errorf("through an own rule: through %q, told %q", bs.Through, bs.Where)
 	}
 	_, _, err = s.Draw(ctx, reply(`pkg(?a, ?l), pkg(?b, ?m), pkg(?c, ?n) => ?a`))
-	if !errors.As(err, &bs) || bs.Through != "" || strings.Contains(bs.Where, ", through ") {
+	if !errors.As(err, &bs) || bs.Through != "" || strings.Contains(bs.Where, ", through ") || !strings.Contains(bs.Where, "\nNo literal before it binds ?c, ?n, so ") {
 		t.Errorf("control: the goal's own work, through %q, told %q", bs.Through, bs.Where)
 	}
 }
