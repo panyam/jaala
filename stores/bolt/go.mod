@@ -4,11 +4,11 @@ go 1.27.4
 
 require (
 	github.com/neo4j/neo4j-go-driver/v5 v5.28.5
-	github.com/panyam/jaala v0.1.107
-	github.com/panyam/jaala/frontends/cypher v0.1.107
+	github.com/panyam/jaala v0.1.108
+	github.com/panyam/jaala/frontends/cypher v0.1.108
 )
 
-require github.com/panyam/jaala/frontends/nl v0.1.107 // indirect
+require github.com/panyam/jaala/frontends/nl v0.1.108 // indirect
 
 replace github.com/panyam/jaala => ../../
 
