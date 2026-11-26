@@ -28,6 +28,9 @@ type Prices map[string]Price
 // A Cost is what some of a run spent (#536): tokens, model calls, wall time and dollars.
 type Cost struct {
 	TokensIn, TokensCached, TokensOut int
+	// TokensReasoning is the part of TokensOut a model spent thinking, when the host's loop reports
+	// it, as chakra's Usage.ReasoningTokens does. Zero means none, or nobody said.
+	TokensReasoning int `json:",omitempty"`
 	// Calls counts model calls: each Try's and Step's Calls, or one for an entry with tokens that
 	// leaves Calls 0, from a loop that doesn't count them.
 	Calls int
@@ -136,6 +139,7 @@ func (c *Cost) add(o Cost) {
 	c.TokensIn += o.TokensIn
 	c.TokensCached += o.TokensCached
 	c.TokensOut += o.TokensOut
+	c.TokensReasoning += o.TokensReasoning
 	c.Calls += o.Calls
 	c.Seconds += o.Seconds
 	c.Untimed += o.Untimed
