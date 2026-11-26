@@ -36,3 +36,15 @@ func TestTagCostCountsAsTagsDo(t *testing.T) {
 		t.Errorf("a profile of two records: %+v", twice)
 	}
 }
+
+// A host that knows how much of its output a model spent thinking records it in TokensReasoning,
+// and costs summed over cases keep it.
+func TestCostsSumReasoningTokens(t *testing.T) {
+	cases := []nl.CaseRecord{
+		{Name: "a", Tags: []string{"agg"}, Cost: nl.Cost{TokensOut: 900, TokensReasoning: 840}},
+		{Name: "b", Tags: []string{"agg"}, Cost: nl.Cost{TokensOut: 300, TokensReasoning: 120}},
+	}
+	if got := nl.TagCosts(cases)["agg"].TokensReasoning; got != 960 {
+		t.Errorf("TokensReasoning %d, want 960", got)
+	}
+}
